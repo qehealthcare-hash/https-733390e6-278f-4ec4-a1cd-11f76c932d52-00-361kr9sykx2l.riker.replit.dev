@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://hominal-healthcare-api.vercel.app/api/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://hominal-healthcare-api.vercel.app/health"
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+# Production deploy for crm.hominalhealthcare.com (vercel-web) + optional monorepo API/web.
+# GitHub repo secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID_WEB
+# Optional monorepo: VERCEL_PROJECT_ID_API
+name: Deploy Vercel production
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "vercel-web/**"
+      - "hominal-healthcare-crm/apps/api/**"
+      - "hominal-healthcare-crm/apps/web/**"
+      - "index.html"
+      - "supabase-config.js"
+      - "hominal_crm_supabase_011_phase3_rls_rpc.sql"
+      - ".github/workflows/deploy-vercel.yml"
+
+jobs:
+  deploy-vercel-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Deploy vercel-web (legacy CRM host)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_WEB }}
+        run: npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"
+        working-directory: vercel-web
+
+  deploy-api:
+    runs-on: ubuntu-latest
+    if: hashFiles('hominal-healthcare-crm/apps/api/package.json') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Deploy API
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_API }}
+        run: npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"
+        working-directory: hominal-healthcare-crm/apps/api
+
+  deploy-monorepo-web:
+    runs-on: ubuntu-latest
+    needs: deploy-api
+    if: hashFiles('hominal-healthcare-crm/apps/web/package.json') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Deploy monorepo web
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_WEB }}
+        run: npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN"
+        working-directory: hominal-healthcare-crm/apps/web
