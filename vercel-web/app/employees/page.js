@@ -148,14 +148,60 @@ export default function EmployeesPage() {
     }
   }
 
-  async function deleteEmployee(id) {
-    if (!window.confirm("Delete this employee?")) return;
+  async function deactivateEmployee(id) {
+    if (!window.confirm("Deactivate this employee? Historical duties, attendance and payouts will be kept.")) return;
     setBusy(true);
+    setError("");
+    setMessage("");
     try {
-      await requestWithOfflineFallback("/employees/" + id, { method: "DELETE" }, auth.session);
+      await requestWithOfflineFallback(
+        "/employees/" + id + "/status",
+        { method: "POST", body: { status: "Inactive", reason: "Deactivated from registry" } },
+        auth.session
+      );
       await resource.reload();
       if (form.id === id) resetForm();
-      setMessage("Employee deleted");
+      setMessage("Employee deactivated");
+    } catch (deactivateError) {
+      setError(deactivateError.message || "Unable to deactivate employee");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function activateEmployee(id) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await requestWithOfflineFallback(
+        "/employees/" + id + "/status",
+        { method: "POST", body: { status: "Active" } },
+        auth.session
+      );
+      await resource.reload();
+      setMessage("Employee activated");
+    } catch (activateError) {
+      setError(activateError.message || "Unable to activate employee");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteEmployee(id) {
+    if (!window.confirm("Delete this employee? If they have duties, payouts, or attendance, they will be deactivated instead.")) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      var result = await requestWithOfflineFallback("/employees/" + id, { method: "DELETE" }, auth.session);
+      await resource.reload();
+      if (form.id === id) resetForm();
+      if (result && result.mode === "soft") {
+        setMessage("Employee deactivated (historical data preserved).");
+      } else {
+        setMessage("Employee deleted");
+      }
     } catch (deleteError) {
       setError(deleteError.message || "Unable to delete employee");
     } finally {
@@ -313,6 +359,15 @@ export default function EmployeesPage() {
                           <button className="button secondary" type="button" onClick={function () { editEmployee(row); }}>
                             Edit
                           </button>
+                          {row.active === false || row.status === "Inactive" ? (
+                            <button className="button primary" type="button" onClick={function () { activateEmployee(row.id); }}>
+                              Activate
+                            </button>
+                          ) : (
+                            <button className="button ghost" type="button" onClick={function () { deactivateEmployee(row.id); }}>
+                              Deactivate
+                            </button>
+                          )}
                           <button className="button danger" type="button" onClick={function () { deleteEmployee(row.id); }}>
                             Delete
                           </button>

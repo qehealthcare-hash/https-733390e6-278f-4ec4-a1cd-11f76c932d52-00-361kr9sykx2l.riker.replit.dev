@@ -100,3 +100,19 @@ export function fromLegacyEnvelope(legacy: {
 export function isOk<T>(result: ApiResult<T>): result is ApiResult<T> & { success: true; data: T } {
   return result.success === true && result.data !== undefined;
 }
+
+/**
+ * Re-type a failed ApiResult so it satisfies a different `T`. Use this when a
+ * downstream call returns `ApiResult<X>` but the outer signature is
+ * `ApiResult<Y>` — early-return shortcut without `as` casts everywhere.
+ *
+ * Caller is responsible for ensuring `result.success === false` before calling.
+ */
+export function passFailure<T>(result: ApiResult<unknown>): ApiResult<T> {
+  return {
+    success: false,
+    error: result.error,
+    code: result.code,
+    details: result.details
+  };
+}
