@@ -1,28 +1,31 @@
 # Validation Layer (`src/validation/`)
 
-Zod schemas shared between client forms and server services.
-
-Zod is already a dependency of `vercel-web` (see `package.json`).
+Zod schemas shared between API routes, services, and (later) React forms.
 
 ## Contract
 
-- Each module exports both the schema and the inferred TS type.
-- Services call `schema.safeParse(input)` and convert errors via
-  `validationFailure(result.error.flatten())` from `src/utils/apiResponse`.
-- Schemas never call DB or business logic.
+- Each module exports schemas and inferred types (`PatientInput`, etc.).
+- Use `parseInput(schema, body)` from `parseValidation.ts` for non-throwing parses in new code.
+- Legacy routes may still call `schema.parse()` via `lib/api/handler` error mapping.
+- Schemas never import database, business, or service layers.
 
-## Files to create (per `REFACTOR_PLAN.md` Phase 3)
+## Modules
 
-- `commonValidation.ts` — phone, email, currency, dates, pagination.
-- `patientValidation.ts`
-- `employeeValidation.ts`
-- `inquiryValidation.ts`
-- `dutyValidation.ts`
-- `billingValidation.ts`
-- `payoutValidation.ts`
-- `attendanceValidation.ts`
+| File | Schemas |
+|------|---------|
+| `commonValidation.ts` | `phoneSchema`, `idSchema`, `moneySchema`, `listQuerySchema`, … |
+| `patientValidation.ts` | `patientSchema`, `patientAssignSchema` |
+| `employeeValidation.ts` | `employeeSchema` |
+| `inquiryValidation.ts` | `inquirySchema` (legacy + React field aliases) |
+| `dutyValidation.ts` | `dutySchema`, `dutyCheckAtSchema` |
+| `billingValidation.ts` | `billingSchema`, `receiptSchema`, `generateFromDutySchema`, … |
+| `payoutValidation.ts` | `payoutSchema`, `payoutAdjustmentSchema`, `payoutPaySchema` |
+| `attendanceValidation.ts` | `attendanceSchema` |
+| `whatsappValidation.ts` | `sendTextSchema`, `sendTemplateSchema`, `sendBillSchema` |
+| `aiValidation.ts` | `askSchema` |
+| `parseValidation.ts` | `parseInput()` → `ApiResult<T>` |
+| `index.ts` | Barrel |
 
-## Forbidden
+## Backward compatibility
 
-- Cross-imports from `src/services`, `src/business`, `src/database`.
-- Throwing — always return a Zod `SafeParseResult`.
+`lib/api/validation.ts` and `lib/api/services/*.ts` re-export schemas so existing imports keep working. New code should use `@/validation` directly.

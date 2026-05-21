@@ -1,36 +1,26 @@
-import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { env, hasWhatsApp } from "../env";
 import { badRequest, serverError } from "../errors";
 import { audit } from "../audit";
 import { newId } from "../ids";
-import { phoneSchema } from "../validation";
 import type { ActorContext } from "../auth";
 
+import {
+  type SendTextInput,
+  type SendTemplateInput,
+  type SendBillInput
+} from "@/validation/whatsappValidation";
+
+export {
+  sendTextSchema,
+  sendTemplateSchema,
+  sendBillSchema,
+  type SendTextInput,
+  type SendTemplateInput,
+  type SendBillInput
+} from "@/validation/whatsappValidation";
+
 const TABLE = "hh_whatsapp_messages";
-
-export const sendTextSchema = z.object({
-  to: phoneSchema,
-  text: z.string().trim().min(1).max(4000),
-  related_module: z.string().optional().default(""),
-  related_id: z.string().optional().default("")
-});
-
-export const sendTemplateSchema = z.object({
-  to: phoneSchema,
-  template: z.string().trim().min(1),
-  language: z.string().default("en"),
-  components: z.array(z.unknown()).optional().default([]),
-  related_module: z.string().optional().default(""),
-  related_id: z.string().optional().default("")
-});
-
-export const sendBillSchema = z.object({
-  to: phoneSchema,
-  billing_id: z.string().min(1),
-  invoice_url: z.string().url().optional(),
-  message: z.string().optional()
-});
 
 async function callWhatsApp(body: unknown) {
   if (!hasWhatsApp()) throw badRequest("WhatsApp is not configured (WHATSAPP_TOKEN/PHONE_NUMBER_ID missing)");
@@ -66,7 +56,7 @@ export const whatsappService = {
     return { rows: data || [], total: count ?? data?.length ?? 0 };
   },
 
-  async sendText(input: z.infer<typeof sendTextSchema>, actor: ActorContext) {
+  async sendText(input: SendTextInput, actor: ActorContext) {
     const id = newId.whatsapp();
     const admin = supabaseAdmin();
     await admin.from(TABLE).insert({
@@ -101,7 +91,7 @@ export const whatsappService = {
     }
   },
 
-  async sendTemplate(input: z.infer<typeof sendTemplateSchema>, actor: ActorContext) {
+  async sendTemplate(input: SendTemplateInput, actor: ActorContext) {
     const id = newId.whatsapp();
     const admin = supabaseAdmin();
     await admin.from(TABLE).insert({
@@ -141,7 +131,7 @@ export const whatsappService = {
     }
   },
 
-  async sendBill(input: z.infer<typeof sendBillSchema>, actor: ActorContext) {
+  async sendBill(input: SendBillInput, actor: ActorContext) {
     const url = input.invoice_url || `https://crm.hominalhealthcare.com/legacy-crm.html?invoice=${encodeURIComponent(input.billing_id)}`;
     const text = (input.message || `Hominal Healthcare — invoice for ${input.billing_id}: ${url}`).slice(0, 1024);
     return whatsappService.sendText(

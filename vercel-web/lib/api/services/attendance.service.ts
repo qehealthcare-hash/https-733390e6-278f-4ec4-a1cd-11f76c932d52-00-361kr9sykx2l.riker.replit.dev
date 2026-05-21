@@ -1,25 +1,13 @@
-import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { badRequest, notFound, conflict } from "../errors";
 import { audit } from "../audit";
 import { newId } from "../ids";
-import { idSchema, isoDate } from "../validation";
 import type { ActorContext } from "../auth";
+import { attendanceSchema, type AttendanceInput } from "@/validation/attendanceValidation";
+
+export { attendanceSchema, type AttendanceInput } from "@/validation/attendanceValidation";
 
 const TABLE = "hh_attendance";
-
-export const attendanceSchema = z.object({
-  id: idSchema.optional(),
-  duty_id: z.string().optional(),
-  employee_id: idSchema,
-  patient_id: z.string().optional(),
-  check_in_at: isoDate.optional(),
-  check_out_at: isoDate.optional(),
-  status: z.enum(["PRESENT", "ABSENT", "LATE", "HALF_DAY", "LEAVE"]).default("PRESENT"),
-  notes: z.string().optional().default("")
-});
-
-export type AttendanceInput = z.infer<typeof attendanceSchema>;
 
 function hoursBetween(a?: string | null, b?: string | null) {
   if (!a || !b) return 0;

@@ -1,33 +1,13 @@
-import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { badRequest, conflict, notFound } from "../errors";
 import { audit } from "../audit";
 import { newId } from "../ids";
-import { idSchema, isoDate } from "../validation";
 import type { ActorContext } from "../auth";
+import { dutySchema, type DutyInput } from "@/validation/dutyValidation";
+
+export { dutySchema, dutyCheckAtSchema, type DutyInput, type DutyCheckAtInput } from "@/validation/dutyValidation";
 
 const TABLE = "hh_duties";
-
-export const dutySchema = z
-  .object({
-    id: idSchema.optional(),
-    patient_id: idSchema,
-    employee_id: idSchema,
-    service_type: z.string().optional().default(""),
-    shift_type: z.enum(["DAY", "NIGHT", "24H", "FULL"]).default("DAY"),
-    start_at: isoDate,
-    end_at: isoDate,
-    status: z.enum(["SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW"]).default("SCHEDULED"),
-    cancel_reason: z.string().optional().default(""),
-    notes: z.string().optional().default(""),
-    billing_id: z.string().optional().nullable()
-  })
-  .refine((v) => new Date(v.end_at).getTime() > new Date(v.start_at).getTime(), {
-    message: "end_at must be after start_at",
-    path: ["end_at"]
-  });
-
-export type DutyInput = z.infer<typeof dutySchema>;
 
 async function findOverlap(employeeId: string, startAt: string, endAt: string, excludeId?: string) {
   const { data, error } = await supabaseAdmin()

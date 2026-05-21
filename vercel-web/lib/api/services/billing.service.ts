@@ -1,51 +1,37 @@
-import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { badRequest, conflict, notFound } from "../errors";
 import { audit } from "../audit";
 import { newId } from "../ids";
-import { idSchema, moneySchema } from "../validation";
 import type { ActorContext } from "../auth";
+import {
+  billingSchema,
+  receiptSchema,
+  generateFromDutySchema,
+  DEFAULT_SHIFT_RATES,
+  type BillingInput,
+  type ReceiptInput,
+  type ShiftRates,
+  type GenerateFromDutyInput
+} from "@/validation/billingValidation";
+
+export {
+  billingSchema,
+  billingStatusSchema,
+  receiptSchema,
+  generateFromDutySchema,
+  DEFAULT_SHIFT_RATES,
+  type BillingInput,
+  type ReceiptInput,
+  type ShiftRates
+} from "@/validation/billingValidation";
 
 const TABLE = "hh_billings";
-
-/** Default shift rate hints — override via DB once you store rate plans per service. */
-export type ShiftRates = { DAY: number; NIGHT: number; "24H": number; FULL: number };
-export const DEFAULT_SHIFT_RATES: ShiftRates = { DAY: 700, NIGHT: 900, "24H": 1500, FULL: 1500 };
 
 export function amountForShift(shift: string, overrides?: Partial<ShiftRates>): number {
   const rates: ShiftRates = { ...DEFAULT_SHIFT_RATES, ...(overrides || {}) };
   const key = (shift || "DAY").toUpperCase() as keyof ShiftRates;
   return rates[key] ?? rates.DAY;
 }
-
-export const billingSchema = z.object({
-  id: idSchema.optional(),
-  patient_id: idSchema,
-  status: z.enum(["Active", "Closed", "Cancelled"]).default("Active"),
-  sec_dep: moneySchema.optional().default(0)
-});
-
-export const receiptSchema = z.object({
-  id: idSchema.optional(),
-  billing_id: idSchema,
-  date: z.string().optional().default(""),
-  type: z.string().optional().default(""),
-  amount: moneySchema,
-  method: z.string().optional().default(""),
-  ref: z.string().optional().default(""),
-  remarks: z.string().optional().default("")
-});
-
-export const generateFromDutySchema = z.object({
-  duty_id: idSchema,
-  service_name: z.string().default("Caretaker"),
-  rate_overrides: z
-    .object({ DAY: moneySchema.optional(), NIGHT: moneySchema.optional(), "24H": moneySchema.optional(), FULL: moneySchema.optional() })
-    .optional()
-});
-
-export type BillingInput = z.infer<typeof billingSchema>;
-export type ReceiptInput = z.infer<typeof receiptSchema>;
 
 async function ensureActiveBilling(patientId: string, actor: ActorContext) {
   const existing = await supabaseAdmin()
@@ -116,7 +102,7 @@ export const billingService = {
     return data;
   },
 
-  async generateFromDuty(input: z.infer<typeof generateFromDutySchema>, actor: ActorContext) {
+  async generateFromDuty(input: GenerateFromDutyInput, actor: ActorContext) {
     const admin = supabaseAdmin();
     const { data: duty, error: dErr } = await admin.from("hh_duties").select("*").eq("id", input.duty_id).maybeSingle();
     if (dErr) throw dErr;

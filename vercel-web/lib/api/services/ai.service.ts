@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { env, hasOpenAI } from "../env";
 import { badRequest, serverError } from "../errors";
@@ -6,14 +5,11 @@ import { audit } from "../audit";
 import { newId } from "../ids";
 import type { ActorContext } from "../auth";
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+import { type AskInput } from "@/validation/aiValidation";
 
-export const askSchema = z.object({
-  question: z.string().trim().min(1).max(2000),
-  conversation_id: z.string().optional(),
-  scope: z.enum(["patient", "billing", "duty", "all"]).default("all"),
-  context_id: z.string().optional()
-});
+export { askSchema, type AskInput } from "@/validation/aiValidation";
+
+const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 interface ContextChunk {
   source: string;
@@ -123,7 +119,7 @@ async function callOpenAI(messages: { role: string; content: string }[]) {
 }
 
 export const aiService = {
-  async ask(input: z.infer<typeof askSchema>, actor: ActorContext) {
+  async ask(input: AskInput, actor: ActorContext) {
     if (!hasOpenAI()) throw badRequest("AI is not configured (OPENAI_API_KEY missing)");
     const context = await buildContext(input.scope, input.context_id, actor.role);
     const admin = supabaseAdmin();

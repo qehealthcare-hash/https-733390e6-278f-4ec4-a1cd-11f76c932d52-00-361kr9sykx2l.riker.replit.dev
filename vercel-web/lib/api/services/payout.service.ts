@@ -1,37 +1,24 @@
-import { z } from "zod";
 import { supabaseAdmin } from "../supabase";
 import { conflict, notFound } from "../errors";
 import { audit } from "../audit";
-import { idSchema, moneySchema } from "../validation";
 import type { ActorContext } from "../auth";
+import {
+  payoutSchema,
+  type PayoutInput,
+  type PayoutAdjustmentInput,
+  type PayoutPayInput
+} from "@/validation/payoutValidation";
+
+export {
+  payoutSchema,
+  payoutAdjustmentSchema,
+  payoutPaySchema,
+  type PayoutInput,
+  type PayoutAdjustmentInput,
+  type PayoutPayInput
+} from "@/validation/payoutValidation";
 
 const TABLE = "hh_payouts";
-
-export const payoutSchema = z.object({
-  employee_id: idSchema,
-  period_month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "period_month must be YYYY-MM"),
-  advance: moneySchema.optional().default(0),
-  deduction: moneySchema.optional().default(0),
-  bonus: moneySchema.optional().default(0),
-  remarks: z.string().optional().default("")
-});
-
-export const payoutAdjustmentSchema = z.object({
-  payout_id: idSchema,
-  advance: moneySchema.optional(),
-  deduction: moneySchema.optional(),
-  bonus: moneySchema.optional(),
-  remarks: z.string().optional()
-});
-
-export const payoutPaySchema = z.object({
-  payout_id: idSchema,
-  paid_on: z.string().optional(),
-  method: z.string().optional().default(""),
-  photo: z.string().optional().default("")
-});
-
-export type PayoutInput = z.infer<typeof payoutSchema>;
 
 export const payoutService = {
   async list(opts: { limit: number; offset: number; period?: string; employeeId?: string; status?: string }) {
@@ -86,7 +73,7 @@ export const payoutService = {
     return data;
   },
 
-  async adjust(input: z.infer<typeof payoutAdjustmentSchema>, actor: ActorContext) {
+  async adjust(input: PayoutAdjustmentInput, actor: ActorContext) {
     const existing = await this.getById(input.payout_id);
     if (existing.status === "PAID") throw conflict("Cannot adjust a PAID payout");
     const advance = input.advance ?? Number(existing.advance || 0);
@@ -104,7 +91,7 @@ export const payoutService = {
     return data;
   },
 
-  async markPaid(input: z.infer<typeof payoutPaySchema>, actor: ActorContext) {
+  async markPaid(input: PayoutPayInput, actor: ActorContext) {
     const existing = await this.getById(input.payout_id);
     if (existing.status === "PAID") throw conflict("Payout already paid");
     const admin = supabaseAdmin();
