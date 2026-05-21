@@ -18,7 +18,14 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./*"],
-      "@/lib/api/*": ["./lib/api/*"]
+      "@/lib/api/*": ["./lib/api/*"],
+      "@/src/*": ["./src/*"],
+      "@/database/*": ["./src/database/*"],
+      "@/services/*": ["./src/services/*"],
+      "@/business/*": ["./src/business/*"],
+      "@/validation/*": ["./src/validation/*"],
+      "@/utils/*": ["./src/utils/*"],
+      "@/types/*": ["./src/types/*"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
