@@ -4,75 +4,22 @@ import { audit } from "../audit";
 import { newId } from "../ids";
 import type { ActorContext } from "../auth";
 import { patientSchema, type PatientInput } from "@/validation/patientValidation";
+import { patientToRow as toRow, patientToApi as toApi, findActivePatientDuplicate } from "@/business/patientRules";
+import { phoneSuffix } from "@/business/phoneRules";
 
 export { patientSchema, patientAssignSchema, type PatientInput, type PatientAssignInput } from "@/validation/patientValidation";
 
 const TABLE = "hh_patients";
 
-function toRow(input: PatientInput) {
-  return {
-    name: input.name,
-    phone: input.phone,
-    dob: input.dob,
-    gender: input.gender,
-    addr: input.addr,
-    area: input.area,
-    city: input.city,
-    pin: input.pin,
-    relname: input.relname,
-    relphone: input.relphone,
-    relname2: input.relname2,
-    relphone2: input.relphone2,
-    relname3: input.relname3,
-    relphone3: input.relphone3,
-    email: input.email || "",
-    status: input.status,
-    shift: input.shift,
-    caretaker_id: input.caretaker_id || null,
-    docs: input.docs ?? undefined
-  };
-}
-
-function toApi(row: Record<string, any>) {
-  if (!row) return row;
-  return {
-    id: row.id,
-    name: row.name || "",
-    full_name: row.name || "",
-    phone: row.phone || "",
-    mobile: row.phone || "",
-    dob: row.dob || "",
-    age: row.age || "",
-    gender: row.gender || "",
-    addr: row.addr || "",
-    address: row.addr || "",
-    area: row.area || "",
-    city: row.city || "Ahmedabad",
-    pin: row.pin || "",
-    pincode: row.pin || "",
-    relname: row.relname || "",
-    relphone: row.relphone || "",
-    email: row.email || "",
-    status: row.status || "Active",
-    shift: row.shift || "",
-    shift_type: row.shift || "",
-    caretaker_id: row.caretaker_id || "",
-    assigned_staff_id: row.caretaker_id || "",
-    docs: row.docs || [],
-    created_at: row.created_at || row.created || null,
-    updated_at: row.updated_at || null
-  };
-}
-
 async function findDuplicate(phone: string, excludeId?: string) {
-  const normalized = (phone || "").replace(/[^0-9+]/g, "");
-  if (!normalized) return null;
+  const suffix = phoneSuffix(phone);
+  if (!suffix) return null;
   const { data, error } = await supabaseAdmin()
     .from(TABLE)
     .select("id, name, phone, status")
-    .ilike("phone", `%${normalized.slice(-8)}%`);
+    .ilike("phone", `%${suffix}%`);
   if (error) throw error;
-  return (data || []).find((r) => r.id !== excludeId && (r.status || "Active") === "Active") || null;
+  return findActivePatientDuplicate(data || [], phone, excludeId);
 }
 
 export const patientService = {

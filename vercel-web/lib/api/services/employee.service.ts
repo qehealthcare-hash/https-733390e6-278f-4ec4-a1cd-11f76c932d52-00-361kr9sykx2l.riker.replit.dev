@@ -4,79 +4,26 @@ import { audit } from "../audit";
 import { newId } from "../ids";
 import type { ActorContext } from "../auth";
 import { employeeSchema, type EmployeeInput } from "@/validation/employeeValidation";
+import {
+  employeeToRow as toRow,
+  employeeToApi as toApi,
+  findActiveEmployeeDuplicate
+} from "@/business/employeeRules";
+import { phoneSuffix } from "@/business/phoneRules";
 
 export { employeeSchema, type EmployeeInput } from "@/validation/employeeValidation";
 
 const TABLE = "hh_employees";
 
-function toRow(input: EmployeeInput) {
-  return {
-    fn: input.fn,
-    mn: input.mn,
-    ln: input.ln,
-    phone: input.phone,
-    email: input.email || "",
-    gender: input.gender,
-    dob: input.dob,
-    addr: input.addr,
-    area: input.area,
-    city: input.city,
-    pin: input.pin,
-    dept: input.dept,
-    desig: input.desig,
-    emp_type: input.emp_type,
-    etype: input.etype,
-    shift: input.shift,
-    salary: input.salary,
-    status: input.status,
-    relname: input.relname,
-    relphone: input.relphone,
-    docs: input.docs ?? undefined
-  };
-}
-
-function toApi(row: Record<string, any>) {
-  if (!row) return row;
-  const full = [row.fn, row.mn, row.ln].filter(Boolean).join(" ").trim();
-  return {
-    id: row.id,
-    full_name: full,
-    name: full,
-    fn: row.fn || "",
-    mn: row.mn || "",
-    ln: row.ln || "",
-    phone: row.phone || "",
-    mobile: row.phone || "",
-    email: row.email || "",
-    gender: row.gender || "",
-    dob: row.dob || "",
-    addr: row.addr || "",
-    area: row.area || "",
-    city: row.city || "Ahmedabad",
-    pin: row.pin || "",
-    department: row.dept || "",
-    designation: row.desig || "",
-    employee_type: row.emp_type || row.etype || "",
-    shift: row.shift || "",
-    salary: Number(row.salary || 0),
-    status: row.status || "Active",
-    relname: row.relname || "",
-    relphone: row.relphone || "",
-    docs: row.docs || [],
-    created_at: row.created_at || row.created || null,
-    updated_at: row.updated_at || null
-  };
-}
-
 async function findDuplicatePhone(phone: string, excludeId?: string) {
-  const normalized = (phone || "").replace(/[^0-9+]/g, "");
-  if (!normalized) return null;
+  const suffix = phoneSuffix(phone);
+  if (!suffix) return null;
   const { data, error } = await supabaseAdmin()
     .from(TABLE)
     .select("id, fn, ln, phone, status")
-    .ilike("phone", `%${normalized.slice(-8)}%`);
+    .ilike("phone", `%${suffix}%`);
   if (error) throw error;
-  return (data || []).find((r) => r.id !== excludeId && (r.status || "Active") === "Active") || null;
+  return findActiveEmployeeDuplicate(data || [], phone, excludeId);
 }
 
 export const employeeService = {
