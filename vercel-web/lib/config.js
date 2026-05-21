@@ -10,5 +10,5 @@ export const appConfig = {
   companyAddress:
     process.env.NEXT_PUBLIC_COMPANY_ADDRESS ||
     "A,407 Shivalik Yash, Opp. Shastrinagar BRTS, Naranpura, Ahmedabad-380013",
-  apiUrl: process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api"
+  apiUrl: process.env.NEXT_PUBLIC_API_URL || "/api/v1"
 };

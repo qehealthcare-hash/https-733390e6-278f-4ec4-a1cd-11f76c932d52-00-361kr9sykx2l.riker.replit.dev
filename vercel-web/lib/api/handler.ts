@@ -1,0 +1,74 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { jsonError } from "./errors";
+import { requireActor, type ActorContext } from "./auth";
+
+/** Next 15 passes `params` as a Promise. */
+export type NextRouteContext<P> = { params: Promise<P> };
+
+type Handler<P> = (
+  req: NextRequest,
+  ctx: { params: P; actor: ActorContext }
+) => Promise<NextResponse> | NextResponse;
+
+type RawHandler<P> = (
+  req: NextRequest,
+  ctx: { params: P }
+) => Promise<NextResponse> | NextResponse;
+
+/**
+ * Wraps a route handler with auth + uniform error envelope.
+ * Resolves Next 15's dynamic-params Promise and provides actor.
+ */
+export function withAuth<P = Record<string, string>>(handler: Handler<P>) {
+  return async (req: NextRequest, ctx: NextRouteContext<P>) => {
+    try {
+      const actor = await requireActor(req);
+      const params = (await ctx?.params) ?? ({} as P);
+      return await handler(req, { params, actor });
+    } catch (err) {
+      return jsonError(err);
+    }
+  };
+}
+
+/**
+ * Like withAuth but skips authentication. Use for webhook endpoints
+ * that authenticate via signed payloads.
+ */
+export function withoutAuth<P = Record<string, string>>(handler: RawHandler<P>) {
+  return async (req: NextRequest, ctx: NextRouteContext<P>) => {
+    try {
+      const params = (await ctx?.params) ?? ({} as P);
+      return await handler(req, { params });
+    } catch (err) {
+      return jsonError(err);
+    }
+  };
+}
+
+import { badRequest } from "./errors";
+
+export async function parseJsonBody<T extends Record<string, unknown> = Record<string, unknown>>(
+  req: NextRequest
+): Promise<T> {
+  const text = await req.text();
+  if (!text) return {} as T;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw badRequest("Body must be valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw badRequest("Body must be a JSON object");
+  }
+  return parsed as T;
+}
+
+export function pageParams(req: NextRequest): { limit: number; offset: number; q: string } {
+  const url = new URL(req.url);
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "50", 10) || 50, 1), 500);
+  const offset = Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0);
+  const q = (url.searchParams.get("q") || "").trim();
+  return { limit, offset, q };
+}

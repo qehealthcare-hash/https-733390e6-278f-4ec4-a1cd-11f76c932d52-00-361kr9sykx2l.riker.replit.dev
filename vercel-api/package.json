@@ -1,0 +1,21 @@
+{
+  "name": "@hominal/api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "build": "mkdir -p dist && cp -R src dist/src",
+    "start": "node src/server.js",
+    "lint": "node --check src/server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.8",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "helmet": "^8.1.0",
+    "morgan": "^1.10.0",
+    "zod": "^3.24.4"
+  }
+}

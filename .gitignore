@@ -1,0 +1,23 @@
+.DS_Store
+
+# Dependencies and build output
+node_modules/
+.next/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+
+# Local and hosted environment state
+.env
+.env.*
+!.env.example
+.vercel/
+
+# Runtime/private config
+supabase-config.js
+whatsapp-ai-chatbot/config.php
+
+# Generated archives
+*.zip

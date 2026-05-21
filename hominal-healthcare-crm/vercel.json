@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "buildCommand": "npm install && npm run build",
+  "framework": "nextjs",
+  "installCommand": "npm install",
+  "outputDirectory": ".next",
+  "rootDirectory": "apps/web",
+  "rewrites": [
+    {
+      "source": "/health",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index.js"
+    }
+  ]
+}

@@ -1290,7 +1290,7 @@ var SB_COMPAT_COLUMN_GROUPS = {
 var SB_SCHEMA_CACHE = {
   unsupportedColumns:{
     hh_employees:{ photo:true },
-    hh_patients:{ status_reason:true, status_reason_other:true },
+    hh_patients:{ status_reason:true, status_reason_other:true, address:true },
     hh_billings:{ close_reason:true, close_reason_other:true, pause_reason:true }
   }
 };
@@ -1417,15 +1417,63 @@ async function sbInsert(table, rows) {
   if (!SB_READY) return false;
   return await sbFetch('POST', table, Array.isArray(rows)?rows:[rows], '');
 }
+// Raw DELETE that asks the API to return the affected rows so we can detect the
+// extremely-common silent failure where RLS hides the target row and the DELETE
+// returns 204 with no error but also no rows removed. With `return=minimal` (the
+// default in sbFetch), every DELETE appears to succeed even when nothing changed,
+// which would let cloud rows resurrect on the next refresh.
+async function sbDeleteRaw(table, queryString) {
+  if (!SB_READY) return { ok:false, removed:0 };
+  try {
+    var url = SB_URL + '/rest/v1/' + table + (queryString || '');
+    var bearer = await getSupabaseRestBearer();
+    var res = await fetch(url, { method:'DELETE', headers:{
+      'apikey': SB_KEY,
+      'Authorization': 'Bearer ' + bearer,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    }});
+    if (!res.ok) {
+      var errTxt = '';
+      try { errTxt = await res.text(); } catch (ignore) { errTxt = ''; }
+      LAST_SUPABASE_ERROR = 'DELETE ' + table + ' ' + res.status + ': ' + errTxt;
+      console.error('Supabase DELETE ' + table + ' failed:', res.status, errTxt);
+      return { ok:false, removed:0 };
+    }
+    var txt = '';
+    try { txt = await res.text(); } catch (ignore) { txt = ''; }
+    var rows = [];
+    if (txt) {
+      try { rows = JSON.parse(txt); } catch (ignore) { rows = []; }
+    }
+    var removed = Array.isArray(rows) ? rows.length : 0;
+    return { ok:true, removed:removed };
+  } catch (e) {
+    LAST_SUPABASE_ERROR = 'DELETE ' + table + ': ' + (e && e.message ? e.message : String(e));
+    console.error('Supabase DELETE ' + table + ' error:', e);
+    return { ok:false, removed:0 };
+  }
+}
 async function sbDelete(table, id) {
-  if (!SB_READY) return;
-  var result = await sbFetch('DELETE', table, null, '?id=eq.' + encodeURIComponent(id));
-  return result !== null;
+  if (!SB_READY) return false;
+  var res = await sbDeleteRaw(table, '?id=eq.' + encodeURIComponent(id));
+  if (!res.ok) return false;
+  if (res.removed > 0) return true;
+  // 200/204 with 0 rows removed almost always means RLS hid the row. Confirm by
+  // re-fetching: if the row is genuinely gone (some other actor already deleted
+  // it) treat the delete as successful; otherwise report failure so the caller
+  // keeps a tombstone and the next refresh does not resurrect the row.
+  try {
+    var verify = await sbGet(table, '?id=eq.' + encodeURIComponent(id) + '&limit=1');
+    if (Array.isArray(verify) && verify.length === 0) return true;
+  } catch (ignore) {}
+  LAST_SUPABASE_ERROR = LAST_SUPABASE_ERROR || 'DELETE ' + table + ' affected 0 rows (likely RLS).';
+  return false;
 }
 async function sbDeleteWhere(table, column, value) {
-  if (!SB_READY) return;
-  var result = await sbFetch('DELETE', table, null, '?' + encodeURIComponent(column) + '=eq.' + encodeURIComponent(value));
-  return result !== null;
+  if (!SB_READY) return false;
+  var res = await sbDeleteRaw(table, '?' + encodeURIComponent(column) + '=eq.' + encodeURIComponent(value));
+  return !!res.ok;
 }
 async function sbRpc(fnName, payload) {
   if (!SB_READY) return false;
@@ -1622,50 +1670,88 @@ async function loadFromSupabase() {
     if (ptxs  && ptxs.length)   DB.paidTransactions = filterTombstonedRows('hh_paid_transactions', ptxs);
     // Do not wipe these maps when the API returns [] (RLS, new project, or transient read).
     // Empty results are not authoritative for deleting local ledger data.
-    if (bills === null) {
-      /* keep DB.billings */
-    } else if (Array.isArray(bills)) {
+    // When cloud returns a non-empty payload, repopulate from cloud BUT preserve any
+    // local rows that are still __dirty (not yet acked) or carry a deleted_at stamp.
+    if (Array.isArray(bills) && bills.length) {
+      var prevBillings = DB.billings || {};
       DB.billings = {};
       bills.forEach(function(b){
-      if (isDeletedTombstone('hh_billings', b.id)) return;
-      DB.billings[b.patient_id] = Object.assign({},b,{secDep:b.sec_dep,patientId:b.patient_id});
-    });
-    }
-    if (rcs === null) {
-      /* keep DB.receipts */
-    } else if (Array.isArray(rcs)) {
+        if (!b || isDeletedTombstone('hh_billings', b.id)) return;
+        DB.billings[b.patient_id] = Object.assign({},b,{secDep:b.sec_dep,patientId:b.patient_id});
+      });
+      // Preserve dirty (locally-created, not-yet-synced) billings.
+      Object.keys(prevBillings).forEach(function(pid){
+        var local = prevBillings[pid];
+        if (local && local.__dirty && !DB.billings[pid]) DB.billings[pid] = local;
+      });
+    } /* else: bills === null OR [] — keep DB.billings untouched */
+    if (Array.isArray(rcs) && rcs.length) {
+      var prevReceipts = DB.receipts || {};
       DB.receipts = {};
       rcs.forEach(function(r){
-      if (isDeletedTombstone('hh_receipts', r.id)) return;
-      if (!DB.receipts[r.billing_id]) DB.receipts[r.billing_id]=[];
-      DB.receipts[r.billing_id].push(normalizeReceiptRow(r, r.billing_id));
-    });
-    }
+        if (!r || isDeletedTombstone('hh_receipts', r.id)) return;
+        if (!DB.receipts[r.billing_id]) DB.receipts[r.billing_id]=[];
+        DB.receipts[r.billing_id].push(normalizeReceiptRow(r, r.billing_id));
+      });
+      // Preserve dirty (locally-created, not-yet-synced) AND locally-soft-deleted receipts.
+      Object.keys(prevReceipts).forEach(function(bid){
+        var prevArr = Array.isArray(prevReceipts[bid]) ? prevReceipts[bid] : [];
+        prevArr.forEach(function(local){
+          if (!local) return;
+          var keep = !!local.__dirty || !!local.deleted_at;
+          if (!keep) return;
+          if (!DB.receipts[bid]) DB.receipts[bid] = [];
+          var existing = DB.receipts[bid].some(function(r){ return r && r.id && local.id && String(r.id) === String(local.id); });
+          if (!existing) DB.receipts[bid].push(local);
+          else if (local.deleted_at) {
+            DB.receipts[bid] = DB.receipts[bid].map(function(r){
+              return r && r.id && String(r.id) === String(local.id) ? Object.assign({}, r, local) : r;
+            });
+          }
+        });
+      });
+    } /* else: rcs === null OR [] — keep DB.receipts untouched */
     Object.keys(DB.receipts || {}).forEach(function(billingId){
       DB.receipts[billingId] = dedupeRowsByIdentity(DB.receipts[billingId], function(receipt){
         return receipt && receipt.id ? ('id:' + receipt.id) : ('sig:' + buildComparableSignature(toSbReceipt(receipt, billingId)));
       });
     });
-    if (svcs === null) {
-      /* keep DB.svcEntries */
-    } else if (Array.isArray(svcs)) {
+    if (Array.isArray(svcs) && svcs.length) {
+      var prevSvc = DB.svcEntries || {};
       DB.svcEntries = {};
       svcs.forEach(function(e){
-      if (e && isDeletedTombstone('hh_svc_entries', e.id)) return;
-      if (!DB.svcEntries[e.svc_key]) DB.svcEntries[e.svc_key]=[];
-      DB.svcEntries[e.svc_key].push(e);
-    });
-    }
-    if (pays === null) {
-      /* keep DB.payoutCharges */
-    } else if (Array.isArray(pays)) {
+        if (!e || isDeletedTombstone('hh_svc_entries', e.id)) return;
+        if (!DB.svcEntries[e.svc_key]) DB.svcEntries[e.svc_key]=[];
+        DB.svcEntries[e.svc_key].push(e);
+      });
+      Object.keys(prevSvc).forEach(function(svcKey){
+        var prevArr = Array.isArray(prevSvc[svcKey]) ? prevSvc[svcKey] : [];
+        prevArr.forEach(function(local){
+          if (!local || !local.__dirty) return;
+          if (!DB.svcEntries[svcKey]) DB.svcEntries[svcKey] = [];
+          var existing = DB.svcEntries[svcKey].some(function(r){ return r && r.id && local.id && String(r.id) === String(local.id); });
+          if (!existing) DB.svcEntries[svcKey].push(local);
+        });
+      });
+    } /* else: svcs === null OR [] — keep DB.svcEntries untouched */
+    if (Array.isArray(pays) && pays.length) {
+      var prevPay = DB.payoutCharges || {};
       DB.payoutCharges = {};
       pays.forEach(function(c){
-      if (c && isDeletedTombstone('hh_payout_charges', c.id)) return;
-      if (!DB.payoutCharges[c.svc_key]) DB.payoutCharges[c.svc_key]=[];
-      DB.payoutCharges[c.svc_key].push(c);
-    });
-    }
+        if (!c || isDeletedTombstone('hh_payout_charges', c.id)) return;
+        if (!DB.payoutCharges[c.svc_key]) DB.payoutCharges[c.svc_key]=[];
+        DB.payoutCharges[c.svc_key].push(c);
+      });
+      Object.keys(prevPay).forEach(function(svcKey){
+        var prevArr = Array.isArray(prevPay[svcKey]) ? prevPay[svcKey] : [];
+        prevArr.forEach(function(local){
+          if (!local || !local.__dirty) return;
+          if (!DB.payoutCharges[svcKey]) DB.payoutCharges[svcKey] = [];
+          var existing = DB.payoutCharges[svcKey].some(function(r){ return r && r.id && local.id && String(r.id) === String(local.id); });
+          if (!existing) DB.payoutCharges[svcKey].push(local);
+        });
+      });
+    } /* else: pays === null OR [] — keep DB.payoutCharges untouched */
     if (Array.isArray(ctrs)) ctrs.forEach(function(c){DB.nextIds[c.key]=c.value;});
     mergeRemoteIdKeyedLedgerRows(invs, invItems, invReceipts);
     normalizeLoadedData();
@@ -2523,9 +2609,35 @@ async function refreshBillingReceiptsFromCloud(billingId) {
   if (!SB_READY) return true;
   latestRows = await fetchRemoteRowsSafe('hh_receipts', makeEqSelectQuery('billing_id', billingId));
   if (latestRows === null) return false;
-  DB.receipts[billingId] = dedupeRowsByIdentity((latestRows || []).map(function(receipt){
-    return normalizeReceiptRow(receipt, billingId);
-  }), function(receipt){
+  // Build a map of cloud rows by id and ALSO honour tombstones from local soft-deletes.
+  var cloudById = {};
+  (latestRows || []).forEach(function(r){
+    if (!r || !r.id) return;
+    if (isDeletedTombstone('hh_receipts', r.id)) return; // hide rows locally deleted but not yet purged from cloud
+    cloudById[String(r.id)] = normalizeReceiptRow(r, billingId);
+  });
+  // Preserve local rows that are either (a) still __dirty (not yet acked by cloud), or
+  // (b) locally soft-deleted (have deleted_at) — both must survive eventual-consistency lag.
+  var prior = Array.isArray(DB.receipts[billingId]) ? DB.receipts[billingId] : [];
+  prior.forEach(function(local){
+    if (!local) return;
+    var id = local.id ? String(local.id) : '';
+    var isDirty = !!local.__dirty;
+    var locallyDeleted = !!local.deleted_at;
+    if (locallyDeleted) {
+      // Force the locally-deleted state to win even if cloud still shows it alive.
+      cloudById[id || ('local-' + Math.random())] = normalizeReceiptRow(local, billingId);
+      return;
+    }
+    if (!id || !cloudById[id]) {
+      if (isDirty) cloudById[id || ('local-' + Math.random())] = normalizeReceiptRow(local, billingId);
+    } else if (isDirty) {
+      // cloud has the row but our local edits are newer/in-flight — keep the local snapshot
+      cloudById[id] = normalizeReceiptRow(Object.assign({}, cloudById[id], local), billingId);
+    }
+  });
+  var merged = Object.keys(cloudById).map(function(k){ return cloudById[k]; });
+  DB.receipts[billingId] = dedupeRowsByIdentity(merged, function(receipt){
     return receipt && receipt.id ? ('id:' + receipt.id) : ('sig:' + buildComparableSignature(toSbReceipt(receipt, billingId)));
   });
   saveDB();
@@ -5958,8 +6070,19 @@ function createBillingForPatient(patient, silent) {
   var next=DB.nextIds.bill||80;
   DB.nextIds.bill=next+1;
   bill={id:'INVE'+String(next).padStart(5,'0'),patientId:patient.id,patient_id:patient.id,status:'Active',secDep:0,sec_dep:0,created:patient.created||fmtDate(new Date())};
+  // Mark as dirty so the merge layer keeps it across loadFromSupabase()
+  // even if the immediate cloud upsert below silently fails.
+  markDirty(bill);
   DB.billings[patient.id]=bill;
-  if(SB_READY) sbUpsert('hh_billings',[getBillingSyncPayload(bill, patient.id)]);
+  saveDB();
+  if(SB_READY) {
+    Promise.resolve(sbUpsert('hh_billings',[getBillingSyncPayload(bill, patient.id)])).then(function(ok){
+      if (ok !== false) {
+        clearDirty(bill);
+        saveDB();
+      }
+    });
+  }
   if(!silent) toast('Billing created for '+patient.name);
   return bill;
 }
@@ -10752,17 +10875,17 @@ function bindDelegatedBillingActions() {
           }
           receiptDeleteSyncOk = await softDeleteReceiptLedgerRow((DB.receipts[targetBillingId] || []).find(function(row){ return row && row.id === receiptId; }) || { id:receiptId }, targetBillingId);
           setSharedSyncStatus(receiptDeleteSyncOk);
-          setConflictBanner('rcConflictBanner', receiptDeleteSyncOk ? '' : 'Cloud delete failed. Receipt was kept so it will not return after refresh.', 'error');
-          if (!receiptDeleteSyncOk) {
-            toast('Cloud delete failed. Receipt was not removed.','error');
-            return;
-          }
+          // The receipt has been marked deleted locally (deleted_at + tombstone) regardless
+          // of the cloud result. Always refresh the UI; if cloud sync failed, show a
+          // non-blocking warning instead of acting like the delete was reverted.
+          setConflictBanner('rcConflictBanner', receiptDeleteSyncOk ? '' : 'Removed locally; cloud delete will retry automatically.', 'warn');
           syncBillingSecurityAmount(currentBillingPatId);
-          recordAudit('receipt', receiptId, 'delete', buildStampText('Deleted receipt'), {});
+          recordAudit('receipt', receiptId, receiptDeleteSyncOk ? 'delete' : 'delete-local', buildStampText(receiptDeleteSyncOk ? 'Deleted receipt' : 'Deleted receipt (cloud pending)'), {});
           saveDB();
           renderReceipts();
           safeSyncReceiptBillingFields(false);
           viewPatient(currentBillingPatId);
+          toast(receiptDeleteSyncOk ? 'Receipt deleted' : 'Receipt removed locally; cloud sync pending', receiptDeleteSyncOk ? 'success' : 'info');
         } finally {
           btn.__hominalDeleting = false;
         }
@@ -12613,15 +12736,12 @@ function viewPatient(patId, options) {
             }
             receiptDeleteSyncOk = await softDeleteReceiptLedgerRow(receipt, billingId);
             setSharedSyncStatus(receiptDeleteSyncOk);
-            setConflictBanner('rcConflictBanner', receiptDeleteSyncOk ? '' : 'Cloud delete failed. Receipt was kept so it will not return after refresh.', 'error');
-            if (!receiptDeleteSyncOk) {
-              toast('Cloud delete failed. Receipt was not removed.','error');
-              return;
-            }
+            setConflictBanner('rcConflictBanner', receiptDeleteSyncOk ? '' : 'Removed locally; cloud delete will retry automatically.', 'warn');
             syncBillingSecurityAmount(patId);
-            recordAudit('receipt', receipt.id, 'delete', buildStampText('Deleted receipt'), { amount:receipt.amount });
+            recordAudit('receipt', receipt.id, receiptDeleteSyncOk ? 'delete' : 'delete-local', buildStampText(receiptDeleteSyncOk ? 'Deleted receipt' : 'Deleted receipt (cloud pending)'), { amount:receipt.amount });
             saveDB();
             viewPatient(patId);
+            toast(receiptDeleteSyncOk ? 'Receipt deleted' : 'Receipt removed locally; cloud sync pending', receiptDeleteSyncOk ? 'success' : 'info');
           })();
         });
       billingDeleteBtn.setAttribute('data-action', 'receipt-delete');
@@ -13303,25 +13423,53 @@ async function addReceipt() {
   }
   var billingId = (DB.billings[currentBillingPatId] || {}).id;
   if (!billingId) {
-    toast('No active billing found','error');
-    finishReceiptSave();
-    return;
+    // Security/Advance deposits are commonly taken at the START of duty,
+    // before any service entries exist. Auto-create the billing in that case
+    // so the cashier never gets blocked.
+    if (type === 'Security' || type === 'Advance') {
+      var patientRow = null;
+      try {
+        patientRow = (DB.patients || []).filter(function(p){ return p && p.id === currentBillingPatId; })[0] || null;
+      } catch (lookupErr) {
+        patientRow = null;
+      }
+      if (patientRow) {
+        var autoBill = createBillingForPatient(patientRow, true);
+        if (autoBill && autoBill.id) billingId = autoBill.id;
+      }
+    }
+    if (!billingId) {
+      toast('No active billing found','error');
+      finishReceiptSave();
+      return;
+    }
   }
   if (!DB.receipts[billingId]) DB.receipts[billingId] = [];
-  availableServices = repairReceiptServiceSelect(receiptPrefix, serviceType || currentSvcName || '');
-  serviceType = receiptValue('ServiceType', receiptPrefix);
-  if (!availableServices.length) availableServices = getAllBillingServiceChoices(billingId);
-  if (!serviceType && availableServices.length) {
-    serviceType = availableServices.indexOf(currentSvcName) !== -1 ? currentSvcName : availableServices[0];
-    setReceiptValue('ServiceType', serviceType, receiptPrefix);
+  // Security / Refund deposits do NOT bill against a service-day slice.
+  // They accept a custom amount and skip the service-type requirement so
+  // they can be added even before any service entries exist.
+  if (type === 'Security' || type === 'Refund') {
+    serviceType = '';
+    selectionMeta = null;
+    paidSlice = null;
+    rangeMeta = null;
+    setReceiptValue('ServiceType', '', receiptPrefix);
+  } else {
+    availableServices = repairReceiptServiceSelect(receiptPrefix, serviceType || currentSvcName || '');
+    serviceType = receiptValue('ServiceType', receiptPrefix);
+    if (!availableServices.length) availableServices = getAllBillingServiceChoices(billingId);
+    if (!serviceType && availableServices.length) {
+      serviceType = availableServices.indexOf(currentSvcName) !== -1 ? currentSvcName : availableServices[0];
+      setReceiptValue('ServiceType', serviceType, receiptPrefix);
+    }
+    if (!serviceType) {
+      toast(availableServices.length ? 'Select a service type' : 'No billing service found. Add service entries first.','error');
+      finishReceiptSave();
+      return;
+    }
+    var serviceTypeCanon = canonicalBillingServiceName(serviceType, billingId);
+    if (serviceTypeCanon) serviceType = serviceTypeCanon;
   }
-  if (!serviceType) {
-    toast(availableServices.length ? 'Select a service type' : 'No billing service found. Add service entries first.','error');
-    finishReceiptSave();
-    return;
-  }
-  var serviceTypeCanon = canonicalBillingServiceName(serviceType, billingId);
-  if (serviceTypeCanon) serviceType = serviceTypeCanon;
   toast('Saving receipt...', 'info');
   var preRefreshOk = await Promise.race([
     refreshLatestReceiptsForSave(billingId),
@@ -13423,12 +13571,14 @@ async function addReceipt() {
     refreshBillingReceiptsFromCloud(billingId),
     new Promise(function(resolve){ setTimeout(function(){ resolve(false); }, 8000); })
   ]);
-  clearDirty(receipt);
-  if (!postRefreshOk) {
+  // Only drop the dirty flag once the cloud has confirmed both write AND read-back;
+  // otherwise keep dirty so the merge layer can restore the row on next refresh.
+  if (postRefreshOk) {
+    clearDirty(receipt);
+    setConflictBanner('rcConflictBanner', '');
+  } else {
     setConflictBanner('rcConflictBanner', 'Receipt was saved to the cloud, but the latest ledger refresh did not complete. The local copy has been kept; reload this billing later to re-verify unpaid days.', 'warn');
     toast('Receipt saved; ledger refresh pending.', 'info');
-  } else {
-    setConflictBanner('rcConflictBanner', '');
   }
   recordAudit('receipt', receipt.id, 'create', buildStampText('Added receipt'), { cashier:getCurrentUser().username, amount:amount });
   saveDB();
@@ -13462,13 +13612,31 @@ async function softDeleteReceiptLedgerRow(receipt, billingId) {
   var deletedRow;
   var deleteOk;
   if (!receipt || !billingId) return false;
+  var deletionStamp = new Date().toISOString();
+  // CRITICAL: tag the LOCAL row immediately so the UI never re-shows it after
+  // a refresh races with eventual consistency, and add a tombstone so a fresh
+  // cloud read can't resurrect the receipt while the cloud soft-delete is still in flight.
+  var localList = Array.isArray(DB.receipts[billingId]) ? DB.receipts[billingId] : [];
+  for (var lIx = 0; lIx < localList.length; lIx++) {
+    var lr = localList[lIx];
+    if (lr && lr.id === receipt.id) {
+      lr.deleted_at = deletionStamp;
+      lr.deleted = true;
+      markDirty(lr);
+      break;
+    }
+  }
+  if (receipt && receipt.id) addDeletedTombstone('hh_receipts', receipt.id);
+  saveDB();
   deletedRow = normalizeReceiptRow(Object.assign({}, receipt, {
-    deleted_at: new Date().toISOString()
+    deleted_at: deletionStamp
   }), billingId);
   markDirty(deletedRow);
   console.info('Billing receipt delete start', deletedRow.id || '[no-id]');
   deleteOk = SB_READY ? (await deleteReceiptLedgerRow(deletedRow, billingId)) !== false : false;
   if (deleteOk !== false) {
+    // Cloud accepted the soft-delete — clear the tombstone (cloud row now carries deleted_at).
+    if (receipt && receipt.id) clearDeletedTombstone('hh_receipts', receipt.id);
     deleteOk = await refreshBillingReceiptsFromCloud(billingId);
   }
   return deleteOk !== false;
@@ -13529,16 +13697,13 @@ function renderReceipts() {
           }
           receiptDeleteSyncOk = await softDeleteReceiptLedgerRow(receipt, billingId);
           setSharedSyncStatus(receiptDeleteSyncOk);
-          setConflictBanner('rcConflictBanner', receiptDeleteSyncOk ? '' : 'Cloud delete failed. Receipt was kept so it will not return after refresh.', 'error');
-          if (!receiptDeleteSyncOk) {
-            toast('Cloud delete failed. Receipt was not removed.','error');
-            return;
-          }
+          setConflictBanner('rcConflictBanner', receiptDeleteSyncOk ? '' : 'Removed locally; cloud delete will retry automatically.', 'warn');
           syncBillingSecurityAmount(currentBillingPatId);
-          recordAudit('receipt', receipt.id, 'delete', buildStampText('Deleted receipt'), { amount:receipt.amount });
+          recordAudit('receipt', receipt.id, receiptDeleteSyncOk ? 'delete' : 'delete-local', buildStampText(receiptDeleteSyncOk ? 'Deleted receipt' : 'Deleted receipt (cloud pending)'), { amount:receipt.amount });
           saveDB();
           renderReceipts();
           syncReceiptBillingFields(false);
+          toast(receiptDeleteSyncOk ? 'Receipt deleted' : 'Receipt removed locally; cloud sync pending', receiptDeleteSyncOk ? 'success' : 'info');
         })();
       });
     receiptDeleteBtn.setAttribute('data-action', 'receipt-delete');
