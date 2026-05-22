@@ -46,6 +46,16 @@ export const inquiryPotentialOptions = [
   { value: "COLD", label: "Cold" }
 ];
 
+export const inquiryStatusOptions = [
+  { value: "New", label: "New" },
+  { value: "Contacted", label: "Contacted" },
+  { value: "FollowUp", label: "Follow up" },
+  { value: "Negotiating", label: "Negotiating" },
+  { value: "Converted", label: "Converted" },
+  { value: "Closed", label: "Closed" },
+  { value: "Lost", label: "Lost" }
+];
+
 export const invoiceTypeOptions = [
   { value: "PROVISIONAL", label: "Provisional" },
   { value: "FINAL", label: "Final" }
@@ -55,6 +65,29 @@ export const invoiceStatusOptions = [
   { value: "OPEN", label: "Open" },
   { value: "PAUSED", label: "Paused" },
   { value: "CLOSED", label: "Closed" }
+];
+
+export const billingStatusOptions = [
+  { value: "Active", label: "Active" },
+  { value: "Paused", label: "Paused" },
+  { value: "Closed", label: "Closed" },
+  { value: "Cancelled", label: "Cancelled" }
+];
+
+export const receiptTypeOptions = [
+  { value: "Security", label: "Security Deposit" },
+  { value: "Advance", label: "Advance" },
+  { value: "Partial", label: "Partial" },
+  { value: "Final", label: "Final" },
+  { value: "Refund", label: "Refund" }
+];
+
+export const paymentMethodOptions = [
+  { value: "Cash", label: "Cash" },
+  { value: "UPI", label: "UPI" },
+  { value: "NEFT", label: "NEFT" },
+  { value: "Card", label: "Card" },
+  { value: "Cheque", label: "Cheque" }
 ];
 
 export const paymentModeOptions = [

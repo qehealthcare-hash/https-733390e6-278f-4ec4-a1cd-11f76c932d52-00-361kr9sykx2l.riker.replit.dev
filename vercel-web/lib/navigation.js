@@ -4,6 +4,7 @@ export const modules = [
   { href: "/employees", label: "Employees", permission: "employees.read" },
   { href: "/inquiries", label: "Inquiries", permission: "inquiries.read" },
   { href: "/duties", label: "Duty calendar", permission: "duties.read" },
+  { href: "/attendance", label: "Attendance", permission: "attendance.read" },
   { href: "/billings", label: "Billing", permission: "billings.read" },
   { href: "/payouts", label: "Payouts", permission: "payouts.read" },
   { href: "/reports", label: "Reports", permission: "reports.read" },

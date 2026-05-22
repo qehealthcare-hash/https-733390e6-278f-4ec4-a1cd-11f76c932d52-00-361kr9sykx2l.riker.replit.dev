@@ -7,10 +7,17 @@ import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useRealtimeResource } from "@/hooks/use-realtime-resource";
 import { useAuth } from "@/components/providers/auth-provider";
-import { requestWithOfflineFallback } from "@/lib/api-client";
-import { inquiryPotentialOptions, inquirySourceOptions } from "@/lib/crm-options";
+import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import {
+  inquiryPotentialOptions,
+  inquirySourceOptions,
+  inquiryStatusOptions
+} from "@/lib/crm-options";
 import { formatDate } from "@/lib/formatters";
 import { openPrintWindow } from "@/lib/print";
+
+var OPEN_STATUSES = ["New", "Contacted", "FollowUp", "Negotiating"];
+var CLOSED_STATUSES = ["Converted", "Closed", "Lost"];
 
 function createInitialForm() {
   return {
@@ -22,6 +29,8 @@ function createInitialForm() {
     service_required: "",
     source: "WHATSAPP",
     potential: "WARM",
+    status: "New",
+    followup_date: "",
     emergency_level: 5,
     flexibility_score: 5,
     priority_score: 5,
@@ -40,19 +49,26 @@ export default function InquiriesPage() {
   var [busy, setBusy] = useState(false);
   var [search, setSearch] = useState("");
   var [potentialFilter, setPotentialFilter] = useState("");
+  var [statusFilter, setStatusFilter] = useState("");
+  var [openOnly, setOpenOnly] = useState(true);
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
 
   var filtered = useMemo(
     function () {
       return resource.data.filter(function (row) {
-        var hay = [row.patient_name, row.mobile, row.area, row.service_required, row.source].join(" ").toLowerCase();
+        var hay = [row.patient_name || row.name, row.mobile || row.phone, row.area, row.service_required || row.service, row.source]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
         var matchesSearch = !search || hay.indexOf(search.toLowerCase()) >= 0;
         var matchesPotential = !potentialFilter || row.potential === potentialFilter;
-        return matchesSearch && matchesPotential;
+        var matchesStatus = !statusFilter || row.status === statusFilter;
+        var matchesOpen = !openOnly || OPEN_STATUSES.indexOf(row.status || "New") >= 0;
+        return matchesSearch && matchesPotential && matchesStatus && matchesOpen;
       });
     },
-    [resource.data, search, potentialFilter]
+    [resource.data, search, potentialFilter, statusFilter, openOnly]
   );
 
   function updateField(name, value) {
@@ -70,17 +86,19 @@ export default function InquiriesPage() {
   function editInquiry(row) {
     setForm({
       id: row.id,
-      patient_name: row.patient_name || "",
-      mobile: row.mobile || "",
+      patient_name: row.patient_name || row.name || "",
+      mobile: row.mobile || row.phone || "",
       area: row.area || "",
       city: row.city || "Ahmedabad",
-      service_required: row.service_required || "",
+      service_required: row.service_required || row.service || "",
       source: row.source || "WHATSAPP",
       potential: row.potential || "WARM",
-      emergency_level: row.emergency_level || 5,
-      flexibility_score: row.flexibility_score || 5,
-      priority_score: row.priority_score || 5,
-      notes: row.notes || ""
+      status: row.status || "New",
+      followup_date: row.followup_date || "",
+      emergency_level: row.emergency_level ?? row.rating_emergency ?? 5,
+      flexibility_score: row.flexibility_score ?? row.rating_flexibility ?? 5,
+      priority_score: row.priority_score ?? row.rating_overall ?? 5,
+      notes: row.notes || row.remarks || ""
     });
   }
 
@@ -102,6 +120,8 @@ export default function InquiriesPage() {
             service_required: form.service_required,
             source: form.source,
             potential: form.potential,
+            status: form.status,
+            followup_date: form.followup_date || "",
             emergency_level: Number(form.emergency_level),
             flexibility_score: Number(form.flexibility_score),
             priority_score: Number(form.priority_score),
@@ -135,47 +155,101 @@ export default function InquiriesPage() {
     }
   }
 
+  async function changeStatus(row, nextStatus) {
+    var reason = "";
+    var followup = row.followup_date || "";
+    if (nextStatus === "FollowUp" || nextStatus === "Negotiating") {
+      followup = window.prompt(
+        "Follow-up date (YYYY-MM-DD)",
+        followup || new Date().toISOString().slice(0, 10)
+      ) || "";
+      if (!followup) return;
+    }
+    if (nextStatus === "Closed" || nextStatus === "Lost") {
+      reason = window.prompt("Reason for " + nextStatus.toLowerCase(), "") || "";
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await requestWithOfflineFallback(
+        "/inquiries/" + row.id + "/status",
+        {
+          method: "POST",
+          body: { status: nextStatus, reason: reason, followup_date: followup }
+        },
+        auth.session
+      );
+      setMessage("Inquiry → " + nextStatus);
+      await resource.reload();
+    } catch (statusError) {
+      setError(statusError.message || "Unable to change status");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function convertToPatient(row) {
+    if (!window.confirm("Convert " + (row.patient_name || row.name || "this lead") + " to a Patient?")) return;
+    setBusy(true);
+    setError("");
+    try {
+      var data = await requestWithOfflineFallback(
+        "/inquiries/" + row.id + "/convert",
+        { method: "POST", body: { notes: row.notes || row.remarks || "" } },
+        auth.session
+      );
+      setMessage("Converted to patient " + (data?.patient_id || "OK"));
+      await resource.reload();
+    } catch (convertError) {
+      setError(convertError.message || "Unable to convert inquiry");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openInquiryPdf(row, hideMobile) {
     var body = [
       "<h2>Inquiry Summary</h2>",
-      "<div class='meta'><strong>Patient:</strong> " + row.patient_name + "</div>",
-      hideMobile ? "" : "<div class='meta'><strong>Mobile:</strong> " + row.mobile + "</div>",
-      "<div class='meta'><strong>Location:</strong> " + row.area + ", " + row.city + "</div>",
-      "<div class='meta'><strong>Service Required:</strong> " + row.service_required + "</div>",
-      "<div class='meta'><strong>Source:</strong> " + row.source + "</div>",
-      "<div class='meta'><strong>Potential:</strong> " + row.potential + "</div>",
+      "<div class='meta'><strong>Patient:</strong> " + (row.patient_name || row.name) + "</div>",
+      hideMobile ? "" : "<div class='meta'><strong>Mobile:</strong> " + (row.mobile || row.phone || "") + "</div>",
+      "<div class='meta'><strong>Location:</strong> " + (row.area || "") + ", " + (row.city || "") + "</div>",
+      "<div class='meta'><strong>Service Required:</strong> " + (row.service_required || row.service || "") + "</div>",
+      "<div class='meta'><strong>Source:</strong> " + (row.source || "") + "</div>",
+      "<div class='meta'><strong>Potential:</strong> " + (row.potential || "") + "</div>",
+      "<div class='meta'><strong>Status:</strong> " + (row.status || "") + "</div>",
       "<table><thead><tr><th>Metric</th><th>Score</th></tr></thead><tbody>" +
-        "<tr><td>Emergency Level</td><td>" + row.emergency_level + "/10</td></tr>" +
-        "<tr><td>Flexibility</td><td>" + row.flexibility_score + "/10</td></tr>" +
-        "<tr><td>Overall Priority</td><td>" + row.priority_score + "/10</td></tr>" +
+        "<tr><td>Emergency Level</td><td>" + (row.emergency_level ?? row.rating_emergency ?? "-") + "/10</td></tr>" +
+        "<tr><td>Flexibility</td><td>" + (row.flexibility_score ?? row.rating_flexibility ?? "-") + "/10</td></tr>" +
+        "<tr><td>Overall Priority</td><td>" + (row.priority_score ?? row.rating_overall ?? "-") + "/10</td></tr>" +
       "</tbody></table>",
-      "<div class='meta'><strong>Notes:</strong> " + (row.notes || "-") + "</div>",
+      "<div class='meta'><strong>Notes:</strong> " + (row.notes || row.remarks || "-") + "</div>",
       "<div class='stamp'>Created/Processed on " + formatDate(row.created_at) + "</div>"
     ].join("");
     openPrintWindow(hideMobile ? "Inquiry PDF (without mobile)" : "Inquiry PDF", body);
   }
 
   function sendWhatsApp(row) {
+    var phone = row.mobile || row.phone || "";
     var text =
       "New Inquiry: " +
-      row.patient_name +
+      (row.patient_name || row.name) +
       " needs " +
-      row.service_required +
+      (row.service_required || row.service || "") +
       " in " +
-      row.area +
+      (row.area || "") +
       ". Emergency: " +
-      row.emergency_level +
+      (row.emergency_level ?? row.rating_emergency ?? "-") +
       "/10. Please contact: " +
-      row.mobile +
+      phone +
       ". — Hominal Healthcare | 7211136600";
-    window.open("https://wa.me/91" + row.mobile + "?text=" + encodeURIComponent(text), "_blank");
+    window.open("https://wa.me/91" + phone + "?text=" + encodeURIComponent(text), "_blank");
   }
 
   return (
     <AuthGuard permission="inquiries.read">
       <AppShell title="Inquiries">
         <div className="page-split">
-          <ModuleShell title={form.id ? "Edit Inquiry" : "Create Inquiry"} description="Hot, warm, and cold leads with printable and shareable summaries">
+          <ModuleShell title={form.id ? "Edit Inquiry" : "Create Inquiry"} description="Capture leads with status workflow, follow-ups and convert-to-patient.">
             <form className="stack" onSubmit={handleSubmit}>
               <div className="grid-2">
                 <div className="field">
@@ -214,6 +288,23 @@ export default function InquiriesPage() {
                     })}
                   </select>
                 </div>
+                <div className="field">
+                  <label>Status</label>
+                  <select value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
+                    {inquiryStatusOptions.map(function (item) {
+                      return <option key={item.value} value={item.value}>{item.label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Follow-up date</label>
+                  <input
+                    type="date"
+                    value={form.followup_date}
+                    onChange={function (event) { updateField("followup_date", event.target.value); }}
+                    required={form.status === "FollowUp" || form.status === "Negotiating"}
+                  />
+                </div>
               </div>
               <div className="grid-3">
                 <div className="field">
@@ -249,11 +340,20 @@ export default function InquiriesPage() {
             </form>
           </ModuleShell>
 
-          <ModuleShell title="Inquiry Tracker" description="Printable and WhatsApp-shareable lead queue">
+          <ModuleShell title="Inquiry Tracker" description="Status workflow, conversion to patient, follow-ups, WhatsApp & PDF.">
             <div className="toolbar">
               <div className="field">
                 <label>Search</label>
                 <input value={search} onChange={function (event) { setSearch(event.target.value); }} placeholder="Name, mobile, service or source" />
+              </div>
+              <div className="field">
+                <label>Status</label>
+                <select value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
+                  <option value="">All</option>
+                  {inquiryStatusOptions.map(function (item) {
+                    return <option key={item.value} value={item.value}>{item.label}</option>;
+                  })}
+                </select>
               </div>
               <div className="field">
                 <label>Potential</label>
@@ -264,6 +364,18 @@ export default function InquiriesPage() {
                   })}
                 </select>
               </div>
+              <div className="field">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={openOnly}
+                    onChange={function (event) {
+                      setOpenOnly(event.target.checked);
+                    }}
+                  />
+                  &nbsp;Open only
+                </label>
+              </div>
             </div>
             {!filtered.length ? (
               <EmptyState
@@ -273,35 +385,101 @@ export default function InquiriesPage() {
             ) : (
               <div className="record-list">
                 {filtered.map(function (row) {
+                  var status = row.status || "New";
+                  var isClosed = CLOSED_STATUSES.indexOf(status) >= 0;
                   return (
                     <div className="record-card" key={row.id}>
                       <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
-                          <h3>{row.patient_name}</h3>
+                          <h3>{row.patient_name || row.name}</h3>
                           <div className="record-meta">
-                            <span>{row.mobile}</span>
-                            <span>{row.area}, {row.city}</span>
-                            <span>{row.service_required}</span>
+                            <span>{row.mobile || row.phone}</span>
+                            <span>{row.area || ""}, {row.city || ""}</span>
+                            <span>{row.service_required || row.service || ""}</span>
+                            <span className={"status " + String(status).toLowerCase()}>{status}</span>
                           </div>
                         </div>
                         <span className={"status " + String(row.potential || "").toLowerCase()}>{row.potential}</span>
                       </div>
                       <div className="helper-box" style={{ marginTop: 12 }}>
-                        Emergency {row.emergency_level}/10 | Flexibility {row.flexibility_score}/10 | Priority {row.priority_score}/10
+                        Emergency {row.emergency_level ?? row.rating_emergency ?? "-"}/10 ·
+                        Flexibility {row.flexibility_score ?? row.rating_flexibility ?? "-"}/10 ·
+                        Priority {row.priority_score ?? row.rating_overall ?? "-"}/10
+                        {row.followup_date ? " · Follow-up " + row.followup_date : ""}
                       </div>
                       <div className="record-meta" style={{ marginTop: 12 }}>
                         <span>{row.source}</span>
                         <span>{formatDate(row.created_at)}</span>
                       </div>
-                      <div className="button-row" style={{ marginTop: 12 }}>
+                      <div className="button-row" style={{ marginTop: 12, flexWrap: "wrap" }}>
                         <button className="button secondary" type="button" onClick={function () { editInquiry(row); }}>
                           Edit
                         </button>
+                        {!isClosed ? (
+                          <button
+                            className="button success"
+                            type="button"
+                            onClick={function () {
+                              convertToPatient(row);
+                            }}
+                            disabled={busy}
+                          >
+                            Convert to patient
+                          </button>
+                        ) : null}
+                        {OPEN_STATUSES.indexOf(status) >= 0 && status !== "Contacted" ? (
+                          <button
+                            className="button secondary"
+                            type="button"
+                            onClick={function () {
+                              changeStatus(row, "Contacted");
+                            }}
+                            disabled={busy}
+                          >
+                            Mark Contacted
+                          </button>
+                        ) : null}
+                        {status !== "FollowUp" && !isClosed ? (
+                          <button
+                            className="button secondary"
+                            type="button"
+                            onClick={function () {
+                              changeStatus(row, "FollowUp");
+                            }}
+                            disabled={busy}
+                          >
+                            Follow-up
+                          </button>
+                        ) : null}
+                        {status !== "Negotiating" && !isClosed ? (
+                          <button
+                            className="button secondary"
+                            type="button"
+                            onClick={function () {
+                              changeStatus(row, "Negotiating");
+                            }}
+                            disabled={busy}
+                          >
+                            Negotiating
+                          </button>
+                        ) : null}
+                        {!isClosed ? (
+                          <button
+                            className="button danger"
+                            type="button"
+                            onClick={function () {
+                              changeStatus(row, "Lost");
+                            }}
+                            disabled={busy}
+                          >
+                            Lost
+                          </button>
+                        ) : null}
                         <button className="button secondary" type="button" onClick={function () { openInquiryPdf(row, false); }}>
-                          PDF with mobile
+                          PDF
                         </button>
                         <button className="button secondary" type="button" onClick={function () { openInquiryPdf(row, true); }}>
-                          PDF without mobile
+                          PDF (no mobile)
                         </button>
                         <button className="button success" type="button" onClick={function () { sendWhatsApp(row); }}>
                           WhatsApp

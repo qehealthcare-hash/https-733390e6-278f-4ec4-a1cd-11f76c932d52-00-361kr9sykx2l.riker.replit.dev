@@ -26,6 +26,8 @@ var rolePermissions = {
     "billings.write",
     "duties.read",
     "duties.write",
+    "attendance.read",
+    "attendance.write",
     "reports.read",
     "audits.read"
   ],
@@ -37,11 +39,12 @@ var rolePermissions = {
     "billings.write",
     "payouts.read",
     "payouts.write",
+    "attendance.read",
     "reports.read",
     "audits.read"
   ],
-  NURSE: ["dashboard.read", "employees.read", "patients.read", "payouts.read"],
-  ATTENDANT: ["dashboard.read", "employees.read", "patients.read", "payouts.read"]
+  NURSE: ["dashboard.read", "employees.read", "patients.read", "payouts.read", "attendance.read", "attendance.write"],
+  ATTENDANT: ["dashboard.read", "employees.read", "patients.read", "payouts.read", "attendance.read", "attendance.write"]
 };
 
 export function hasPermission(role, permission) {
