@@ -83,7 +83,7 @@ async function fireAudit(
     stamp?: string;
   }
 ) {
-  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor, {
     module: "duty",
     entity_id: payload.entity_id,
     action: payload.action,

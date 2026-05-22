@@ -32,6 +32,7 @@ function toApi(row: JsonRow) {
     entity_id: row.entity_id,
     action: row.action,
     actor: row.actor,
+    user_id: row.user_id ?? null,
     stamp: row.stamp,
     before: row.before ?? null,
     after: row.after ?? null,

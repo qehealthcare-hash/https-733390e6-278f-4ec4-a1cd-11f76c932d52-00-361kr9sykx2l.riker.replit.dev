@@ -81,13 +81,13 @@ async function fireAudit(
   ctx: EmployeeServiceContext,
   payload: {
     entity_id: string;
-    action: "create" | "update" | "delete" | "restore";
+    action: "create" | "update" | "delete" | "restore" | "deactivate";
     before?: unknown;
     after?: unknown;
     stamp?: string;
   }
 ) {
-  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor, {
     module: "employee",
     entity_id: payload.entity_id,
     action: payload.action,
@@ -276,10 +276,12 @@ export const employeeService = {
     const fresh = await loadFreshRow(id, ctx, updated.data ?? null);
     if (!fresh.success || !fresh.data) return passFailure(fresh);
 
+    const statusAction =
+      input.status === "Active" ? "restore" : input.status === "Inactive" ? "deactivate" : "update";
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
-        action: input.status === "Active" ? "restore" : "update",
+        action: statusAction,
         before: existing.data,
         after: fresh.data,
         stamp: `Status -> ${input.status}${input.reason ? ` (${input.reason})` : ""}`

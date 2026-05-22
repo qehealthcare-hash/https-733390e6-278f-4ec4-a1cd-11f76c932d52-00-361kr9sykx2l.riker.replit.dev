@@ -11,6 +11,7 @@ export interface AuditInsertRow {
   entity_id?: string | null;
   action: string;
   actor: string;
+  user_id?: string | null;
   stamp?: string;
   before?: unknown;
   after?: unknown;
@@ -33,6 +34,7 @@ export const auditRepository = {
         entity_id: entry.entity_id ?? null,
         action: entry.action,
         actor: entry.actor,
+        user_id: entry.user_id ?? null,
         stamp: entry.stamp ?? `${entry.action} by ${entry.actor}`,
         before: entry.before ?? null,
         after: entry.after ?? null,

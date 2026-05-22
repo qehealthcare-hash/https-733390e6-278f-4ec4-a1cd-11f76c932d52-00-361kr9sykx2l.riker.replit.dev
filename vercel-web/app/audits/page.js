@@ -130,6 +130,7 @@ export default function AuditsPage() {
                       <th>Entity</th>
                       <th>Action</th>
                       <th>Actor</th>
+                      <th>User ID</th>
                       <th>Stamp</th>
                     </tr>
                   </thead>
@@ -142,6 +143,7 @@ export default function AuditsPage() {
                           <td className="td-id">{row.entity_id || "—"}</td>
                           <td>{row.action}</td>
                           <td>{row.actor}</td>
+                          <td className="td-id">{row.user_id || "—"}</td>
                           <td>{row.stamp}</td>
                         </tr>
                       );

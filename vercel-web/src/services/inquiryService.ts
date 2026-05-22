@@ -58,6 +58,7 @@ import {
 
 export interface ActorLike {
   email: string;
+  userId?: string;
   role?: string;
   accessToken?: string;
 }
@@ -82,7 +83,7 @@ async function fireAudit(
     stamp?: string;
   }
 ) {
-  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor, {
     module: "inquiry",
     entity_id: payload.entity_id,
     action: payload.action,
@@ -356,7 +357,7 @@ export const inquiryService = {
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
-        action: "update",
+        action: "status_change",
         before: existing.data,
         after: fresh.data,
         stamp: `Status ${existing.data.status} → ${input.status}${input.reason ? `: ${input.reason}` : ""}`

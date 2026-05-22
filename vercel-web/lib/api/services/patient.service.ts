@@ -24,6 +24,7 @@ import type { PatientInput, PatientAssignInput } from "@/validation/patientValid
 function toActor(actor: ActorContext): ActorLike {
   return {
     email: actor.email,
+    userId: actor.userId,
     role: actor.role,
     accessToken: actor.accessToken
   };

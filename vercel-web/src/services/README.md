@@ -437,6 +437,21 @@ Two distinct surfaces ship under Phase 7c because the legacy SPA models a
 | `API_AUDIT_DISABLED=true` (CI) | Mutations succeed without audit insert |
 | `GET /audits?module=patient&entity_id=PID…` | Newest-first rows for that entity |
 
+### Audit log system
+
+- **Table:** `hh_audit_logs` — inspect/upgrade via `hominal_crm_supabase_014_audit_system_safe.sql` (additive only).
+- **Docs:** `docs/AUDIT_SYSTEM.md`, `docs/TEST_MATRIX.md`.
+- **Write path:** `writeMutationAudit` → `auditRepository.insert` after each mutation; `finalizeWithAudit` blocks HTTP 200 on audit failure (503 + `persisted: true` warning).
+- **Read path:** `GET /api/v1/audits`, React `/audits`, patient `history.audits`.
+- **Verify:** `node scripts/verify-audit-trail.mjs` with `CRM_TOKEN` (+ optional entity IDs).
+
+| Action | Modules |
+| --- | --- |
+| create / update | patient, employee, duty, attendance, billing, payout, inquiry |
+| deactivate | patient `remove`, employee `Inactive` |
+| close | billing `close`, payout `lock` |
+| status_change | inquiry `setStatus` |
+
 ### Phase 10 — Test matrix & CI (complete)
 
 - **Runner**: Vitest (`vitest.config.ts`) with path aliases matching `tsconfig.json`.

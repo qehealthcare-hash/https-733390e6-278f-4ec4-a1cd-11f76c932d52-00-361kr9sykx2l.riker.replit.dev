@@ -105,13 +105,13 @@ async function fireAudit(
   module: "billing" | "receipt" | "svc_entry",
   payload: {
     entity_id: string;
-    action: "create" | "update" | "delete" | "soft-delete";
+    action: "create" | "update" | "close" | "delete" | "soft-delete";
     before?: unknown;
     after?: unknown;
     stamp?: string;
   }
 ) {
-  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor, {
     module,
     entity_id: payload.entity_id,
     action: payload.action,
@@ -515,7 +515,7 @@ export const billingService = {
     return finalizeWithAudit(
       await fireAudit(ctx, "billing", {
         entity_id: id,
-        action: "update",
+        action: "close",
         before: existing.data,
         after: refreshed.data.billing,
         stamp: `Closed${input.reason ? `: ${input.reason}` : ""}${input.force ? " (force)" : ""}`

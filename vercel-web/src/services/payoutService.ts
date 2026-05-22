@@ -74,6 +74,7 @@ import {
 
 export interface ActorLike {
   email: string;
+  userId?: string;
   role?: string;
   accessToken?: string;
 }
@@ -92,13 +93,13 @@ async function fireAudit(
   ctx: PayoutServiceContext,
   payload: {
     entity_id: string;
-    action: "create" | "update" | "delete";
+    action: "create" | "update" | "close" | "delete";
     before?: unknown;
     after?: unknown;
     stamp?: string;
   }
 ) {
-  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor, {
     module: "payout",
     entity_id: payload.entity_id,
     action: payload.action,
@@ -569,10 +570,10 @@ export const payoutService = {
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
-        action: "update",
+        action: "close",
         before: existing.data,
         after: fresh.data,
-        stamp: `Locked${input.reason ? `: ${input.reason}` : ""}`
+        stamp: `Closed (locked)${input.reason ? `: ${input.reason}` : ""}`
       }),
       fresh.data
     );

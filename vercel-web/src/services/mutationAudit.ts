@@ -11,9 +11,18 @@ import { auditRepository, type AuditInsertRow } from "@/database/auditRepository
 import type { DbAccess } from "@/database/types";
 import type { ApiResult } from "@/types/common";
 import { ErrorCodes } from "@/types/common";
+import type { ServiceActor } from "@/types/serviceActor";
 import { failure, success } from "@/utils/apiResponse";
 
-export type MutationAuditPayload = Omit<AuditInsertRow, "actor">;
+export type MutationAuditPayload = Omit<AuditInsertRow, "actor" | "user_id">;
+
+function resolveActor(actor: ServiceActor | string): { email: string; userId?: string } {
+  if (typeof actor === "string") return { email: actor || "system" };
+  return {
+    email: actor.email || "system",
+    userId: actor.userId
+  };
+}
 
 export function isAuditDisabled(): boolean {
   return env.auditDisabled;
@@ -21,18 +30,19 @@ export function isAuditDisabled(): boolean {
 
 export async function writeMutationAudit(
   access: DbAccess | undefined,
-  actorEmail: string,
+  actor: ServiceActor | string,
   entry: MutationAuditPayload
 ): Promise<ApiResult<null>> {
   if (isAuditDisabled()) return success(null);
 
+  const { email, userId } = resolveActor(actor);
+
   const result = await auditRepository.insert(
     {
       ...entry,
-      actor: actorEmail || "system",
-      stamp:
-        entry.stamp ||
-        `${entry.action} by ${actorEmail || "system"} at ${new Date().toISOString()}`
+      actor: email,
+      user_id: userId ?? null,
+      stamp: entry.stamp || `${entry.action} by ${email} at ${new Date().toISOString()}`
     },
     access
   );

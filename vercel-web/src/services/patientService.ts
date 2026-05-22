@@ -52,14 +52,12 @@ import {
   success
 } from "@/utils/apiResponse";
 
-export interface ActorLike {
-  email: string;
-  role?: string;
-  accessToken?: string;
-}
+import type { ServiceActor } from "@/types/serviceActor";
+
+export type { ServiceActor as ActorLike };
 
 export interface PatientServiceContext {
-  actor: ActorLike;
+  actor: ServiceActor;
   accessToken?: string;
 }
 
@@ -78,7 +76,7 @@ async function fireAudit(
     stamp?: string;
   }
 ) {
-  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor, {
     module: "patient",
     entity_id: payload.entity_id,
     action: payload.action,
@@ -280,10 +278,10 @@ export const patientService = {
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
-        action: "delete",
+        action: "deactivate",
         before: existing.data,
         after: fresh.data,
-        stamp: `Closed patient ${id}`
+        stamp: `Deactivated patient ${id}`
       }),
       patientToApi(fresh.data)
     );
