@@ -1,6 +1,5 @@
-import { supabaseAdmin } from "./supabase";
-import { env } from "./env";
 import type { ActorContext } from "./auth";
+import { writeMutationAudit } from "@/services/mutationAudit";
 
 export interface AuditEntry {
   module: string;
@@ -13,23 +12,21 @@ export interface AuditEntry {
 }
 
 /**
- * Fire-and-forget audit write. Never throws.
- * Skipped when API_AUDIT_DISABLED=true (e.g. CI).
+ * Audit write for legacy `lib/api/services/*` shims.
+ * Uses the same enforced path as domain services; logs on failure but does not throw
+ * (shims are ancillary — WhatsApp / AI).
  */
 export async function audit(actor: ActorContext | null, entry: AuditEntry): Promise<void> {
-  if (env.auditDisabled) return;
-  try {
-    await supabaseAdmin().from("hh_audit_logs").insert({
-      module: entry.module,
-      entity_id: entry.entityId != null ? String(entry.entityId) : null,
-      action: entry.action,
-      actor: actor?.email || "system",
-      stamp: entry.stamp || `${entry.action} by ${actor?.email || "system"} at ${new Date().toISOString()}`,
-      before: entry.before ?? null,
-      after: entry.after ?? null,
-      payload: entry.payload ?? {}
-    });
-  } catch (err) {
-    console.error("[audit] write failed", err);
+  const result = await writeMutationAudit(undefined, actor?.email || "system", {
+    module: entry.module,
+    entity_id: entry.entityId != null ? String(entry.entityId) : null,
+    action: entry.action,
+    stamp: entry.stamp,
+    before: entry.before ?? null,
+    after: entry.after ?? null,
+    payload: entry.payload ?? {}
+  });
+  if (!result.success) {
+    console.error("[audit] write failed", result.error, result.details);
   }
 }

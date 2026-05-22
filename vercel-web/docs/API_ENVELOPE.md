@@ -68,6 +68,24 @@ const data = await request("/api/v1/patients", { method: "GET" }, session);
 
 Supports legacy `{ ok, data, message }` during iframe migration (Phase 7).
 
+## Audit enforcement (Phase 9)
+
+Mutations through `src/services/*` call `finalizeWithAudit`. If the audit row
+cannot be inserted, the API returns:
+
+```json
+{
+  "success": false,
+  "error": "Audit log write failed",
+  "code": "audit_write_failed",
+  "details": { "persisted": true, "module": "patient", "warning": "…" }
+}
+```
+
+HTTP status **503**. Set `API_AUDIT_DISABLED=true` only in CI to skip audit writes.
+
+Read trail: `GET /api/v1/audits?module=patient&entity_id=PID000001`.
+
 ## Exceptions
 
 - `GET /api/v1/health` — public probe; returns `{ success: true, data: { service, deps } }`.

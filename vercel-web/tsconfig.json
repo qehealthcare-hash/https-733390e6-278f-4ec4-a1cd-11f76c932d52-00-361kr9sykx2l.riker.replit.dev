@@ -25,7 +25,8 @@
       "@/business/*": ["./src/business/*"],
       "@/validation/*": ["./src/validation/*"],
       "@/utils/*": ["./src/utils/*"],
-      "@/types/*": ["./src/types/*"]
+      "@/types/*": ["./src/types/*"],
+      "@/test/*": ["./src/test/*"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],

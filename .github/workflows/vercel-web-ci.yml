@@ -1,0 +1,39 @@
+# Quality gate for vercel-web — typecheck + unit tests (Phase 10 matrix).
+name: vercel-web CI
+
+on:
+  pull_request:
+    paths:
+      - "vercel-web/**"
+      - ".github/workflows/vercel-web-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "vercel-web/**"
+      - ".github/workflows/vercel-web-ci.yml"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vercel-web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: vercel-web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests (business matrix)
+        run: npm test
+        env:
+          API_AUDIT_DISABLED: "true"

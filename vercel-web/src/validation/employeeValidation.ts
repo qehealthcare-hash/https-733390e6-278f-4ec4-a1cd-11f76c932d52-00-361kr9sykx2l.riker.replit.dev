@@ -132,3 +132,58 @@ export const employeeStatusSchema = z.object({
   reason: z.string().optional().default("")
 });
 export type EmployeeStatusInput = z.infer<typeof employeeStatusSchema>;
+
+/**
+ * Legacy SPA upsert — mirrors `toSbEmployee()` so Phase 7e can route
+ * `sbUpsert('hh_employees', …)` through the audited service layer.
+ */
+export const employeeLegacySyncSchema = z
+  .object({
+    id: idSchema.optional(),
+    fn: z.string().trim().min(1, "first name is required"),
+    mn: z.string().optional().default(""),
+    ln: z.string().optional().default(""),
+    email: z.string().optional().default(""),
+    phone: z.string().trim().min(1, "phone is required"),
+    phone2: z.string().optional().default(""),
+    gender: z.string().optional().default(""),
+    dob: z.string().optional().default(""),
+    blood: z.string().optional().default(""),
+    dept: z.string().optional().default(""),
+    etype: z.string().optional().default(""),
+    desig: z.string().optional().default(""),
+    emp_type: z.string().optional().default(""),
+    edu: z.string().optional().default(""),
+    join_date: z.string().optional().default(""),
+    leave_date: z.string().optional().default(""),
+    exp: z.string().optional().default(""),
+    shift: z.string().optional().default(""),
+    salary: z.union([z.string(), z.number()]).optional().default(""),
+    aadhar: z.string().optional().default(""),
+    pan: z.string().optional().default(""),
+    permaddr: z.string().optional().default(""),
+    presaddr: z.string().optional().default(""),
+    pin: z.string().optional().default(""),
+    district: z.string().optional().default(""),
+    state: z.string().optional().default(""),
+    ecname: z.string().optional().default(""),
+    ecphone: z.string().optional().default(""),
+    ecrel: z.string().optional().default(""),
+    skills: z.string().optional().default(""),
+    area: z.string().optional().default(""),
+    status: z.enum(EMPLOYEE_STATUSES).optional().default("Active"),
+    created: z.string().optional().default(""),
+    photo: z.any().optional(),
+    docs: z.any().optional()
+  })
+  .superRefine((v, ctx) => {
+    const digits = String(v.phone || "").replace(/[^0-9]/g, "");
+    if (digits.length < MIN_MOBILE_DIGITS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `mobile must contain at least ${MIN_MOBILE_DIGITS} digits`,
+        path: ["phone"]
+      });
+    }
+  });
+export type EmployeeLegacySyncInput = z.infer<typeof employeeLegacySyncSchema>;

@@ -150,5 +150,23 @@ export const payoutRepository = {
 
   insertCharge(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return insertRow(CHARGES, row, `${SCOPE}.insertCharge`, opts);
+  },
+
+  /**
+   * Replace the entire `hh_payout_charges` slice for a given `svc_key`.
+   * Backed by `hominal_replace_payout_charges(p_svc_key, p_rows)`. Returns
+   * the row count inserted.
+   */
+  replacePayoutChargesRpc(
+    svcKey: string,
+    rows: JsonRow[],
+    opts?: DbAccess
+  ): Promise<ApiResult<number | null>> {
+    return callRpc<number>(
+      "hominal_replace_payout_charges",
+      { p_svc_key: svcKey, p_rows: rows },
+      `${SCOPE}.replacePayoutChargesRpc`,
+      opts
+    );
   }
 };

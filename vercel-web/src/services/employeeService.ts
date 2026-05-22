@@ -18,9 +18,11 @@ import type { ApiResult } from "@/types/common";
 import {
   employeeSchema,
   employeeStatusSchema,
+  employeeLegacySyncSchema,
   type EmployeeInput,
   type EmployeeStatus,
-  type EmployeeStatusInput
+  type EmployeeStatusInput,
+  type EmployeeLegacySyncInput
 } from "@/validation/employeeValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
@@ -28,6 +30,7 @@ import {
   employeeToApi,
   findActiveEmployeeDuplicate,
   ensureNoHistoricalLinks,
+  isActiveEmployee,
   statusPatch,
   deactivatePatch,
   type EmployeeLinkCounts
@@ -35,7 +38,7 @@ import {
 import { phoneSuffix } from "@/business/phoneRules";
 import { newId } from "@/business/idRules";
 import { employeeRepository } from "@/database/employeeRepository";
-import { auditRepository } from "@/database/auditRepository";
+import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
@@ -83,19 +86,15 @@ async function fireAudit(
     after?: unknown;
     stamp?: string;
   }
-): Promise<void> {
-  await auditRepository.insert(
-    {
-      module: "employee",
-      entity_id: payload.entity_id,
-      action: payload.action,
-      actor: ctx.actor.email || "system",
-      stamp: payload.stamp,
-      before: payload.before ?? null,
-      after: payload.after ?? null
-    },
-    dbAccess(ctx)
-  );
+) {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+    module: "employee",
+    entity_id: payload.entity_id,
+    action: payload.action,
+    stamp: payload.stamp,
+    before: payload.before ?? null,
+    after: payload.after ?? null
+  });
 }
 
 interface PhoneCandidate {
@@ -210,8 +209,10 @@ export const employeeService = {
     const fresh = await loadFreshRow(id, ctx, inserted.data ?? null);
     if (!fresh.success || !fresh.data) return passFailure(fresh);
 
-    await fireAudit(ctx, { entity_id: id, action: "create", after: fresh.data });
-    return success(employeeToApi(fresh.data));
+    return finalizeWithAudit(
+      await fireAudit(ctx, { entity_id: id, action: "create", after: fresh.data }),
+      employeeToApi(fresh.data)
+    );
   },
 
   async update(
@@ -244,13 +245,15 @@ export const employeeService = {
     const fresh = await loadFreshRow(id, ctx, updated.data ?? null);
     if (!fresh.success || !fresh.data) return passFailure(fresh);
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data
-    });
-    return success(employeeToApi(fresh.data));
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data
+      }),
+      employeeToApi(fresh.data)
+    );
   },
 
   async setStatus(
@@ -273,14 +276,133 @@ export const employeeService = {
     const fresh = await loadFreshRow(id, ctx, updated.data ?? null);
     if (!fresh.success || !fresh.data) return passFailure(fresh);
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: input.status === "Active" ? "restore" : "update",
-      before: existing.data,
-      after: fresh.data,
-      stamp: `Status -> ${input.status}${input.reason ? ` (${input.reason})` : ""}`
-    });
-    return success(employeeToApi(fresh.data));
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: input.status === "Active" ? "restore" : "update",
+        before: existing.data,
+        after: fresh.data,
+        stamp: `Status -> ${input.status}${input.reason ? ` (${input.reason})` : ""}`
+      }),
+      employeeToApi(fresh.data)
+    );
+  },
+
+  /**
+   * Legacy SPA upsert — mirrors `sbUpsert('hh_employees', [toSbEmployee(...)])`.
+   * Honours client-generated `EMP…` ids and the full legacy column set.
+   */
+  async syncLegacy(
+    rawInput: unknown,
+    ctx: EmployeeServiceContext
+  ): Promise<ApiResult<JsonRow>> {
+    const parsed = parseInput(employeeLegacySyncSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const input = parsed.data as EmployeeLegacySyncInput;
+    const access = dbAccess(ctx);
+
+    let existing: JsonRow | null = null;
+    if (input.id) {
+      const byId = await employeeRepository.findById(input.id, access);
+      if (!byId.success) return passFailure(byId);
+      existing = byId.data ?? null;
+    }
+
+    const phone = String(input.phone || "").replace(/[^0-9+]/g, "");
+    if (isActiveEmployee(input.status)) {
+      const dups = await loadDuplicateCandidates(phone, ctx);
+      if (!dups.success || !dups.data) return passFailure(dups);
+      const conflict = findActiveEmployeeDuplicate(
+        dups.data,
+        phone,
+        existing?.id ? String(existing.id) : undefined
+      );
+      if (conflict) {
+        return duplicateFailure("mobile", phone, "Active employee already exists for this mobile");
+      }
+    }
+
+    const baseRow: JsonRow = {
+      fn: input.fn,
+      mn: input.mn || "",
+      ln: input.ln || "",
+      email: input.email || "",
+      phone,
+      phone2: input.phone2 || "",
+      gender: input.gender || "",
+      dob: input.dob || "",
+      blood: input.blood || "",
+      dept: input.dept || "",
+      etype: input.etype || "",
+      desig: input.desig || "",
+      emp_type: input.emp_type || "",
+      edu: input.edu || "",
+      join_date: input.join_date || "",
+      leave_date: input.leave_date || "",
+      exp: input.exp || "",
+      shift: input.shift || "",
+      salary: input.salary != null ? String(input.salary) : "",
+      aadhar: input.aadhar || "",
+      pan: input.pan || "",
+      permaddr: input.permaddr || "",
+      presaddr: input.presaddr || "",
+      pin: input.pin || "",
+      district: input.district || "",
+      state: input.state || "",
+      ecname: input.ecname || "",
+      ecphone: input.ecphone || "",
+      ecrel: input.ecrel || "",
+      skills: input.skills || "",
+      area: input.area || "",
+      status: input.status || "Active",
+      updated_by: ctx.actor.email
+    };
+
+    if (Object.prototype.hasOwnProperty.call(input, "photo")) {
+      baseRow.photo = input.photo ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, "docs")) {
+      baseRow.docs = Array.isArray(input.docs) ? input.docs : [];
+    }
+
+    if (!existing) {
+      const insertId = input.id || newId.employee();
+      const inserted = await employeeRepository.insert(
+        {
+          ...baseRow,
+          id: insertId,
+          created: input.created || new Date().toISOString(),
+          created_by: ctx.actor.email
+        },
+        access
+      );
+      if (!inserted.success) return passFailure(inserted);
+      if (!inserted.data) return failure("Employee insert returned no row", ErrorCodes.internal);
+      return finalizeWithAudit(
+        await fireAudit(ctx, {
+          entity_id: insertId,
+          action: "create",
+          after: inserted.data,
+          stamp: `Legacy sync created employee ${input.fn}`
+        }),
+        inserted.data
+      );
+    }
+
+    const updated = await employeeRepository.update(String(existing.id), baseRow, access);
+    if (!updated.success) return passFailure(updated);
+    const fresh = await loadFreshRow(String(existing.id), ctx, updated.data ?? null);
+    if (!fresh.success || !fresh.data) return passFailure(fresh);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: String(existing.id),
+        action: "update",
+        before: existing,
+        after: fresh.data,
+        stamp: `Legacy sync (${input.status || "Active"})`
+      }),
+      fresh.data
+    );
   },
 
   deactivate(id: string, reason: string, ctx: EmployeeServiceContext): Promise<ApiResult<EmployeeApiRow>> {
@@ -313,25 +435,29 @@ export const employeeService = {
       if (!updated.success) return passFailure(updated);
       const fresh = await loadFreshRow(id, ctx, updated.data ?? null);
       if (!fresh.success || !fresh.data) return passFailure(fresh);
-      await fireAudit(ctx, {
-        entity_id: id,
-        action: "delete",
-        before: existing.data,
-        after: fresh.data,
-        stamp: `Soft delete (links: ${JSON.stringify(counts.data)})`
-      });
-      return success({ ...employeeToApi(fresh.data), mode: "soft" as const });
+      return finalizeWithAudit(
+        await fireAudit(ctx, {
+          entity_id: id,
+          action: "delete",
+          before: existing.data,
+          after: fresh.data,
+          stamp: `Soft delete (links: ${JSON.stringify(counts.data)})`
+        }),
+        { ...employeeToApi(fresh.data), mode: "soft" as const }
+      );
     }
 
     const removed = await employeeRepository.remove(id, dbAccess(ctx));
     if (!removed.success) return passFailure(removed);
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "delete",
-      before: existing.data,
-      stamp: "Hard delete (no historical links)"
-    });
-    return success({ ...employeeToApi(existing.data), mode: "hard" as const });
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "delete",
+        before: existing.data,
+        stamp: "Hard delete (no historical links)"
+      }),
+      { ...employeeToApi(existing.data), mode: "hard" as const }
+    );
   },
 
   /** Counts of historical links — used by UI to pick "delete vs deactivate". */

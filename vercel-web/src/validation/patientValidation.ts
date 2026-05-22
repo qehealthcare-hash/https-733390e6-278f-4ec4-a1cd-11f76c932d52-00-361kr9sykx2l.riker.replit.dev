@@ -4,6 +4,22 @@ import { emailSchema, idSchema, shiftTypeSchema } from "@/validation/commonValid
 export const PATIENT_STATUSES = ["Active", "Closed", "On Hold"] as const;
 export type PatientStatus = (typeof PATIENT_STATUSES)[number];
 
+/**
+ * Statuses the legacy SPA may persist. The DB column is plain text so we
+ * accept any of these on the `/patients/sync` upsert path without coercing
+ * to the trimmed enum above.
+ */
+export const PATIENT_LEGACY_STATUSES = [
+  "Active",
+  "Paused",
+  "Duty Closed",
+  "Expired",
+  "Deceased",
+  "Discharged",
+  "On Hold",
+  "Closed"
+] as const;
+
 const patientPhoneSchema = z
   .string()
   .trim()
@@ -76,3 +92,37 @@ export const patientListQuerySchema = z.object({
 export type PatientInput = z.infer<typeof patientSchema>;
 export type PatientAssignInput = z.infer<typeof patientAssignSchema>;
 export type PatientListQuery = z.infer<typeof patientListQuerySchema>;
+
+/**
+ * Legacy SPA upsert payload — mirrors `toSbPatient()`. Status is the legacy
+ * enum (`Active|Paused|Duty Closed|...`). Photos / docs are passed through
+ * unless missing (light refresh path).
+ */
+export const patientLegacySyncSchema = z.object({
+  id: idSchema.optional(),
+  name: z.string().trim().min(1).max(160),
+  email: z.string().max(200).optional().default(""),
+  phone: z.string().max(40).optional().default(""),
+  dob: z.string().max(20).optional().default(""),
+  gender: z.string().max(20).optional().default(""),
+  blood: z.string().max(10).optional().default(""),
+  addr: z.string().max(500).optional().default(""),
+  address: z.string().max(500).optional().default(""),
+  area: z.string().max(120).optional().default(""),
+  city: z.string().max(80).optional().default(""),
+  pin: z.string().max(12).optional().default(""),
+  relname: z.string().max(120).optional().default(""),
+  relphone: z.string().max(40).optional().default(""),
+  relname2: z.string().max(120).optional().default(""),
+  relphone2: z.string().max(40).optional().default(""),
+  relname3: z.string().max(120).optional().default(""),
+  relphone3: z.string().max(40).optional().default(""),
+  status: z.enum(PATIENT_LEGACY_STATUSES).optional().default("Active"),
+  status_reason: z.string().max(120).optional().default(""),
+  status_reason_other: z.string().max(500).optional().default(""),
+  created: z.string().max(40).optional().default(""),
+  /** Optional JSON blob — present on the "full" save, absent on `__light` refreshes. */
+  photo: z.any().optional(),
+  docs: z.any().optional()
+});
+export type PatientLegacySyncInput = z.infer<typeof patientLegacySyncSchema>;

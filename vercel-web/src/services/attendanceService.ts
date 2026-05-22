@@ -42,7 +42,7 @@ import { newId } from "@/business/idRules";
 import { attendanceRepository } from "@/database/attendanceRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { payoutRepository } from "@/database/payoutRepository";
-import { auditRepository } from "@/database/auditRepository";
+import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
@@ -78,19 +78,15 @@ async function fireAudit(
     after?: unknown;
     stamp?: string;
   }
-): Promise<void> {
-  await auditRepository.insert(
-    {
-      module: "attendance",
-      entity_id: payload.entity_id,
-      action: payload.action,
-      actor: ctx.actor.email || "system",
-      stamp: payload.stamp,
-      before: payload.before ?? null,
-      after: payload.after ?? null
-    },
-    dbAccess(ctx)
-  );
+) {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+    module: "attendance",
+    entity_id: payload.entity_id,
+    action: payload.action,
+    stamp: payload.stamp,
+    before: payload.before ?? null,
+    after: payload.after ?? null
+  });
 }
 
 type LoadResult<T> =
@@ -298,8 +294,10 @@ export const attendanceService = {
     }
 
     await recomputePayoutFor(fresh.data, ctx);
-    await fireAudit(ctx, { entity_id: String(row.id), action: "create", after: fresh.data });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, { entity_id: String(row.id), action: "create", after: fresh.data }),
+      fresh.data
+    );
   },
 
   async update(
@@ -381,13 +379,15 @@ export const attendanceService = {
         );
       }
     }
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data
+      }),
+      fresh.data
+    );
   },
 
   /**
@@ -467,13 +467,15 @@ export const attendanceService = {
     if (!removed.success) return passFailure(removed);
 
     await recomputePayoutFor(existing.data, ctx);
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "delete",
-      before: existing.data,
-      stamp: "Attendance removed"
-    });
-    return success({ id });
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "delete",
+        before: existing.data,
+        stamp: "Attendance removed"
+      }),
+      { id }
+    );
   },
 
   /**

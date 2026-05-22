@@ -342,6 +342,9 @@ tr:hover td{background:#fafcff}
 </head>
 <body>
 
+<!-- Phase 7: legacy SPA → /api/v1 adapter (preferred path, with Supabase fallback) -->
+<script src="lib/legacy-api.js"></script>
+
 <!-- ── LOGIN ── -->
 <div id="loginScreen">
   <div class="login-card">
@@ -2363,16 +2366,42 @@ async function refetchRolesFromCloud() {
   });
 }
 async function refetchEmployeesFromCloud() {
-  return refetchSimpleTable('hh_employees', function(rows){
-    DB.employees = rows.map(function(e){
-      return Object.assign({ photo: null, docs: [] }, e, {
-        join: e.join_date,
-        leave: e.leave_date,
-        photo: e.photo || null,
-        docs: Array.isArray(e.docs) ? e.docs : []
+  var rows;
+  if (!SB_READY) return true;
+  rows = null;
+  // Phase 7e: prefer the audited /api/v1 list.
+  if (window.legacyApi && window.legacyApi.employees) {
+    try {
+      var apiList = await window.legacyApi.employees.list({ limit: 500, offset: 0 });
+      if (apiList && apiList.ok && apiList.data && Array.isArray(apiList.data.rows)) {
+        rows = apiList.data.rows;
+      }
+    } catch (ignore) {
+      rows = null;
+    }
+  }
+  if (rows === null) {
+    return refetchSimpleTable('hh_employees', function(remoteRows){
+      DB.employees = remoteRows.map(function(e){
+        return Object.assign({ photo: null, docs: [] }, e, {
+          join: e.join_date,
+          leave: e.leave_date,
+          photo: e.photo || null,
+          docs: Array.isArray(e.docs) ? e.docs : []
+        });
       });
     });
+  }
+  DB.employees = (rows || []).map(function(e){
+    return Object.assign({ photo: null, docs: [] }, e, {
+      join: e.join_date || e.join,
+      leave: e.leave_date || e.leave,
+      photo: e.photo || null,
+      docs: Array.isArray(e.docs) ? e.docs : []
+    });
   });
+  saveDB();
+  return true;
 }
 async function refetchDoctorsFromCloud() {
   return refetchSimpleTable('hh_doctors', function(rows){ DB.doctors = rows; });
@@ -2381,16 +2410,52 @@ async function refetchVendorsFromCloud() {
   return refetchSimpleTable('hh_vendors', function(rows){ DB.vendors = rows; });
 }
 async function refetchInquiriesFromCloud() {
-  return refetchSimpleTable('hh_inquiries', function(rows){ DB.inquiries = rows; });
+  var rows;
+  if (!SB_READY) return true;
+  rows = null;
+  // Phase 7f: prefer the audited /api/v1 list.
+  if (window.legacyApi && window.legacyApi.inquiries) {
+    try {
+      var apiList = await window.legacyApi.inquiries.list({ limit: 500, offset: 0 });
+      if (apiList && apiList.ok && apiList.data && Array.isArray(apiList.data.rows)) {
+        rows = apiList.data.rows;
+      }
+    } catch (ignore) {
+      rows = null;
+    }
+  }
+  if (rows === null) {
+    return refetchSimpleTable('hh_inquiries', function(remoteRows){ DB.inquiries = remoteRows; });
+  }
+  DB.inquiries = rows || [];
+  saveDB();
+  return true;
 }
 async function refetchPaidTransactionsFromCloud() {
   return refetchSimpleTable('hh_paid_transactions', function(rows){ DB.paidTransactions = rows; });
 }
 async function refetchPatientsFromCloud() {
+  var rows;
+  var dirtyLocal;
   if (!SB_READY) return true;
-  var rows = await sbGet('hh_patients', HH_PATIENT_LIGHT_QUERY);
-  if (rows === null) return false;
-  var dirtyLocal = (DB.patients || []).filter(function(p){ return p && p.__dirty; });
+  rows = null;
+  // Phase 7d: prefer the audited /api/v1 list. Fall back to direct Supabase
+  // REST on transport failure so the offline-first refresh path still works.
+  if (window.legacyApi && window.legacyApi.patients) {
+    try {
+      var apiList = await window.legacyApi.patients.list({ limit: 500, offset: 0 });
+      if (apiList && apiList.ok && apiList.data && Array.isArray(apiList.data.rows)) {
+        rows = apiList.data.rows;
+      }
+    } catch (ignore) {
+      rows = null;
+    }
+  }
+  if (rows === null) {
+    rows = await sbGet('hh_patients', HH_PATIENT_LIGHT_QUERY);
+    if (rows === null) return false;
+  }
+  dirtyLocal = (DB.patients || []).filter(function(p){ return p && p.__dirty; });
   DB.patients = mergePatientCloudAndLocalRows(
     (rows || []).map(function(p){ return Object.assign({}, p, { __light: true }); }),
     dirtyLocal
@@ -2402,12 +2467,28 @@ async function refetchPatientsFromCloud() {
   return true;
 }
 async function refetchBillingForPatient(patientId) {
+  var rows;
+  var picked;
   if (!SB_READY || !patientId) return true;
-  var rows = await fetchRemoteRowsSafe('hh_billings', makeEqSelectQuery('patient_id', patientId));
+  rows = null;
+  if (window.legacyApi && window.legacyApi.billings) {
+    try {
+      var apiBundle = await window.legacyApi.billings.listByPatient(patientId);
+      if (apiBundle && apiBundle.ok && apiBundle.data) {
+        picked = pickPatientBillingFromApiBundle(apiBundle.data, patientId);
+        if (picked && !isDeletedTombstone('hh_billings', picked.id)) {
+          DB.billings[patientId] = picked;
+          saveDB();
+          return true;
+        }
+      }
+    } catch (ignore) {}
+  }
+  rows = await fetchRemoteRowsSafe('hh_billings', makeEqSelectQuery('patient_id', patientId));
   if (rows === null) return false;
   (rows || []).forEach(function(b){
     if (!b || isDeletedTombstone('hh_billings', b.id)) return;
-    DB.billings[b.patient_id] = Object.assign({}, b, { secDep: b.sec_dep, patientId: b.patient_id });
+    DB.billings[b.patient_id] = mapApiBillingToLocal(b);
   });
   saveDB();
   return true;
@@ -2607,7 +2688,26 @@ async function refreshBillingReceiptsFromCloud(billingId) {
   var latestRows;
   if (!billingId) return false;
   if (!SB_READY) return true;
-  latestRows = await fetchRemoteRowsSafe('hh_receipts', makeEqSelectQuery('billing_id', billingId));
+  // Phase 7a: prefer the audited /api/v1 list — server filters out
+  // soft-deleted rows and applies RLS. Fall back to direct Supabase REST
+  // on transport failure so the offline-first refresh path still works.
+  latestRows = null;
+  if (window.legacyApi && window.legacyApi.receipts) {
+    try {
+      var apiList = await window.legacyApi.receipts.list(billingId);
+      if (apiList && apiList.ok && Array.isArray(apiList.data)) {
+        latestRows = apiList.data;
+      } else if (apiList && apiList.transport === 'business') {
+        // 401/403/404 → treat as authoritative empty (RLS or no bill).
+        latestRows = [];
+      }
+    } catch (ignore) {
+      latestRows = null;
+    }
+  }
+  if (latestRows === null) {
+    latestRows = await fetchRemoteRowsSafe('hh_receipts', makeEqSelectQuery('billing_id', billingId));
+  }
   if (latestRows === null) return false;
   // Build a map of cloud rows by id and ALSO honour tombstones from local soft-deletes.
   var cloudById = {};
@@ -3650,7 +3750,24 @@ async function saveReceiptLedgerRow(receipt, billingId) {
   if (!SB_READY) return false;
   var payload = toSbReceipt(receipt, billingId || receipt.billing_id || '');
   payload.created_by = payload.created_by || (getCurrentUser().username || getCurrentUser().email || '');
-  console.info('Billing receipt RPC save start', payload.id, payload.billing_id);
+  console.info('Billing receipt save start', payload.id, payload.billing_id);
+  // Phase 7a: prefer the audited /api/v1 route. Fall back ONLY on transport
+  // errors (network/5xx/401) so server-validated business failures still
+  // block (the API enforces close-bill + duplicate-id + RLS centrally).
+  if (window.legacyApi && window.legacyApi.receipts) {
+    try {
+      var apiResult = await window.legacyApi.receipts.create(payload.billing_id, payload, payload.id ? 'receipt:' + payload.id : null);
+      if (apiResult && apiResult.ok) return true;
+      if (apiResult && apiResult.transport === 'business') {
+        LAST_SUPABASE_ERROR = 'API receipt save rejected: ' + (apiResult.error || ('HTTP ' + apiResult.status));
+        console.warn('Receipt API rejected save (business rule); not falling back.', apiResult);
+        return false;
+      }
+      console.warn('Receipt API save transport failure; falling back to direct RPC.', apiResult);
+    } catch (apiErr) {
+      console.warn('Receipt API save threw; falling back to direct RPC.', apiErr);
+    }
+  }
   var rpcResult = await sbRpc('hominal_save_receipt', { p_receipt: payload });
   if (rpcResult !== false) return true;
   console.warn('Billing receipt RPC save failed; falling back to direct receipt upsert for compatibility.', LAST_SUPABASE_ERROR);
@@ -3660,7 +3777,23 @@ async function saveReceiptLedgerRow(receipt, billingId) {
 async function deleteReceiptLedgerRow(receipt, billingId) {
   if (!SB_READY || !receipt || !receipt.id || !billingId) return false;
   var actor = getCurrentUser().username || getCurrentUser().email || '';
-  console.info('Billing receipt RPC delete start', receipt.id, billingId);
+  console.info('Billing receipt delete start', receipt.id, billingId);
+  // Phase 7a: prefer the audited /api/v1 DELETE. Fall back on transport
+  // errors only — business rejections (e.g. bill is closed) must surface.
+  if (window.legacyApi && window.legacyApi.receipts) {
+    try {
+      var apiResult = await window.legacyApi.receipts.softDelete(String(billingId), String(receipt.id), '');
+      if (apiResult && apiResult.ok) return true;
+      if (apiResult && apiResult.transport === 'business') {
+        LAST_SUPABASE_ERROR = 'API receipt delete rejected: ' + (apiResult.error || ('HTTP ' + apiResult.status));
+        console.warn('Receipt API rejected soft-delete (business rule); not falling back.', apiResult);
+        return false;
+      }
+      console.warn('Receipt API soft-delete transport failure; falling back to direct RPC.', apiResult);
+    } catch (apiErr) {
+      console.warn('Receipt API soft-delete threw; falling back to direct RPC.', apiErr);
+    }
+  }
   var rpcResult = await sbRpc('hominal_soft_delete_receipt', {
     p_receipt_id: String(receipt.id),
     p_billing_id: String(billingId),
@@ -3673,6 +3806,153 @@ async function deleteReceiptLedgerRow(receipt, billingId) {
     deleted_by: actor
   }), billingId);
   return (await upsertReceiptsSafely([toSbReceipt(deletedRow, billingId)])) !== false;
+}
+
+/** Map API billing row → local `DB.billings[patId]` shape. */
+function mapApiBillingToLocal(row) {
+  return mapSbBillingRow(row);
+}
+
+/** Pick the row the legacy UI treats as "the" bill for a patient. */
+function pickPatientBillingFromApiBundle(bundle, patientId) {
+  var rows = bundle && Array.isArray(bundle.billings) ? bundle.billings : [];
+  if (!rows.length) return null;
+  var active = rows.filter(function(b){ return b && String(b.patient_id) === String(patientId) && b.status === 'Active'; });
+  if (active.length) return mapApiBillingToLocal(active[0]);
+  var match = rows.filter(function(b){ return b && String(b.patient_id) === String(patientId); });
+  return match.length ? mapApiBillingToLocal(match[0]) : mapApiBillingToLocal(rows[0]);
+}
+
+/**
+ * Phase 7d: persist one patient row through /api/v1 first.
+ * Mirrors `sbUpsert('hh_patients', [toSbPatient(...)])`.
+ *
+ * Business rejections (RLS, duplicate active phone, etc.) surface and
+ * do NOT fall back. Transport failures fall through to direct upsert so
+ * offline edits still queue.
+ */
+async function savePatientLedgerRow(patient) {
+  if (!SB_READY || !patient) return false;
+  var payload = toSbPatient(patient);
+  if (!payload || !payload.name) return false;
+  console.info('Patient save start', payload.id || '[no-id]', payload.name);
+  if (window.legacyApi && window.legacyApi.patients) {
+    try {
+      var apiResult = await window.legacyApi.patients.sync(payload, payload.id ? ('pat-sync:' + payload.id) : null);
+      if (apiResult && apiResult.ok) {
+        if (apiResult.data && apiResult.data.id && patient.id !== apiResult.data.id) {
+          patient.id = apiResult.data.id;
+        }
+        return true;
+      }
+      if (apiResult && apiResult.transport === 'business') {
+        LAST_SUPABASE_ERROR = 'API patient save rejected: ' + (apiResult.error || ('HTTP ' + apiResult.status));
+        console.warn('Patient API rejected save (business rule); not falling back.', apiResult);
+        return false;
+      }
+      console.warn('Patient API save transport failure; falling back to direct upsert.', apiResult);
+    } catch (apiErr) {
+      console.warn('Patient API save threw; falling back to direct upsert.', apiErr);
+    }
+  }
+  return (await sbUpsert('hh_patients', [payload])) !== false;
+}
+
+/**
+ * Phase 7e: persist one employee row through /api/v1 first.
+ * Mirrors `sbUpsert('hh_employees', [toSbEmployee(...)])`.
+ */
+async function saveEmployeeLedgerRow(employee) {
+  if (!SB_READY || !employee) return false;
+  var payload = toSbEmployee(employee);
+  if (!payload || !payload.fn || !payload.phone) return false;
+  console.info('Employee save start', payload.id || '[no-id]', payload.fn);
+  if (window.legacyApi && window.legacyApi.employees) {
+    try {
+      var apiResult = await window.legacyApi.employees.sync(payload, payload.id ? ('emp-sync:' + payload.id) : null);
+      if (apiResult && apiResult.ok) {
+        if (apiResult.data && apiResult.data.id) {
+          var idx = (DB.employees || []).findIndex(function(e){ return e && (e.id === employee.id || e === employee); });
+          var mapped = mapSbEmployeeRow(apiResult.data);
+          if (idx !== -1) DB.employees[idx] = Object.assign({}, DB.employees[idx], mapped);
+        }
+        return true;
+      }
+      if (apiResult && apiResult.transport === 'business') {
+        LAST_SUPABASE_ERROR = 'API employee save rejected: ' + (apiResult.error || ('HTTP ' + apiResult.status));
+        console.warn('Employee API rejected save (business rule); not falling back.', apiResult);
+        return false;
+      }
+      console.warn('Employee API save transport failure; falling back to direct upsert.', apiResult);
+    } catch (apiErr) {
+      console.warn('Employee API save threw; falling back to direct upsert.', apiErr);
+    }
+  }
+  return (await sbUpsert('hh_employees', [payload])) !== false;
+}
+
+/**
+ * Phase 7f: persist one inquiry row through /api/v1 first.
+ * Mirrors `sbUpsert('hh_inquiries', [toSbInquiry(...)])`.
+ */
+async function saveInquiryLedgerRow(inquiry) {
+  if (!SB_READY || !inquiry) return false;
+  var payload = toSbInquiry(inquiry);
+  if (!payload || !payload.name || !payload.phone) return false;
+  console.info('Inquiry save start', payload.id || '[no-id]', payload.name);
+  if (window.legacyApi && window.legacyApi.inquiries) {
+    try {
+      var apiResult = await window.legacyApi.inquiries.sync(payload, payload.id ? ('inq-sync:' + payload.id) : null);
+      if (apiResult && apiResult.ok) {
+        if (apiResult.data && apiResult.data.id) {
+          var idx = (DB.inquiries || []).findIndex(function(i){ return i && (i.id === inquiry.id || i === inquiry); });
+          if (idx !== -1) {
+            DB.inquiries[idx] = Object.assign({}, DB.inquiries[idx], apiResult.data);
+          }
+        }
+        return true;
+      }
+      if (apiResult && apiResult.transport === 'business') {
+        LAST_SUPABASE_ERROR = 'API inquiry save rejected: ' + (apiResult.error || ('HTTP ' + apiResult.status));
+        console.warn('Inquiry API rejected save (business rule); not falling back.', apiResult);
+        return false;
+      }
+      console.warn('Inquiry API save transport failure; falling back to direct upsert.', apiResult);
+    } catch (apiErr) {
+      console.warn('Inquiry API save threw; falling back to direct upsert.', apiErr);
+    }
+  }
+  return (await sbUpsert('hh_inquiries', [payload])) !== false;
+}
+
+/**
+ * Phase 7b: persist one billing row through /api/v1 first.
+ * Mirrors `sbUpsert('hh_billings', [getBillingSyncPayload(...)])`.
+ */
+async function saveBillingLedgerRow(bill, patientId) {
+  if (!SB_READY || !bill) return false;
+  var payload = getBillingSyncPayload(bill, patientId || bill.patientId || bill.patient_id || '');
+  if (!payload.patient_id) return false;
+  console.info('Billing save start', payload.id || '[no-id]', payload.patient_id, payload.status);
+  if (window.legacyApi && window.legacyApi.billings) {
+    try {
+      var apiResult = await window.legacyApi.billings.sync(payload, payload.id ? ('bill-sync:' + payload.id) : null);
+      if (apiResult && apiResult.ok && apiResult.data) {
+        var mapped = mapApiBillingToLocal(apiResult.data);
+        if (mapped && mapped.patient_id) DB.billings[mapped.patient_id] = mapped;
+        return true;
+      }
+      if (apiResult && apiResult.transport === 'business') {
+        LAST_SUPABASE_ERROR = 'API billing save rejected: ' + (apiResult.error || ('HTTP ' + apiResult.status));
+        console.warn('Billing API rejected save (business rule); not falling back.', apiResult);
+        return false;
+      }
+      console.warn('Billing API save transport failure; falling back to direct upsert.', apiResult);
+    } catch (apiErr) {
+      console.warn('Billing API save threw; falling back to direct upsert.', apiErr);
+    }
+  }
+  return (await sbUpsert('hh_billings', [payload])) !== false;
 }
 
 async function upsertInvoiceLedgerSafely(invoice, items) {
@@ -6060,7 +6340,11 @@ function syncBillingSecurityAmount(patId, suppressRemoteSync) {
   }, 0));
   bill.secDep=secDep;
   bill.sec_dep=secDep;
-  if(SB_READY && !suppressRemoteSync) sbUpsert('hh_billings',[getBillingSyncPayload(bill, patId)]);
+  if (SB_READY && !suppressRemoteSync) {
+    Promise.resolve(saveBillingLedgerRow(bill, patId)).then(function(ok){
+      if (ok !== false) { clearDirty(bill); saveDB(); }
+    });
+  }
   return secDep;
 }
 function createBillingForPatient(patient, silent) {
@@ -6075,8 +6359,8 @@ function createBillingForPatient(patient, silent) {
   markDirty(bill);
   DB.billings[patient.id]=bill;
   saveDB();
-  if(SB_READY) {
-    Promise.resolve(sbUpsert('hh_billings',[getBillingSyncPayload(bill, patient.id)])).then(function(ok){
+  if (SB_READY) {
+    Promise.resolve(saveBillingLedgerRow(bill, patient.id)).then(function(ok){
       if (ok !== false) {
         clearDirty(bill);
         saveDB();
@@ -6487,7 +6771,24 @@ function syncServiceEntriesToSupabase(svcKey) {
     delete payload.id;
     return payload;
   });
+  // Phase 7c: prefer the audited /api/v1 endpoint. Fall back to direct RPC
+  // on transport failures only — business rejections (e.g. parent bill is
+  // Closed) must surface to the diary so the cashier knows the save failed.
   svcSyncInFlight[svcKey] = (async function(){
+    if (window.legacyApi && window.legacyApi.svcEntries) {
+      try {
+        var apiResult = await window.legacyApi.svcEntries.replace(svcKey, rows);
+        if (apiResult && apiResult.ok) return true;
+        if (apiResult && apiResult.transport === 'business') {
+          LAST_SUPABASE_ERROR = 'API svc-entries replace rejected: ' + (apiResult.error || ('HTTP ' + apiResult.status));
+          console.warn('Svc-entries API rejected replace (business rule); not falling back.', apiResult);
+          return false;
+        }
+        console.warn('Svc-entries API replace transport failure; falling back to direct RPC.', apiResult);
+      } catch (apiErr) {
+        console.warn('Svc-entries API replace threw; falling back to direct RPC.', apiErr);
+      }
+    }
     return (await sbRpc('hominal_replace_service_entries', {
       p_svc_key:String(svcKey || ''),
       p_rows:rows
@@ -6506,7 +6807,22 @@ function syncPayoutChargesToSupabase(svcKey) {
     delete payload.id;
     return payload;
   });
+  // Phase 7c: same API-first / RPC-fallback strategy as svc-entries.
   payoutSyncInFlight[svcKey] = (async function(){
+    if (window.legacyApi && window.legacyApi.payoutCharges) {
+      try {
+        var apiResult = await window.legacyApi.payoutCharges.replace(svcKey, rows);
+        if (apiResult && apiResult.ok) return true;
+        if (apiResult && apiResult.transport === 'business') {
+          LAST_SUPABASE_ERROR = 'API payout-charges replace rejected: ' + (apiResult.error || ('HTTP ' + apiResult.status));
+          console.warn('Payout-charges API rejected replace (business rule); not falling back.', apiResult);
+          return false;
+        }
+        console.warn('Payout-charges API replace transport failure; falling back to direct RPC.', apiResult);
+      } catch (apiErr) {
+        console.warn('Payout-charges API replace threw; falling back to direct RPC.', apiErr);
+      }
+    }
     return (await sbRpc('hominal_replace_payout_charges', {
       p_svc_key:String(svcKey || ''),
       p_rows:rows
@@ -7032,6 +7348,11 @@ async function syncDashboardWithAllData() {
 }
 
 function renderDashboard() {
+  renderDashboardFromLocal();
+  void hydrateDashboardFromApi();
+}
+
+function renderDashboardFromLocal() {
   var activeCount=0,closedMonth=0,totalDeposit=0,pending=0;
   var now=new Date();
   var months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -7657,10 +7978,10 @@ function savePatient(){
     if(DB.billings[editingPat.id]) {
       DB.billings[editingPat.id].status=obj.status==='Duty Closed'?'Closed':(obj.status==='Paused'?'Paused':'Active');
       syncBillingSecurityAmount(editingPat.id);
-      if(SB_READY) sbUpsert('hh_billings',[getBillingSyncPayload(DB.billings[editingPat.id], editingPat.id)]);
+      if (SB_READY) saveBillingLedgerRow(DB.billings[editingPat.id], editingPat.id);
     }
     toast('Updated');
-    if(SB_READY)sbUpsert('hh_patients',[toSbPatient(editingPat)]);
+    if (SB_READY) savePatientLedgerRow(editingPat);
   }
   else{
     var n=DB.nextIds.pat||1;var pid='PID'+String(n).padStart(6,'0');DB.nextIds.pat=n+1;
@@ -7668,7 +7989,7 @@ function savePatient(){
     DB.patients.unshift(np);
     if(obj.status==='Active') createBillingForPatient(np, true);
     toast('Registered');
-    if(SB_READY)sbUpsert('hh_patients',[toSbPatient(np)]);
+    if (SB_READY) savePatientLedgerRow(np);
   }
   saveDB();closeModal('patModal');editingPat=null;renderPatients();
 }
@@ -7682,8 +8003,8 @@ function startServices(){
     pat.status='Active';
     saveDB();
     if(SB_READY) {
-      sbUpsert('hh_billings',[getBillingSyncPayload(DB.billings[pat.id], pat.id)]);
-      sbUpsert('hh_patients',[toSbPatient(pat)]);
+      saveBillingLedgerRow(DB.billings[pat.id], pat.id);
+      savePatientLedgerRow(pat);
     }
   }
   viewPatient(currentBillingPatId);
@@ -7866,8 +8187,8 @@ function doCloseBill(){
     if(patient) patient.status='Duty Closed';
     saveDB();
     if(SB_READY) {
-      sbUpsert('hh_billings',[getBillingSyncPayload(bill, currentBillingPatId)]);
-      if(patient) sbUpsert('hh_patients',[toSbPatient(patient)]);
+      saveBillingLedgerRow(bill, currentBillingPatId);
+      if(patient) savePatientLedgerRow(patient);
     }
     viewPatient(currentBillingPatId);
     toast('Bill closed and security adjusted in final outstanding');
@@ -7883,8 +8204,8 @@ function doPauseBill(){
     if(patient) patient.status='Paused';
     saveDB();
     if(SB_READY) {
-      sbUpsert('hh_billings',[getBillingSyncPayload(bill, currentBillingPatId)]);
-      if(patient) sbUpsert('hh_patients',[toSbPatient(patient)]);
+      saveBillingLedgerRow(bill, currentBillingPatId);
+      if(patient) savePatientLedgerRow(patient);
     }
     viewPatient(currentBillingPatId);
     toast('Bill paused');
@@ -9824,6 +10145,121 @@ function getDateRange() {
     end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   }
   return { mode:mode, from:dateToIso(start), to:dateToIso(end) };
+}
+
+/** Map legacy report range → `/api/v1/reports/*` query params. */
+function reportRangeToApiQuery(range) {
+  var q = {};
+  if (!range) return q;
+  if (range.mode === 'custom' && range.from && range.to) {
+    q.from = range.from + 'T00:00:00.000Z';
+    q.to = range.to + 'T23:59:59.999Z';
+    return q;
+  }
+  if (range.from) {
+    var parts = String(range.from).split('-');
+    if (parts.length >= 2) q.period = parts[0] + '-' + parts[1];
+  }
+  return q;
+}
+
+function currentDashboardPeriod() {
+  var now = new Date();
+  return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+}
+
+function applyDashboardKpisFromApi(kpis) {
+  if (!kpis) return;
+  if (kpis.patients_total != null) setEl('dashTotalPatients', kpis.patients_total);
+  if (kpis.patients_active != null) {
+    setEl('dashActiveServices', kpis.patients_active);
+    setEl('dashActiveServices2', kpis.patients_active);
+  }
+  if (kpis.employees_total != null) setEl('dashTotalStaff', kpis.employees_total);
+  if (kpis.billings_total != null) setEl('dashTotalBillings', kpis.billings_total);
+  if (kpis.billing_pending_amount != null) {
+    setEl('dashPending', Number(kpis.billing_pending_amount || 0).toFixed(2));
+  }
+}
+
+async function hydrateDashboardFromApi() {
+  if (!SB_READY || !window.legacyApi || !window.legacyApi.reports) return;
+  try {
+    var api = await window.legacyApi.reports.dashboard({ period: currentDashboardPeriod() });
+    if (api && api.ok && api.data) applyDashboardKpisFromApi(api.data);
+  } catch (ignore) {}
+}
+
+async function tryProfitLossReportFromApi(range) {
+  if (!SB_READY || !window.legacyApi || !window.legacyApi.reports) return null;
+  try {
+    var api = await window.legacyApi.reports.profitLoss(reportRangeToApiQuery(range));
+    if (!api || !api.ok || !api.data) return null;
+    var data = api.data;
+    var revenue = parseFloat(data.revenue) || 0;
+    var expense = parseFloat(data.payouts_paid) || 0;
+    var net = parseFloat(data.net_profit) || 0;
+    var monthLabel = getMonthLabel(range.from || todayIso());
+    return {
+      type: 'profit-loss',
+      title: 'Profit & Loss Statement (cloud)',
+      revenue: revenue,
+      expense: expense,
+      net: net,
+      rows: [{ month: monthLabel, revenue: revenue, expense: expense, net: net }],
+      range: range,
+      apiSource: true,
+      payouts_pending: parseFloat(data.payouts_pending) || 0
+    };
+  } catch (ignore) {
+    return null;
+  }
+}
+
+async function tryEmployeePayoutReportFromApi(range) {
+  if (!SB_READY || !window.legacyApi || !window.legacyApi.reports) return null;
+  if (range.mode === 'custom') return null;
+  try {
+    var api = await window.legacyApi.reports.payroll(reportRangeToApiQuery(range));
+    if (!api || !api.ok || !api.data) return null;
+    var rows = (api.data.rows || []).map(function(row){
+      var emp = (DB.employees || []).find(function(e){ return e && String(e.id) === String(row.employee_id); });
+      var name = emp ? getEmployeeName(emp) : String(row.employee_id || 'Unknown');
+      var net = parseFloat(row.net_amount) || 0;
+      var paid = String(row.status || '').toUpperCase() === 'PAID' ? net : 0;
+      var pending = paid ? 0 : net;
+      return {
+        employee: name,
+        month: getMonthLabel(range.from || todayIso()),
+        totalPayable: net,
+        totalPaid: paid,
+        pending: pending
+      };
+    });
+    return {
+      type: 'employee-payout',
+      title: 'Employee Payout Report (cloud)',
+      rows: rows,
+      range: range,
+      apiSource: true
+    };
+  } catch (ignore) {
+    return null;
+  }
+}
+
+async function buildReportDataWithApi() {
+  var range = getDateRange();
+  var reportType = gv('reportType') || 'patient-billing';
+  if (reportType === 'profit-loss') {
+    var pl = await tryProfitLossReportFromApi(range);
+    return pl || buildProfitLossReport(range);
+  }
+  if (reportType === 'employee-payout') {
+    var ep = await tryEmployeePayoutReportFromApi(range);
+    return ep || buildEmployeePayoutReport(range);
+  }
+  return buildReportData();
 }
 
 function dateWithinRange(dateValue, range) {
@@ -12001,7 +12437,7 @@ async function saveEmployee() {
     table: 'hh_employees',
     row: row,
     isNew: isNew,
-    payload: toSbEmployee(row),
+    toRemote: async function(r){ return (await saveEmployeeLedgerRow(r)) !== false; },
     refetch: refetchEmployeesFromCloud,
     bannerId: 'empConflictBanner',
     auditModule: 'employee',
@@ -12389,9 +12825,9 @@ async function savePatient() {
     isNew: isNew,
     toRemote: async function(p){
       var bill = DB.billings[patientId];
-      var ok = (await sbUpsert('hh_patients', [toSbPatient(p)])) !== false;
+      var ok = (await savePatientLedgerRow(p)) !== false;
       if (ok && bill && SB_READY) {
-        ok = (await sbUpsert('hh_billings', [getBillingSyncPayload(bill, patientId)])) !== false && ok;
+        ok = (await saveBillingLedgerRow(bill, patientId)) !== false && ok;
       }
       return ok;
     },
@@ -12463,8 +12899,8 @@ async function startServices() {
     markDirty(patient);
     var startBillingOk = true;
     if (SB_READY) {
-      startBillingOk = (await sbUpsert('hh_billings', [getBillingSyncPayload(bill, patient.id)])) !== false && startBillingOk;
-      startBillingOk = (await sbUpsert('hh_patients', [toSbPatient(patient)])) !== false && startBillingOk;
+      startBillingOk = (await saveBillingLedgerRow(bill, patient.id)) !== false && startBillingOk;
+      startBillingOk = (await savePatientLedgerRow(patient)) !== false && startBillingOk;
     }
     if (startBillingOk) {
       clearDirty(bill);
@@ -12484,22 +12920,29 @@ async function syncBillingStatusChange(patId, bill, patient, successMessage) {
   var cloudOk = true;
   if (SB_READY) {
     if (bill) {
-      cloudOk = (await sbUpsert('hh_billings', [getBillingSyncPayload(bill, patId)])) !== false && cloudOk;
+      cloudOk = (await saveBillingLedgerRow(bill, patId)) !== false && cloudOk;
     }
     if (patient) {
-      cloudOk = (await sbUpsert('hh_patients', [toSbPatient(patient)])) !== false && cloudOk;
+      cloudOk = (await savePatientLedgerRow(patient)) !== false && cloudOk;
     }
   }
   if (cloudOk) {
     if (SB_READY) {
-      var remoteBills = await fetchRemoteRowsSafe('hh_billings', makeEqSelectQuery('patient_id', patId));
-      var remotePatients = await fetchRemoteRowsSafe('hh_patients', makeEqSelectQuery('id', patId));
-      if (remoteBills && remoteBills.length && DB.billings[patId]) {
-        DB.billings[patId] = mapSbBillingRow(remoteBills[0]);
-        bill = DB.billings[patId];
+      var refetchedBill = await refetchBillingForPatient(patId);
+      if (refetchedBill !== false && DB.billings[patId]) bill = DB.billings[patId];
+      var remotePatient = null;
+      if (window.legacyApi && window.legacyApi.patients) {
+        try {
+          var patApi = await window.legacyApi.patients.getById(patId);
+          if (patApi && patApi.ok && patApi.data) remotePatient = patApi.data;
+        } catch (ignore) {}
       }
-      if (remotePatients && remotePatients.length) {
-        replaceDbPatientFromRemote(remotePatients[0]);
+      if (!remotePatient) {
+        var remotePatients = await fetchRemoteRowsSafe('hh_patients', makeEqSelectQuery('id', patId));
+        if (remotePatients && remotePatients.length) remotePatient = remotePatients[0];
+      }
+      if (remotePatient) {
+        replaceDbPatientFromRemote(remotePatient);
         patient = DB.patients.find(function(row){ return row.id === patId; }) || patient;
       }
     }
@@ -12544,6 +12987,24 @@ async function doCloseBill() {
   markDirty(patient);
   syncBillingSecurityAmount(currentBillingPatId, true);
   recordAudit('billing', currentBillingPatId, 'close', buildStampText('Closed bill'), { reason:reason, other:other || '' });
+  if (SB_READY && bill && bill.id && window.legacyApi && window.legacyApi.billings) {
+    try {
+      var closeApi = await window.legacyApi.billings.close(bill.id, reason, other || '', false);
+      if (closeApi && closeApi.ok) {
+        if (closeApi.data && closeApi.data.billing) {
+          DB.billings[currentBillingPatId] = mapApiBillingToLocal(closeApi.data.billing);
+          bill = DB.billings[currentBillingPatId];
+        }
+        await syncBillingStatusChange(currentBillingPatId, bill, patient, 'Bill closed');
+        return;
+      }
+      if (closeApi && closeApi.transport === 'business') {
+        console.warn('Billing close API rejected; falling back to legacy sync.', closeApi);
+      }
+    } catch (closeErr) {
+      console.warn('Billing close API threw; falling back to legacy sync.', closeErr);
+    }
+  }
   await syncBillingStatusChange(currentBillingPatId, bill, patient, 'Bill closed');
 }
 
@@ -13796,7 +14257,7 @@ async function saveInquiry() {
     table: 'hh_inquiries',
     row: row,
     isNew: isNew,
-    payload: toSbInquiry(row),
+    toRemote: async function(r){ return (await saveInquiryLedgerRow(r)) !== false; },
     refetch: refetchInquiriesFromCloud,
     bannerId: 'inqConflictBanner',
     auditModule: 'inquiry',
@@ -14829,11 +15290,17 @@ function renderReportTable(headers, rows) {
 }
 
 function renderReports() {
+  void renderReportsAsync();
+}
+
+async function renderReportsAsync() {
   var body = document.getElementById('reportBody');
   var title = document.getElementById('reportTitle');
   if (!body || !title) return;
   clearElement(body);
-  var report = buildReportData();
+  body.appendChild(createTextNodeEl('p', 'Loading report…', 'sm mt8'));
+  var report = await buildReportDataWithApi();
+  clearElement(body);
   title.textContent = report.title;
   if (report.type === 'patient-billing') {
     if (!report.rows.length) {
@@ -14917,6 +15384,9 @@ function renderReports() {
     });
     body.appendChild(chartWrap);
     body.appendChild(createTextNodeEl('div', 'Revenue ' + formatCurrency(report.revenue) + ' | Expense ' + formatCurrency(report.expense) + ' | Net ' + formatCurrency(report.net), 'sm mt12'));
+    if (report.apiSource && report.payouts_pending != null) {
+      body.appendChild(createTextNodeEl('p', 'Cloud totals (audited API). Pending payouts not yet paid: ' + formatCurrency(report.payouts_pending) + '.', 'sm mt8'));
+    }
     body.appendChild(createTextNodeEl('p', 'Revenue includes billing receipts (advance/security/service) and invoice payment receipts recorded in Bills & payments.', 'sm mt8'));
   } else if (report.type === 'inquiry-conversion') {
     body.appendChild(renderReportTable(
@@ -14942,8 +15412,12 @@ function toggleReportRangeInputs() {
 }
 
 function exportReportCsv() {
+  void exportReportCsvAsync();
+}
+
+async function exportReportCsvAsync() {
   if (!guardAppPerm('Reports', 'export', 'You cannot export reports.')) return;
-  var report = buildReportData();
+  var report = await buildReportDataWithApi();
   var rows = [];
   if (report.type === 'patient-billing') {
     rows = [['Patient','Status','Service bill total','Invoice payments (all)','Invoice outstanding','Security deposit','Final invoices (period)','Invoiced amount (period)','Invoice payments (period)','Billing receipts (period)']].concat(report.rows.map(function(row){
@@ -14974,7 +15448,11 @@ function exportReportCsv() {
 }
 
 function printCurrentReport() {
-  var report = buildReportData();
+  void printCurrentReportAsync();
+}
+
+async function printCurrentReportAsync() {
+  var report = await buildReportDataWithApi();
   var html = [];
   html.push('<div class="box"><div class="k">Date Range</div><div class="v">' + safeText(report.range.from + ' to ' + report.range.to) + '</div></div>');
   if (report.type === 'profit-loss') {

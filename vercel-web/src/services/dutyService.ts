@@ -46,7 +46,7 @@ import { newId } from "@/business/idRules";
 import { dutyRepository } from "@/database/dutyRepository";
 import { attendanceRepository } from "@/database/attendanceRepository";
 import { payoutRepository } from "@/database/payoutRepository";
-import { auditRepository } from "@/database/auditRepository";
+import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
@@ -82,19 +82,15 @@ async function fireAudit(
     after?: unknown;
     stamp?: string;
   }
-): Promise<void> {
-  await auditRepository.insert(
-    {
-      module: "duty",
-      entity_id: payload.entity_id,
-      action: payload.action,
-      actor: ctx.actor.email || "system",
-      stamp: payload.stamp,
-      before: payload.before ?? null,
-      after: payload.after ?? null
-    },
-    dbAccess(ctx)
-  );
+) {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+    module: "duty",
+    entity_id: payload.entity_id,
+    action: payload.action,
+    stamp: payload.stamp,
+    before: payload.before ?? null,
+    after: payload.after ?? null
+  });
 }
 
 /**
@@ -291,8 +287,10 @@ export const dutyService = {
     const fresh = await loadFreshDuty(id, ctx, inserted.data ?? null);
     if (!fresh.success) return passFailure(fresh);
 
-    await fireAudit(ctx, { entity_id: id, action: "create", after: fresh.data });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, { entity_id: id, action: "create", after: fresh.data }),
+      fresh.data
+    );
   },
 
   async update(
@@ -329,13 +327,15 @@ export const dutyService = {
     const fresh = await loadFreshDuty(id, ctx, updated.data ?? null);
     if (!fresh.success) return passFailure(fresh);
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data
+      }),
+      fresh.data
+    );
   },
 
   /**
@@ -376,14 +376,16 @@ export const dutyService = {
       await payoutRepository.recomputeRpc(employeeId, period, dbAccess(ctx));
     }
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "delete",
-      before: existing.data,
-      after: fresh.data,
-      stamp: `Cancelled: ${input.reason || "no reason"}`
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "delete",
+        before: existing.data,
+        after: fresh.data,
+        stamp: `Cancelled: ${input.reason || "no reason"}`
+      }),
+      fresh.data
+    );
   },
 
   /** Public alias — `DELETE /duties/[id]` should call cancel, never hard-delete. */
@@ -446,14 +448,16 @@ export const dutyService = {
     const fresh = await loadFreshDuty(id, ctx, updated.data ?? null);
     if (!fresh.success) return passFailure(fresh);
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data,
-      stamp: "Check-in"
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data,
+        stamp: "Check-in"
+      }),
+      fresh.data
+    );
   },
 
   async checkOut(
@@ -508,13 +512,15 @@ export const dutyService = {
       await payoutRepository.recomputeRpc(employeeId, period, access);
     }
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data,
-      stamp: `Check-out (${hours.toFixed(2)}h)`
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data,
+        stamp: `Check-out (${hours.toFixed(2)}h)`
+      }),
+      fresh.data
+    );
   }
 };

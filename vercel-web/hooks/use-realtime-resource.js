@@ -14,6 +14,12 @@ function resolveTables(options) {
   return [];
 }
 
+function normalizeListPayload(response) {
+  if (Array.isArray(response)) return response;
+  if (response && Array.isArray(response.rows)) return response.rows;
+  return [];
+}
+
 export function useRealtimeResource(options) {
   const auth = useAuth();
   const [data, setData] = useState([]);
@@ -31,7 +37,7 @@ export function useRealtimeResource(options) {
         setLoading(true);
         try {
           const response = await request(options.apiPath, null, auth.session);
-          if (active) setData(response);
+          if (active) setData(normalizeListPayload(response));
           if (active) setError("");
         } catch (err) {
           if (active) setError(err.message);
@@ -91,7 +97,7 @@ export function useRealtimeResource(options) {
       setLoading(true);
       return request(options.apiPath, null, auth.session)
         .then(function (response) {
-          setData(response);
+          setData(normalizeListPayload(response));
           setError("");
         })
         .catch(function (err) {

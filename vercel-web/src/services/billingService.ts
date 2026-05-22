@@ -29,7 +29,9 @@ import {
   billingCloseSchema,
   billingReopenSchema,
   billingEditSchema,
+  billingLegacySyncSchema,
   receiptSchema,
+  replaceServiceEntriesSchema,
   generateFromDutySchema,
   generateFromDutyRangeSchema,
   billingListQuerySchema,
@@ -38,7 +40,9 @@ import {
   type BillingCloseInput,
   type BillingReopenInput,
   type BillingEditInput,
+  type BillingLegacySyncInput,
   type ReceiptInput,
+  type ReplaceServiceEntriesInput,
   type GenerateFromDutyInput,
   type GenerateFromDutyRangeInput,
   type BillingListQuery,
@@ -48,6 +52,7 @@ import { parseInput } from "@/validation/parseValidation";
 import {
   amountForShift,
   billingCloseRow,
+  billingPauseRow,
   billingPeriodOf,
   billingReopenRow,
   billingStatusRow,
@@ -69,7 +74,7 @@ import {
 import { newId } from "@/business/idRules";
 import { billingRepository } from "@/database/billingRepository";
 import { dutyRepository } from "@/database/dutyRepository";
-import { auditRepository } from "@/database/auditRepository";
+import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
@@ -100,24 +105,20 @@ async function fireAudit(
   module: "billing" | "receipt" | "svc_entry",
   payload: {
     entity_id: string;
-    action: "create" | "update" | "delete";
+    action: "create" | "update" | "delete" | "soft-delete";
     before?: unknown;
     after?: unknown;
     stamp?: string;
   }
-): Promise<void> {
-  await auditRepository.insert(
-    {
-      module,
-      entity_id: payload.entity_id,
-      action: payload.action,
-      actor: ctx.actor.email || "system",
-      stamp: payload.stamp,
-      before: payload.before ?? null,
-      after: payload.after ?? null
-    },
-    dbAccess(ctx)
-  );
+) {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+    module,
+    entity_id: payload.entity_id,
+    action: payload.action,
+    stamp: payload.stamp,
+    before: payload.before ?? null,
+    after: payload.after ?? null
+  });
 }
 
 type LoadResult<T> =
@@ -229,12 +230,16 @@ async function ensureActiveBilling(
   if (!inserted.data) {
     return toLoadFailure(failure("Billing insert returned no row", ErrorCodes.internal));
   }
-  await fireAudit(ctx, "billing", {
-    entity_id: id,
-    action: "create",
-    after: inserted.data,
-    stamp: `Bill created for patient ${patientId}`
-  });
+  const finalized = finalizeWithAudit(
+    await fireAudit(ctx, "billing", {
+      entity_id: id,
+      action: "create",
+      after: inserted.data,
+      stamp: `Bill created for patient ${patientId}`
+    }),
+    inserted.data
+  );
+  if (!finalized.success) return toLoadFailure(finalized);
   return { success: true, data: inserted.data };
 }
 
@@ -403,13 +408,15 @@ export const billingService = {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
 
-    await fireAudit(ctx, "billing", {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, "billing", {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data
+      }),
+      fresh.data
+    );
   },
 
   async setStatus(
@@ -444,14 +451,16 @@ export const billingService = {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
 
-    await fireAudit(ctx, "billing", {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data,
-      stamp: `Status -> ${input.status}`
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, "billing", {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data,
+        stamp: `Status -> ${input.status}`
+      }),
+      fresh.data
+    );
   },
 
   /**
@@ -494,7 +503,7 @@ export const billingService = {
       return failure(guard.error || "Cannot close bill", guard.code, guard.details);
     }
 
-    const patch = billingCloseRow(ctx.actor.email, input.reason);
+    const patch = billingCloseRow(ctx.actor.email, input.reason, input.close_reason_other);
     const updated = await billingRepository.updateBilling(id, patch, dbAccess(ctx));
     if (!updated.success) return passFailure(updated);
 
@@ -503,14 +512,16 @@ export const billingService = {
       return failure(refreshed.error || "Refetch failed", refreshed.code, refreshed.details);
     }
 
-    await fireAudit(ctx, "billing", {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: refreshed.data.billing,
-      stamp: `Closed${input.reason ? `: ${input.reason}` : ""}${input.force ? " (force)" : ""}`
-    });
-    return success(refreshed.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, "billing", {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: refreshed.data.billing,
+        stamp: `Closed${input.reason ? `: ${input.reason}` : ""}${input.force ? " (force)" : ""}`
+      }),
+      refreshed.data
+    );
   },
 
   async reopen(
@@ -556,14 +567,16 @@ export const billingService = {
       return failure(refreshed.error || "Refetch failed", refreshed.code, refreshed.details);
     }
 
-    await fireAudit(ctx, "billing", {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: refreshed.data.billing,
-      stamp: `Reopened: ${input.reason}`
-    });
-    return success(refreshed.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, "billing", {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: refreshed.data.billing,
+        stamp: `Reopened: ${input.reason}`
+      }),
+      refreshed.data
+    );
   },
 
   // ─────────────────────────────────────────────────────────────────────
@@ -723,18 +736,20 @@ export const billingService = {
       return failure(totals.error || "Refetch failed", totals.code, totals.details);
     }
 
-    await fireAudit(ctx, "billing", {
-      entity_id: billingId,
-      action: "create",
-      after: inserted.data,
-      stamp: `Bill from duty ${dutyRow.id}, ${dutyRow.shift_type} ₹${amount}`
-    });
-    return success({
-      billing_id: billingId,
-      svc_entry: inserted.data ?? null,
-      duplicate: false,
-      totals: totals.data.totals
-    });
+    return finalizeWithAudit(
+      await fireAudit(ctx, "billing", {
+        entity_id: billingId,
+        action: "create",
+        after: inserted.data,
+        stamp: `Bill from duty ${dutyRow.id}, ${dutyRow.shift_type} ₹${amount}`
+      }),
+      {
+        billing_id: billingId,
+        svc_entry: inserted.data ?? null,
+        duplicate: false,
+        totals: totals.data.totals
+      }
+    );
   },
 
   /**
@@ -835,16 +850,25 @@ export const billingService = {
       return failure(totals.error || "Refetch failed", totals.code, totals.details);
     }
 
+    const resultData = {
+      billing_id: billingId,
+      created,
+      skipped,
+      totals: totals.data.totals
+    };
     if (created > 0) {
-      await fireAudit(ctx, "billing", {
-        entity_id: billingId,
-        action: "update",
-        after: totals.data.billing,
-        stamp: `Generated ${created} svc entries for ${input.period} (${skipped} skipped)`
-      });
+      return finalizeWithAudit(
+        await fireAudit(ctx, "billing", {
+          entity_id: billingId,
+          action: "update",
+          after: totals.data.billing,
+          stamp: `Generated ${created} svc entries for ${input.period} (${skipped} skipped)`
+        }),
+        resultData
+      );
     }
 
-    return success({ billing_id: billingId, created, skipped, totals: totals.data.totals });
+    return success(resultData);
   },
 
   // ─────────────────────────────────────────────────────────────────────
@@ -887,13 +911,303 @@ export const billingService = {
     );
     if (!saved.success) return passFailure(saved);
 
-    await fireAudit(ctx, "receipt", {
-      entity_id: id,
-      action: "create",
-      after: saved.data ?? null,
-      stamp: `₹${input.amount} on bill ${input.billing_id}`
-    });
-    return success(saved.data ?? null);
+    return finalizeWithAudit(
+      await fireAudit(ctx, "receipt", {
+        entity_id: id,
+        action: "create",
+        after: saved.data ?? null,
+        stamp: `₹${input.amount} on bill ${input.billing_id}`
+      }),
+      saved.data ?? null
+    );
+  },
+
+  /** List ACTIVE (not soft-deleted) receipts for a billing. */
+  async listReceiptsForBilling(
+    billingId: string,
+    ctx: BillingServiceContext
+  ): Promise<ApiResult<JsonRow[]>> {
+    const access = dbAccess(ctx);
+    const billing = await billingRepository.findBillingById(billingId, access);
+    if (!billing.success) return passFailure(billing);
+    if (!billing.data) return notFoundFailure("Billing", billingId);
+    const rows = await billingRepository.listActiveReceiptsByBilling(billingId, access);
+    if (!rows.success) return passFailure(rows);
+    return success(rows.data || []);
+  },
+
+  /**
+   * Soft-delete a receipt via the audited RPC. Refuses if the parent bill is
+   * closed/cancelled; honours `canEditBilling`.
+   */
+  async softDeleteReceipt(
+    billingId: string,
+    receiptId: string,
+    ctx: BillingServiceContext,
+    reason?: string
+  ): Promise<ApiResult<JsonRow | null>> {
+    if (!receiptId) {
+      return failure("Receipt id is required", ErrorCodes.validation);
+    }
+    const access = dbAccess(ctx);
+
+    const billing = await billingRepository.findBillingById(billingId, access);
+    if (!billing.success) return passFailure(billing);
+    if (!billing.data) return notFoundFailure("Billing", billingId);
+
+    const editGuard = canEditBilling(String(billing.data.status || ""));
+    if (!editGuard.success) {
+      return failure(
+        editGuard.error || "Bill is closed — cannot delete receipts",
+        editGuard.code,
+        editGuard.details
+      );
+    }
+
+    const existing = await billingRepository.findReceiptById(receiptId, access);
+    if (!existing.success) return passFailure(existing);
+    if (!existing.data) return notFoundFailure("Receipt", receiptId);
+
+    const deleted = await billingRepository.softDeleteReceiptRpc(
+      receiptId,
+      billingId,
+      ctx.actor.email || "",
+      access
+    );
+    if (!deleted.success) return passFailure(deleted);
+
+    return finalizeWithAudit(
+      await fireAudit(ctx, "receipt", {
+        entity_id: receiptId,
+        action: "soft-delete",
+        before: existing.data,
+        after: deleted.data ?? null,
+        stamp: reason ? `Deleted: ${reason}` : `Receipt ${receiptId} deleted`
+      }),
+      deleted.data ?? null
+    );
+  },
+
+  /**
+   * Legacy SPA upsert — mirrors `sbUpsert('hh_billings', [toSbBilling(...)])`.
+   *
+   * - Inserts when the row id is new (honours client-generated `INVE…` ids).
+   * - Updates sec_dep / status / close_reason / pause_reason on existing rows.
+   * - Refuses illegal status transitions and edits on Cancelled bills.
+   */
+  async syncLegacy(
+    rawInput: unknown,
+    ctx: BillingServiceContext
+  ): Promise<ApiResult<JsonRow>> {
+    const parsed = parseInput(billingLegacySyncSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const input = parsed.data as BillingLegacySyncInput;
+    const access = dbAccess(ctx);
+
+    let existing: JsonRow | null = null;
+    if (input.id) {
+      const byId = await billingRepository.findBillingById(input.id, access);
+      if (!byId.success) return passFailure(byId);
+      existing = byId.data ?? null;
+    }
+    if (!existing) {
+      const active = await billingRepository.findActiveByPatient(input.patient_id, access);
+      if (!active.success) return passFailure(active);
+      existing = active.data ?? null;
+    }
+
+    if (!existing) {
+      const insertId = input.id || newId.billing();
+      const inserted = await billingRepository.insertBilling(
+        {
+          id: insertId,
+          patient_id: input.patient_id,
+          status: input.status || "Active",
+          sec_dep: input.sec_dep ?? 0,
+          close_reason: input.close_reason || "",
+          close_reason_other: input.close_reason_other || "",
+          pause_reason: input.pause_reason || "",
+          created: input.created || new Date().toISOString(),
+          notes: input.notes || "",
+          created_by: ctx.actor.email,
+          updated_by: ctx.actor.email
+        },
+        access
+      );
+      if (!inserted.success) {
+        const msg = (inserted.error || "").toLowerCase();
+        if (
+          msg.includes("uq_hh_billings_patient_active") ||
+          msg.includes("duplicate key value")
+        ) {
+          const retry = await billingRepository.findActiveByPatient(input.patient_id, access);
+          if (retry.success && retry.data) return success(retry.data);
+        }
+        return passFailure(inserted);
+      }
+      if (!inserted.data) {
+        return failure("Billing insert returned no row", ErrorCodes.internal);
+      }
+      return finalizeWithAudit(
+        await fireAudit(ctx, "billing", {
+          entity_id: String(inserted.data.id),
+          action: "create",
+          after: inserted.data,
+          stamp: `Legacy sync created bill for ${input.patient_id}`
+        }),
+        inserted.data
+      );
+    }
+
+    const currentStatus = String(existing.status || "Active");
+    if (currentStatus === "Cancelled") {
+      return failure("Cancelled bills cannot be updated", ErrorCodes.business);
+    }
+
+    const nextStatus = (input.status || currentStatus) as BillingStatus;
+    if (nextStatus !== currentStatus) {
+      const transition = canTransitionTo(currentStatus, nextStatus);
+      if (!transition.success) {
+        return failure(
+          transition.error || "Illegal status transition",
+          transition.code,
+          transition.details
+        );
+      }
+    }
+
+    const patch: JsonRow = { updated_by: ctx.actor.email };
+    if (input.sec_dep !== undefined) patch.sec_dep = input.sec_dep;
+    if (input.notes) patch.notes = input.notes;
+    if (nextStatus !== currentStatus) {
+      if (nextStatus === "Paused") {
+        Object.assign(patch, billingPauseRow(ctx.actor.email, input.pause_reason));
+      } else if (nextStatus === "Closed") {
+        Object.assign(
+          patch,
+          billingCloseRow(ctx.actor.email, input.close_reason, input.close_reason_other)
+        );
+      } else {
+        Object.assign(patch, billingStatusRow(nextStatus, ctx.actor.email));
+      }
+    } else {
+      if (input.close_reason) patch.close_reason = input.close_reason;
+      if (input.close_reason_other) patch.close_reason_other = input.close_reason_other;
+      if (input.pause_reason) patch.pause_reason = input.pause_reason;
+    }
+
+    if (Object.keys(patch).length === 1 && patch.updated_by) {
+      return success(existing);
+    }
+
+    const editGuard =
+      nextStatus === "Closed" || nextStatus === "Cancelled"
+        ? { success: true as const }
+        : canEditBilling(currentStatus);
+    if (!editGuard.success && input.sec_dep === undefined) {
+      return failure(editGuard.error || "Bill locked", editGuard.code, editGuard.details);
+    }
+    if (!editGuard.success && input.sec_dep !== undefined) {
+      const secOnly: JsonRow = {
+        sec_dep: input.sec_dep,
+        updated_by: ctx.actor.email
+      };
+      const secUpdated = await billingRepository.updateBilling(
+        String(existing.id),
+        secOnly,
+        access
+      );
+      if (!secUpdated.success) return passFailure(secUpdated);
+      const freshSec = await loadFreshBilling(String(existing.id), ctx, secUpdated.data ?? null);
+      if (!freshSec.success) {
+        return failure(freshSec.error || "Refetch failed", freshSec.code, freshSec.details);
+      }
+      return success(freshSec.data);
+    }
+
+    const updated = await billingRepository.updateBilling(String(existing.id), patch, access);
+    if (!updated.success) return passFailure(updated);
+
+    const fresh = await loadFreshBilling(String(existing.id), ctx, updated.data ?? null);
+    if (!fresh.success) {
+      return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
+    }
+
+    return finalizeWithAudit(
+      await fireAudit(ctx, "billing", {
+        entity_id: String(existing.id),
+        action: "update",
+        before: existing,
+        after: fresh.data,
+        stamp: `Legacy sync (${nextStatus})`
+      }),
+      fresh.data
+    );
+  },
+
+  /**
+   * Replace the entire `hh_svc_entries` slice for a `svc_key` (duty diary
+   * save). Refuses when the parent billing is Closed/Cancelled.
+   *
+   * `svc_key` format used by the legacy SPA: `<billingId>_<serviceName>`.
+   */
+  async replaceServiceEntries(
+    rawInput: unknown,
+    ctx: BillingServiceContext
+  ): Promise<ApiResult<{ svc_key: string; count: number }>> {
+    const parsed = parseInput(replaceServiceEntriesSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const input = parsed.data as ReplaceServiceEntriesInput;
+    const access = dbAccess(ctx);
+
+    const billingId = String(input.svc_key).split("_")[0];
+    if (!billingId) {
+      return failure("svc_key is missing billing id prefix", ErrorCodes.validation);
+    }
+
+    const billing = await billingRepository.findBillingById(billingId, access);
+    if (!billing.success) return passFailure(billing);
+    if (!billing.data) return notFoundFailure("Billing", billingId);
+
+    const editGuard = canEditBilling(String(billing.data.status || ""));
+    if (!editGuard.success) {
+      return failure(
+        editGuard.error || "Bill is locked — cannot edit service entries",
+        editGuard.code,
+        editGuard.details
+      );
+    }
+
+    const rows: JsonRow[] = input.rows.map((row) => ({
+      billing_id: row.billing_id || billingId,
+      service_name: row.service_name || "",
+      partner: row.partner || "",
+      partner_id: row.partner_id || "",
+      date: row.date || "",
+      freq: row.freq || "",
+      amt: row.amt,
+      count: row.count,
+      disc: row.disc,
+      total: row.total,
+      remarks: row.remarks || ""
+    }));
+
+    const replaced = await billingRepository.replaceSvcEntriesRpc(
+      input.svc_key,
+      rows,
+      access
+    );
+    if (!replaced.success) return passFailure(replaced);
+
+    return finalizeWithAudit(
+      await fireAudit(ctx, "svc_entry", {
+        entity_id: input.svc_key,
+        action: "update",
+        after: { svc_key: input.svc_key, count: rows.length },
+        stamp: `Replaced ${rows.length} service entries for ${input.svc_key}`
+      }),
+      { svc_key: input.svc_key, count: rows.length }
+    );
   },
 
   // ─────────────────────────────────────────────────────────────────────

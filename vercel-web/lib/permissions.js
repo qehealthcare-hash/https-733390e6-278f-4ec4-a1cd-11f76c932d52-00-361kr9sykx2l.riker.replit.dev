@@ -1,5 +1,19 @@
+/** Map hh_users.role labels to permission buckets used by the React shell. */
+function normalizeRole(role) {
+  var key = String(role || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+  if (key === "ADMIN" || key === "MANAGER" || key === "EXECUTIVE") return "ADMIN";
+  if (key === "ACCOUNTANT") return "ACCOUNTANT";
+  if (key === "NURSE") return "NURSE";
+  if (key === "ATTENDANT") return "ATTENDANT";
+  if (key === "STAFF") return "STAFF";
+  return key || "STAFF";
+}
+
 var rolePermissions = {
-  ADMIN: ["*"],
+  ADMIN: ["*", "audits.read"],
   STAFF: [
     "dashboard.read",
     "employees.read",
@@ -10,7 +24,10 @@ var rolePermissions = {
     "inquiries.write",
     "billings.read",
     "billings.write",
-    "reports.read"
+    "duties.read",
+    "duties.write",
+    "reports.read",
+    "audits.read"
   ],
   ACCOUNTANT: [
     "dashboard.read",
@@ -20,13 +37,15 @@ var rolePermissions = {
     "billings.write",
     "payouts.read",
     "payouts.write",
-    "reports.read"
+    "reports.read",
+    "audits.read"
   ],
   NURSE: ["dashboard.read", "employees.read", "patients.read", "payouts.read"],
   ATTENDANT: ["dashboard.read", "employees.read", "patients.read", "payouts.read"]
 };
 
 export function hasPermission(role, permission) {
-  var list = rolePermissions[String(role || "").toUpperCase()] || [];
+  if (!permission) return true;
+  var list = rolePermissions[normalizeRole(role)] || rolePermissions.STAFF || [];
   return list.indexOf("*") >= 0 || list.indexOf(permission) >= 0;
 }

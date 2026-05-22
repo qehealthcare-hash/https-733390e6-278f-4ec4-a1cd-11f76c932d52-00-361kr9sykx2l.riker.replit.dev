@@ -29,13 +29,15 @@ import {
   payoutReopenSchema,
   payoutRecomputeSchema,
   payoutListQuerySchema,
+  replacePayoutChargesSchema,
   type PayoutInput,
   type PayoutAdjustmentInput,
   type PayoutPayInput,
   type PayoutLockInput,
   type PayoutReopenInput,
   type PayoutRecomputeInput,
-  type PayoutListQuery
+  type PayoutListQuery,
+  type ReplacePayoutChargesInput
 } from "@/validation/payoutValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
@@ -60,7 +62,7 @@ import { monthRangeUTC } from "@/business/dateRules";
 import { payoutRepository } from "@/database/payoutRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { attendanceRepository } from "@/database/attendanceRepository";
-import { auditRepository } from "@/database/auditRepository";
+import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
@@ -95,19 +97,15 @@ async function fireAudit(
     after?: unknown;
     stamp?: string;
   }
-): Promise<void> {
-  await auditRepository.insert(
-    {
-      module: "payout",
-      entity_id: payload.entity_id,
-      action: payload.action,
-      actor: ctx.actor.email || "system",
-      stamp: payload.stamp,
-      before: payload.before ?? null,
-      after: payload.after ?? null
-    },
-    dbAccess(ctx)
-  );
+) {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+    module: "payout",
+    entity_id: payload.entity_id,
+    action: payload.action,
+    stamp: payload.stamp,
+    before: payload.before ?? null,
+    after: payload.after ?? null
+  });
 }
 
 type LoadResult<T> =
@@ -398,14 +396,16 @@ export const payoutService = {
     }
 
     const persistedData = persisted.data as JsonRow;
-    await fireAudit(ctx, {
-      entity_id: String(persistedData.id),
-      action: existing.data ? "update" : "create",
-      before: existing.data ?? null,
-      after: persistedData,
-      stamp: `Recompute + ensure for ${input.employee_id} ${input.period_month}`
-    });
-    return success(persistedData);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: String(persistedData.id),
+        action: existing.data ? "update" : "create",
+        before: existing.data ?? null,
+        after: persistedData,
+        stamp: `Recompute + ensure for ${input.employee_id} ${input.period_month}`
+      }),
+      persistedData
+    );
   },
 
   /** Recompute an existing payout from duty + attendance. Idempotent. */
@@ -438,14 +438,16 @@ export const payoutService = {
     if (!result.success) return passFailure(result);
 
     const resultData = result.data as JsonRow;
-    await fireAudit(ctx, {
-      entity_id: String(resultData.id),
-      action: "update",
-      before: existing.data ?? null,
-      after: resultData,
-      stamp: `Recompute requested`
-    });
-    return success(resultData);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: String(resultData.id),
+        action: "update",
+        before: existing.data ?? null,
+        after: resultData,
+        stamp: `Recompute requested`
+      }),
+      resultData
+    );
   },
 
   /**
@@ -511,14 +513,16 @@ export const payoutService = {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
 
-    await fireAudit(ctx, {
-      entity_id: input.payout_id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data,
-      stamp: "Adjust advance/deduction/bonus"
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: input.payout_id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data,
+        stamp: "Adjust advance/deduction/bonus"
+      }),
+      fresh.data
+    );
   },
 
   /** Lock a payout — blocks further adjustments until reopen. */
@@ -562,14 +566,16 @@ export const payoutService = {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data,
-      stamp: `Locked${input.reason ? `: ${input.reason}` : ""}`
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data,
+        stamp: `Locked${input.reason ? `: ${input.reason}` : ""}`
+      }),
+      fresh.data
+    );
   },
 
   /** Reopen a LOCKED payout. Requires an audited reason. */
@@ -601,14 +607,16 @@ export const payoutService = {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data,
-      stamp: `Reopened: ${input.reason}`
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data,
+        stamp: `Reopened: ${input.reason}`
+      }),
+      fresh.data
+    );
   },
 
   /** Mark a payout PAID + insert paid transaction. Idempotent on the natural key. */
@@ -655,14 +663,56 @@ export const payoutService = {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
 
-    await fireAudit(ctx, {
-      entity_id: input.payout_id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data,
-      stamp: "Marked PAID"
-    });
-    return success(fresh.data);
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: input.payout_id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data,
+        stamp: "Marked PAID"
+      }),
+      fresh.data
+    );
+  },
+
+  /**
+   * Replace the entire `hh_payout_charges` slice for a `svc_key`. Used by
+   * the legacy duty-diary save to keep per-partner payout rows in sync with
+   * the visible service-entries table. Audited.
+   */
+  async replacePayoutCharges(
+    rawInput: unknown,
+    ctx: PayoutServiceContext
+  ): Promise<ApiResult<{ svc_key: string; count: number }>> {
+    const parsed = parseInput(replacePayoutChargesSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const input = parsed.data as ReplacePayoutChargesInput;
+
+    const rows: JsonRow[] = input.rows.map((row) => ({
+      date: row.date || "",
+      partner: row.partner || "",
+      partner_id: row.partner_id || "",
+      term: row.term || "",
+      amount: row.amount,
+      remarks: row.remarks || ""
+    }));
+
+    const replaced = await payoutRepository.replacePayoutChargesRpc(
+      input.svc_key,
+      rows,
+      dbAccess(ctx)
+    );
+    if (!replaced.success) return passFailure(replaced);
+
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: input.svc_key,
+        action: "update",
+        after: { svc_key: input.svc_key, count: rows.length },
+        stamp: `Replaced ${rows.length} payout charges for ${input.svc_key}`
+      }),
+      { svc_key: input.svc_key, count: rows.length }
+    );
   },
 
   // ─────────────────────────────────────────────────────────────────────

@@ -4,75 +4,61 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
-import { DataTable } from "@/components/ui/data-table";
 import { StatCard } from "@/components/ui/stat-card";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request } from "@/lib/api-client";
 import { downloadCsv } from "@/lib/csv";
 import { formatCurrency } from "@/lib/formatters";
 
+function periodFromMonthInput(monthValue) {
+  if (monthValue && /^\d{4}-\d{2}$/.test(monthValue)) return monthValue;
+  var now = new Date();
+  return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+}
+
 export default function ReportsPage() {
   var auth = useAuth();
-  var [data, setData] = useState({
-    patientBilling: [],
-    employeePayout: [],
-    profitLoss: [],
-    inquiryConversion: [],
-    attendanceService: []
-  });
-  var [rangeMode, setRangeMode] = useState("all");
-  var [filterMonth, setFilterMonth] = useState("");
+  var [period, setPeriod] = useState(periodFromMonthInput(""));
+  var [billing, setBilling] = useState(null);
+  var [payout, setPayout] = useState(null);
+  var [profitLoss, setProfitLoss] = useState(null);
+  var [payroll, setPayroll] = useState(null);
+  var [error, setError] = useState("");
+  var [loading, setLoading] = useState(false);
 
   useEffect(
     function () {
       if (!auth.session?.access_token) return;
+      var q = "?period=" + encodeURIComponent(periodFromMonthInput(period));
+      setLoading(true);
+      setError("");
       Promise.all([
-        request("/reports/patient-billing", null, auth.session),
-        request("/reports/employee-payout", null, auth.session),
-        request("/reports/profit-loss", null, auth.session),
-        request("/reports/inquiry-conversion", null, auth.session),
-        request("/reports/attendance-service", null, auth.session)
-      ]).then(function (result) {
-        setData({
-          patientBilling: result[0],
-          employeePayout: result[1],
-          profitLoss: result[2],
-          inquiryConversion: result[3],
-          attendanceService: result[4]
+        request("/reports/billing-totals" + q, null, auth.session),
+        request("/reports/payout-totals" + q, null, auth.session),
+        request("/reports/profit-loss" + q, null, auth.session),
+        request("/reports/payroll" + q, null, auth.session)
+      ])
+        .then(function (result) {
+          setBilling(result[0]);
+          setPayout(result[1]);
+          setProfitLoss(result[2]);
+          setPayroll(result[3]);
+        })
+        .catch(function (err) {
+          setError(err.message || "Unable to load reports");
+        })
+        .finally(function () {
+          setLoading(false);
         });
-      });
     },
-    [auth.session]
+    [auth.session, period]
   );
 
-  var filteredProfit = useMemo(
+  var payrollRows = useMemo(
     function () {
-      return data.profitLoss.filter(function (row) {
-        if (!filterMonth) return true;
-        return String(row.month_key || "").indexOf(filterMonth) === 0;
-      });
+      return (payroll && payroll.rows) || [];
     },
-    [data.profitLoss, filterMonth]
-  );
-
-  var totals = useMemo(
-    function () {
-      var revenue = data.patientBilling.reduce(function (sum, row) {
-        return sum + Number(row.total_collected || 0);
-      }, 0);
-      var pendingPayout = data.employeePayout.reduce(function (sum, row) {
-        return sum + Number(row.total_pending || 0);
-      }, 0);
-      var openReceivables = data.patientBilling.reduce(function (sum, row) {
-        return sum + Number(row.outstanding_amount || 0);
-      }, 0);
-      return {
-        revenue: revenue,
-        pendingPayout: pendingPayout,
-        openReceivables: openReceivables
-      };
-    },
-    [data.patientBilling, data.employeePayout]
+    [payroll]
   );
 
   return (
@@ -80,115 +66,150 @@ export default function ReportsPage() {
       <AppShell title="Reports">
         <div className="page-grid">
           <section className="kpi-grid">
-            <StatCard label="Collections to Date" value={formatCurrency(totals.revenue)} detail="Patient receipts and realized collections" />
-            <StatCard label="Open Patient Receivables" value={formatCurrency(totals.openReceivables)} detail="Still due from invoice history" />
-            <StatCard label="Pending Staff Payouts" value={formatCurrency(totals.pendingPayout)} detail="Unpaid payroll obligations" />
+            <StatCard
+              label="Service total"
+              value={billing ? formatCurrency(billing.service_total) : "—"}
+              detail={billing ? String(billing.billings_count) + " billings" : ""}
+            />
+            <StatCard
+              label="Collected"
+              value={billing ? formatCurrency(billing.collected) : "—"}
+              detail={billing ? "Pending " + formatCurrency(billing.pending) : ""}
+            />
+            <StatCard
+              label="Net profit"
+              value={profitLoss ? formatCurrency(profitLoss.net_profit) : "—"}
+              detail={profitLoss ? "Revenue " + formatCurrency(profitLoss.revenue) : ""}
+            />
+            <StatCard
+              label="Payout paid"
+              value={payout ? formatCurrency(payout.paid) : "—"}
+              detail={payout ? "Pending " + formatCurrency(payout.pending) : ""}
+            />
           </section>
 
           <ModuleShell
-            title="Report Controls"
-            description="Monthly, yearly, or custom exporting can be layered on top of these views"
+            title="Report period"
+            description="Audited aggregates from /api/v1/reports (server-side math)"
             actions={
-              <div className="button-row">
-                <button className="button secondary" type="button" onClick={function () { downloadCsv("profit-loss-report.csv", filteredProfit); }}>
-                  Export Profit & Loss CSV
-                </button>
-              </div>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={function () {
+                  if (!profitLoss) return;
+                  downloadCsv("profit-loss-" + period + ".csv", [
+                    {
+                      period: profitLoss.period,
+                      revenue: profitLoss.revenue,
+                      payouts_paid: profitLoss.payouts_paid,
+                      payouts_pending: profitLoss.payouts_pending,
+                      net_profit: profitLoss.net_profit
+                    }
+                  ]);
+                }}
+              >
+                Export P&amp;L CSV
+              </button>
             }
           >
             <div className="toolbar">
               <div className="field">
-                <label>Range Mode</label>
-                <select value={rangeMode} onChange={function (event) { setRangeMode(event.target.value); }}>
-                  <option value="all">All time</option>
-                  <option value="monthly">Monthly focus</option>
-                  <option value="yearly">Yearly focus</option>
-                  <option value="custom">Custom month filter</option>
-                </select>
-              </div>
-              <div className="field">
-                <label>Month Key Filter</label>
-                <input value={filterMonth} onChange={function (event) { setFilterMonth(event.target.value); }} placeholder="2026-05" />
+                <label>Month (YYYY-MM)</label>
+                <input
+                  type="month"
+                  value={period}
+                  onChange={function (event) {
+                    setPeriod(event.target.value);
+                  }}
+                />
               </div>
             </div>
+            {loading ? <div className="mini-muted">Loading…</div> : null}
+            {error ? <div className="error-text">{error}</div> : null}
+          </ModuleShell>
+
+          <ModuleShell title="Billing totals">
+            {billing ? (
+              <div className="stack mini-muted">
+                <div>Period: {billing.period}</div>
+                <div>Service total: {formatCurrency(billing.service_total)}</div>
+                <div>Collected: {formatCurrency(billing.collected)}</div>
+                <div>Pending: {formatCurrency(billing.pending)}</div>
+              </div>
+            ) : (
+              <div className="mini-muted">No data</div>
+            )}
+          </ModuleShell>
+
+          <ModuleShell title="Payout totals">
+            {payout ? (
+              <div className="stack mini-muted">
+                <div>Gross: {formatCurrency(payout.gross)}</div>
+                <div>Net: {formatCurrency(payout.net)}</div>
+                <div>Paid: {formatCurrency(payout.paid)}</div>
+                <div>Pending: {formatCurrency(payout.pending)}</div>
+              </div>
+            ) : (
+              <div className="mini-muted">No data</div>
+            )}
           </ModuleShell>
 
           <ModuleShell
-            title="Patient Billing Report"
-            actions={<button className="button secondary" type="button" onClick={function () { downloadCsv("patient-billing-report.csv", data.patientBilling); }}>Export CSV</button>}
+            title="Payroll by employee"
+            actions={
+              <button
+                className="button secondary"
+                type="button"
+                onClick={function () {
+                  downloadCsv(
+                    "payroll-" + period + ".csv",
+                    payrollRows.map(function (row) {
+                      return {
+                        employee_id: row.employee_id,
+                        gross: row.gross_amount,
+                        net: row.net_amount,
+                        status: row.status,
+                        present: row.attendance && row.attendance.present,
+                        absent: row.attendance && row.attendance.absent
+                      };
+                    })
+                  );
+                }}
+              >
+                Export payroll CSV
+              </button>
+            }
           >
-            <DataTable
-              columns={[
-                { key: "patient_name", label: "Patient" },
-                { key: "total_billed", label: "Billed", render: function (row) { return formatCurrency(row.total_billed); } },
-                { key: "total_collected", label: "Collected", render: function (row) { return formatCurrency(row.total_collected); } },
-                { key: "outstanding_amount", label: "Outstanding", render: function (row) { return formatCurrency(row.outstanding_amount); } },
-                { key: "security_deposit", label: "Deposit Held", render: function (row) { return formatCurrency(row.security_deposit); } }
-              ]}
-              rows={data.patientBilling}
-            />
-          </ModuleShell>
-
-          <ModuleShell
-            title="Employee Payout Report"
-            actions={<button className="button secondary" type="button" onClick={function () { downloadCsv("employee-payout-report.csv", data.employeePayout); }}>Export CSV</button>}
-          >
-            <DataTable
-              columns={[
-                { key: "employee_name", label: "Employee" },
-                { key: "total_paid", label: "Paid", render: function (row) { return formatCurrency(row.total_paid); } },
-                { key: "total_pending", label: "Pending", render: function (row) { return formatCurrency(row.total_pending); } }
-              ]}
-              rows={data.employeePayout}
-            />
-          </ModuleShell>
-
-          <ModuleShell
-            title="Profit & Loss Statement"
-            actions={<button className="button secondary" type="button" onClick={function () { downloadCsv("profit-loss.csv", filteredProfit); }}>Export CSV</button>}
-          >
-            <DataTable
-              columns={[
-                { key: "month_key", label: "Month" },
-                { key: "total_revenue", label: "Revenue", render: function (row) { return formatCurrency(row.total_revenue); } },
-                { key: "total_expense", label: "Expense", render: function (row) { return formatCurrency(row.total_expense); } },
-                { key: "net_profit", label: "Net", render: function (row) { return formatCurrency(row.net_profit); } }
-              ]}
-              rows={filteredProfit}
-            />
-          </ModuleShell>
-
-          <ModuleShell
-            title="Inquiry Conversion Report"
-            actions={<button className="button secondary" type="button" onClick={function () { downloadCsv("inquiry-conversion.csv", data.inquiryConversion); }}>Export CSV</button>}
-          >
-            <DataTable
-              columns={[
-                { key: "source", label: "Source" },
-                { key: "total_inquiries", label: "Inquiries" },
-                { key: "converted_to_patients", label: "Converted" },
-                { key: "conversion_rate", label: "Conversion %" },
-                { key: "hot_count", label: "Hot" },
-                { key: "warm_count", label: "Warm" },
-                { key: "cold_count", label: "Cold" }
-              ]}
-              rows={data.inquiryConversion}
-            />
-          </ModuleShell>
-
-          <ModuleShell
-            title="Attendance & Service Report"
-            actions={<button className="button secondary" type="button" onClick={function () { downloadCsv("attendance-service.csv", data.attendanceService); }}>Export CSV</button>}
-          >
-            <DataTable
-              columns={[
-                { key: "employee_name", label: "Employee" },
-                { key: "patients_served", label: "Patients Served" },
-                { key: "worked_days", label: "Worked Days" },
-                { key: "absent_days", label: "Absent Days" }
-              ]}
-              rows={data.attendanceService}
-            />
+            {!payrollRows.length ? (
+              <div className="mini-muted">No payroll rows for this period.</div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Employee</th>
+                      <th>Net</th>
+                      <th>Status</th>
+                      <th>Present</th>
+                      <th>Absent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payrollRows.map(function (row) {
+                      return (
+                        <tr key={row.id || row.employee_id}>
+                          <td>{row.employee_id}</td>
+                          <td>{formatCurrency(row.net_amount)}</td>
+                          <td>{row.status || "—"}</td>
+                          <td>{row.attendance ? row.attendance.present : "—"}</td>
+                          <td>{row.attendance ? row.attendance.absent : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </ModuleShell>
         </div>
       </AppShell>

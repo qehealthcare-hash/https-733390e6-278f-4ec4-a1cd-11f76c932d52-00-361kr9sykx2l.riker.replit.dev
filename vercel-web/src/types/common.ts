@@ -98,6 +98,7 @@ export const ErrorCodes = {
   database: "database_error",
   upstream: "upstream_error",
   business: "business_rule_violation",
+  audit: "audit_write_failed",
   internal: "internal_error"
 } as const;
 

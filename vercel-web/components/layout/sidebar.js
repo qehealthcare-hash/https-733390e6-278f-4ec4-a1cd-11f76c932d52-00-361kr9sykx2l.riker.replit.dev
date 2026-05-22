@@ -20,6 +20,7 @@ export function Sidebar() {
       <div className="crm-tagline">{appConfig.companyTagline}</div>
       <nav className="crm-nav">
         {modules.filter(function (item) {
+          if (!item.permission) return Boolean(auth.session);
           return hasPermission(auth.profile?.role, item.permission);
         }).map(function (item) {
           const active = pathname === item.href;

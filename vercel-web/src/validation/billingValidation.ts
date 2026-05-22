@@ -2,7 +2,7 @@ import { z } from "zod";
 import { idSchema, isoDate, moneySchema, monthPeriodSchema } from "@/validation/commonValidation";
 
 /** Lifecycle states recognised for a billing record. */
-export const BILLING_STATUSES = ["Active", "Closed", "Cancelled"] as const;
+export const BILLING_STATUSES = ["Active", "Closed", "Cancelled", "Paused"] as const;
 export type BillingStatus = (typeof BILLING_STATUSES)[number];
 
 /**
@@ -45,9 +45,27 @@ export const billingStatusSchema = z.object({
 /** Closing a bill requires acknowledging the closing actor. */
 export const billingCloseSchema = z.object({
   reason: z.string().trim().max(500).optional().default(""),
+  close_reason_other: z.string().trim().max(500).optional().default(""),
   /** If true, allow closing even with outstanding > 0 (Admin override). */
   force: z.boolean().optional().default(false)
 });
+
+/**
+ * Legacy SPA upsert payload — mirrors `toSbBilling()` output so Phase 7b can
+ * route `sbUpsert('hh_billings')` through the audited service layer.
+ */
+export const billingLegacySyncSchema = z.object({
+  id: idSchema.optional(),
+  patient_id: idSchema,
+  status: z.enum(BILLING_STATUSES).optional().default("Active"),
+  sec_dep: moneySchema.optional().default(0),
+  close_reason: z.string().optional().default(""),
+  close_reason_other: z.string().optional().default(""),
+  pause_reason: z.string().optional().default(""),
+  created: z.string().optional().default(""),
+  notes: z.string().optional().default("")
+});
+export type BillingLegacySyncInput = z.infer<typeof billingLegacySyncSchema>;
 
 /** Reopening a Closed bill always requires an explicit reason for audit. */
 export const billingReopenSchema = z.object({
@@ -65,16 +83,64 @@ export const billingEditSchema = z
   });
 
 /** Receipt payload — server is the source of truth for billing_id. */
+/**
+ * Receipt input — accepts the full `hh_receipts` column set the legacy SPA
+ * sends. Unknown fields are dropped server-side.
+ *
+ * The actual write is dispatched to `hominal_save_receipt(p_receipt jsonb)`
+ * which atomically updates the receipt + ledger side-effects.
+ */
 export const receiptSchema = z.object({
   id: idSchema.optional(),
   billing_id: idSchema,
+  patient_id: z.string().optional().default(""),
   date: z.string().optional().default(""),
   type: z.string().optional().default(""),
   amount: moneySchema,
   method: z.string().optional().default(""),
   ref: z.string().optional().default(""),
+  remarks: z.string().optional().default(""),
+  service_type: z.string().optional().default(""),
+  bill_mode: z.string().optional().default(""),
+  from_date: z.string().optional().default(""),
+  to_date: z.string().optional().default(""),
+  paid_days: z.coerce.number().int().min(0).optional().default(0),
+  paid_dates: z.array(z.string()).optional().default([]),
+  deleted_at: z.string().optional(),
+  deleted_by: z.string().optional(),
+  created_by: z.string().optional()
+});
+
+/** Reason payload for soft-delete (audit log copy). */
+export const receiptSoftDeleteSchema = z.object({
+  reason: z.string().trim().max(500).optional().default("")
+});
+export type ReceiptSoftDeleteInput = z.infer<typeof receiptSoftDeleteSchema>;
+
+/**
+ * Service-entry row inside a duty diary slice. Mirrors the columns that
+ * `hominal_replace_service_entries(p_rows)` reads.
+ */
+export const serviceEntryRowSchema = z.object({
+  billing_id: z.string().optional().default(""),
+  service_name: z.string().optional().default(""),
+  partner: z.string().optional().default(""),
+  partner_id: z.string().optional().default(""),
+  date: z.string().optional().default(""),
+  freq: z.string().optional().default(""),
+  amt: z.coerce.number().optional().default(0),
+  count: z.coerce.number().optional().default(0),
+  disc: z.coerce.number().optional().default(0),
+  total: z.coerce.number().optional().default(0),
   remarks: z.string().optional().default("")
 });
+
+/** POST /billings/svc-entries/replace — atomic replace by `svc_key`. */
+export const replaceServiceEntriesSchema = z.object({
+  svc_key: z.string().trim().min(1, "svc_key is required").max(120),
+  rows: z.array(serviceEntryRowSchema).max(1000)
+});
+export type ReplaceServiceEntriesInput = z.infer<typeof replaceServiceEntriesSchema>;
 
 /**
  * Generate-from-duty payload.

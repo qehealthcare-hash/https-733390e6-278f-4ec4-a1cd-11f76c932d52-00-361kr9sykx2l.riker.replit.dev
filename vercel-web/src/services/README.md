@@ -12,7 +12,7 @@ Every exported function MUST:
 3. Call business rules (`@/business/*`) for calculations or domain checks.
 4. Call repositories (`@/database/*`) for persistence — never `supabase.from(...)` directly.
 5. Return `ApiResult<T>` from `@/types/common`. Never throw on expected failures.
-6. Audit every mutation via `auditRepository.insert(...)`.
+6. Audit every mutation via `writeMutationAudit` / `finalizeWithAudit` (`mutationAudit.ts`). API success is withheld when audit insert fails (503 `audit_write_failed`).
 7. Refetch the persisted row after every mutation so callers can refresh state.
 
 ## Implemented
@@ -239,6 +239,225 @@ or on failure:
 | `POST /patients/[id]/assign` with unknown employee | 404 `not_found` | `employeeRepository.findById` |
 | `GET /patients/[id]/history` | Returns `{ patient, billings, receipts (scoped to billings), duties, audits, linkCounts }` from DB | `patientService.history` |
 | Refresh page after each mutation | Routes return persisted API row — no local-only state | `loadFreshPatient` |
+
+## Phase 7 — Legacy SPA migration
+
+Phase 7 cuts the legacy `public/legacy-crm.html` over from direct Supabase
+REST to the audited `/api/v1` surface. To keep the offline-first sync layer
+working during the cut-over, a single adapter (`public/lib/legacy-api.js`)
+exposes `window.legacyApi.<module>` helpers that the SPA prefers; the
+existing direct-Supabase paths stay as **transport** fallbacks only.
+
+### Phase 7a — Receipts (complete)
+
+- New routes:
+  - `GET  /api/v1/billings/[id]/receipts` → `billingService.listReceiptsForBilling` (returns active rows only, RLS-scoped).
+  - `DELETE /api/v1/billings/[id]/receipts/[receiptId]` → `billingService.softDeleteReceipt` (close-bill guard + audit log).
+- `receiptSchema` widened to accept the legacy `hh_receipts` column set (`patient_id`, `service_type`, `bill_mode`, `from_date`, `to_date`, `paid_days`, `paid_dates`, …).
+- `billingRepository.softDeleteReceiptRpc` wraps `hominal_soft_delete_receipt`.
+- Legacy SPA wiring (`legacy-crm.html`):
+  - `saveReceiptLedgerRow`         → `legacyApi.receipts.create` first, then RPC fallback.
+  - `deleteReceiptLedgerRow`       → `legacyApi.receipts.softDelete` first, then RPC fallback.
+  - `refreshBillingReceiptsFromCloud` → `legacyApi.receipts.list` first, then Supabase REST fallback.
+- Business rejections (closed bill, RLS, duplicate id) **do not** fall back — they surface to the cashier.
+- Tombstones, dirty tracking, and the realtime channel are unchanged.
+
+| Scenario | Expected | Covered by |
+| --- | --- | --- |
+| Add receipt while bill is Active | `legacyApi.receipts.create` → `hominal_save_receipt`, audit `create` written | `billingService.recordPayment` |
+| Add receipt while bill is Closed | API rejects with 422 / `business_rule`; SPA shows toast, does NOT fall back | `canEditBilling` + adapter `transport === "business"` branch |
+| Delete receipt while bill is Active | `legacyApi.receipts.softDelete` → `hominal_soft_delete_receipt`, audit `soft-delete` written | `billingService.softDeleteReceipt` |
+| Delete receipt while bill is Closed | 422; SPA keeps row visible | `canEditBilling` |
+| Network drop mid-save | Adapter returns `transport: "network"`; SPA falls back to direct RPC/upsert | `legacy-api.js request()` |
+| API tier 5xx | Same fallback as network drop | `legacy-api.js request()` |
+| Refresh after save/delete | `legacyApi.receipts.list` returns canonical active set; tombstones + dirty rows merged locally | `refreshBillingReceiptsFromCloud` |
+
+### Phase 7b — Billings (complete)
+
+- New route: `POST /api/v1/billings/sync` → `billingService.syncLegacy` (legacy upsert with client `INVE…` ids, `Paused`, `close_reason`).
+- `BILLING_STATUSES` extended with `Paused`; `billingCloseRow` now persists `close_reason` / `close_reason_other`.
+- `legacyApi.billings`: `listByPatient`, `getById`, `create`, `sync`, `update`, `setStatus`, `close`, `reopen`.
+- Legacy SPA wiring:
+  - `saveBillingLedgerRow` — API sync first, Supabase upsert fallback.
+  - `refetchBillingForPatient` — `GET /billings?patient_id=` first.
+  - `createBillingForPatient`, `syncBillingSecurityAmount`, `syncBillingStatusChange` — routed through `saveBillingLedgerRow`.
+  - `doCloseBill` (modal) — tries `POST /billings/:id/close` first, falls back to sync on transport/outstanding rejection.
+- Bulk offline push (`loadFromSupabase` batch `sbUpsert`) still uses direct Supabase — scheduled for a later pass.
+
+| Scenario | Expected | Covered by |
+| --- | --- | --- |
+| Create billing for patient (`INVE…` id) | `POST /billings/sync` inserts with client id, returns persisted row | `syncLegacy` insert branch |
+| Duplicate Active bill for same patient | Returns existing Active row (no duplicate) | `findActiveByPatient` + unique index |
+| Update `sec_dep` after Security receipt | `syncLegacy` or `PATCH` updates `sec_dep` even on Closed bill | `syncLegacy` sec-only branch |
+| Close bill via modal | `POST /close` with reason; falls back to sync if outstanding blocks close | `doCloseBill` + `billingService.close` |
+| Pause bill | `syncLegacy` with `status: Paused` + `pause_reason` | `billingPauseRow` |
+| Refresh patient billing view | `GET /billings?patient_id=` bundle → local `DB.billings[patId]` | `refetchBillingForPatient` |
+
+### Phase 7c — Duties / svc-entries / payout-charges (complete)
+
+Two distinct surfaces ship under Phase 7c because the legacy SPA models a
+"duty" as both a `hh_svc_entries` row (billable duty diary) and a per-partner
+`hh_payout_charges` row, whereas the new architecture also adds the structured
+`hh_duties` calendar.
+
+- New routes:
+  - `POST /api/v1/billings/svc-entries/replace` → `billingService.replaceServiceEntries` (atomic replace by `svc_key`; refuses on Closed/Cancelled parent bill).
+  - `POST /api/v1/payouts/charges/replace` → `payoutService.replacePayoutCharges` (atomic replace by `svc_key`).
+- `billingRepository.replaceSvcEntriesRpc` and `payoutRepository.replacePayoutChargesRpc` wrap `hominal_replace_service_entries` / `hominal_replace_payout_charges` and surface row counts.
+- `legacyApi`:
+  - `legacyApi.svcEntries.replace(svcKey, rows)`
+  - `legacyApi.payoutCharges.replace(svcKey, rows)`
+  - `legacyApi.duties.{ list, getById, create, update, cancel, checkIn, checkOut }` (covers the new `hh_duties` calendar for Phase 8 React UI; not yet wired into the legacy SPA which has no `hh_duties` flow).
+- Legacy SPA wiring:
+  - `syncServiceEntriesToSupabase(svcKey)` → API first, RPC fallback.
+  - `syncPayoutChargesToSupabase(svcKey)` → API first, RPC fallback.
+
+| Scenario | Expected | Covered by |
+| --- | --- | --- |
+| Save duty diary on an Active bill | `POST /svc-entries/replace` replaces svc rows, audit `update` written | `billingService.replaceServiceEntries` |
+| Save duty diary on a Closed bill | 422 `business_rule_violation`; cashier sees toast, no fallback | `canEditBilling` + adapter `transport === "business"` branch |
+| Save duty diary while offline | Adapter returns `transport: "network"`; SPA falls back to direct RPC; offline queue catches up later | `legacy-api.js request()` |
+| Update payout-charges slice for a duty row | `POST /payouts/charges/replace` replaces rows, audit `update` written | `payoutService.replacePayoutCharges` |
+| Concurrent diary save (same svc_key) | In-flight Promise deduped by `svcSyncInFlight`; only one API call at a time | `syncServiceEntriesToSupabase` |
+| `GET /duties` from a React page (Phase 8) | Returns rows from `hh_duties` (new calendar); legacy SPA does not yet consume this surface | `dutyService.list` |
+
+### Phase 7d — Patients (complete)
+
+- New route: `POST /api/v1/patients/sync` → `patientService.syncLegacy` (legacy upsert with client `PID…` ids, legacy status enum, `status_reason`, photo/docs).
+- `patientLegacySyncSchema` accepts `Active|Paused|Duty Closed|Expired|Deceased|Discharged|On Hold|Closed`.
+- Light refresh paths omit `photo`/`docs` — sync preserves existing JSONB blobs on update.
+- `legacyApi.patients`: `list`, `getById`, `history`, `sync`, `assignCaretaker`, `remove`.
+- Legacy SPA wiring:
+  - `savePatientLedgerRow` — API sync first, Supabase upsert fallback.
+  - `refetchPatientsFromCloud` — `GET /patients?limit=500` first.
+  - `savePatient`, `startServices`, `syncBillingStatusChange`, `persistRow` patient path — routed through `savePatientLedgerRow`.
+- Bulk offline push (`loadFromSupabase` batch `sbUpsert`) still uses direct Supabase.
+
+| Scenario | Expected | Covered by |
+| --- | --- | --- |
+| Register new patient (`PID…` id) | `POST /patients/sync` inserts with client id | `syncLegacy` insert branch |
+| Edit patient name/phone | `POST /patients/sync` updates row, audit `update` | `syncLegacy` update branch |
+| Duplicate Active phone | 409 `duplicate`; toast, no fallback | `ensureNoActiveDuplicate` |
+| Close bill → patient status `Duty Closed` | `savePatientLedgerRow` persists legacy status | `syncLegacy` |
+| Refresh patient list | `GET /patients` → merge with dirty local rows | `refetchPatientsFromCloud` |
+
+### Phase 7e — Employees (complete)
+
+- New route: `POST /api/v1/employees/sync` → `employeeService.syncLegacy` (legacy upsert with client `EMP…` ids, full `toSbEmployee()` column set).
+- `employeeLegacySyncSchema` mirrors all legacy DB columns (aadhar, pan, ec*, skills, photo/docs, …).
+- Photo/docs omitted on light refresh are preserved on update (same pattern as patients).
+- `legacyApi.employees`: `list`, `getById`, `links`, `sync`, `setStatus`, `remove`.
+- Legacy SPA wiring:
+  - `saveEmployeeLedgerRow` — API sync first, Supabase upsert fallback.
+  - `refetchEmployeesFromCloud` — `GET /employees?limit=500` first.
+  - `saveEmployee` → `persistRow.toRemote` → `saveEmployeeLedgerRow`.
+- Bulk offline push still uses direct Supabase.
+
+| Scenario | Expected | Covered by |
+| --- | --- | --- |
+| Create employee (`EMP…` id) | `POST /employees/sync` inserts with client id | `syncLegacy` insert branch |
+| Edit employee phone/docs | `POST /employees/sync` updates, audit `update` | `syncLegacy` update branch |
+| Duplicate Active mobile | 409 `duplicate`; toast, no fallback | `findActiveEmployeeDuplicate` |
+| Delete employee with duty links | `DELETE /employees/:id` soft-deactivates | `employeeService.remove` (adapter ready; legacy `safeDelete` still direct for now) |
+| Refresh employee list | `GET /employees` → local `DB.employees` | `refetchEmployeesFromCloud` |
+
+### Phase 7f — Inquiries (complete)
+
+- New route: `POST /api/v1/inquiries/sync` → `inquiryService.syncLegacy` (legacy upsert with client `INQ…` ids, `toSbInquiry()` column set).
+- `inquiryLegacySyncSchema` accepts legacy source labels (mixed case) and normalises `potential` to `HOT|WARM|COLD`.
+- Open-phone duplicate prevention via `ensureNoActiveDuplicate` (same as canonical create/update).
+- `legacyApi.inquiries`: `list`, `getById`, `sync`, `setStatus`, `convert`.
+- Legacy SPA wiring:
+  - `saveInquiryLedgerRow` — API sync first, Supabase upsert fallback on transport errors only.
+  - `refetchInquiriesFromCloud` — `GET /inquiries?limit=500` first.
+  - `saveInquiry` → `persistRow.toRemote` → `saveInquiryLedgerRow`.
+- Bulk offline push and `safeDelete` for inquiries still use direct Supabase.
+- `convertInquiry` in the SPA still opens the patient modal (does not call `/inquiries/:id/convert` yet).
+
+| Scenario | Expected | Covered by |
+| --- | --- | --- |
+| Create inquiry (`INQ…` id) | `POST /inquiries/sync` inserts with client id | `syncLegacy` insert branch |
+| Edit inquiry | `POST /inquiries/sync` updates, audit `update` | `syncLegacy` update branch |
+| Duplicate active phone | 409 `duplicate`; toast, no fallback | `ensureNoActiveDuplicate` |
+| FollowUp without date | 422 validation; no fallback | `inquiryLegacySyncSchema` superRefine |
+| Refresh inquiry list | `GET /inquiries` → `DB.inquiries` | `refetchInquiriesFromCloud` |
+
+### Phase 7g — Dashboard & reports (complete)
+
+- `legacyApi.reports`: `dashboard`, `billingTotals`, `payoutTotals`, `profitLoss`, `payroll` (read-only GET wrappers).
+- Legacy SPA wiring:
+  - `renderDashboard` — renders from local `DB` immediately, then `hydrateDashboardFromApi()` overlays audited KPIs (`patients_total`, `patients_active`, `employees_total`, `billings_total`, `billing_pending_amount`).
+  - `buildReportDataWithApi()` — **profit-loss** and **employee-payout** (monthly/yearly) prefer cloud totals; all other report types stay local-only (patient billing, invoice payments, reconciliation, inquiry conversion, attendance).
+  - `renderReports` / CSV export / print use `buildReportDataWithApi()`.
+- Cash/refund/payout breakdown widgets and recent-patient tables remain local (no API parity).
+
+| Scenario | Expected | Covered by |
+| --- | --- | --- |
+| Open dashboard (signed in) | KPI tiles refresh from `GET /reports/dashboard` | `hydrateDashboardFromApi` |
+| API transport failure | Dashboard still shows local aggregates | `renderDashboardFromLocal` |
+| Profit & loss report | Single-period cloud revenue / payout-paid / net | `tryProfitLossReportFromApi` |
+| Employee payout (monthly) | Rows from `GET /reports/payroll` | `tryEmployeePayoutReportFromApi` |
+| Patient billing report | Still computed from local `DB` | `buildPatientBillingReport` |
+
+### Phase 8 — React shell / retire iframe default (complete)
+
+- **Default entry**: `/` → `/dashboard` (no longer redirects to `legacy-crm.html`).
+- **Auth**: `/login` React sign-in (Supabase password); `/legacy` serves the Classic CRM iframe.
+- **Navigation**: sidebar modules + “Classic CRM” escape hatch.
+- **Permissions**: `hh_users.role` labels (`Admin`, `Manager`, `Staff`, …) normalized for React guards.
+- **API wiring**:
+  - `useRealtimeResource` unwraps `{ rows, total }` list envelopes.
+  - Dashboard → `GET /reports/dashboard`.
+  - Reports → `billing-totals`, `payout-totals`, `profit-loss`, `payroll`.
+- **New page**: `/duties` — `hh_duties` calendar (create, edit, check-in/out, cancel).
+- **Still Classic CRM**: service diary (`hh_svc_entries`), provisional bills, deep billing PDFs, settings, users/roles admin.
+
+| Route | Surface |
+| --- | --- |
+| `/dashboard` | Audited KPI cards |
+| `/patients`, `/inquiries`, `/employees` | React CRUD + realtime |
+| `/duties` | New duty calendar API |
+| `/billings`, `/payouts` | React modules (partial parity) |
+| `/reports` | Server-side aggregates |
+| `/legacy` | Full 16k-line legacy SPA |
+
+### Phase 9 — Audit log enforcement (complete)
+
+- **`src/services/mutationAudit.ts`** — `writeMutationAudit` + `finalizeWithAudit`. When `API_AUDIT_DISABLED` is not `true`, mutations return **503** `audit_write_failed` if the audit row cannot be inserted (`details.persisted: true` when the DB change already saved).
+- All domain services (`patient`, `employee`, `inquiry`, `billing`, `receipt`, `svc_entry`, `payout`, `duty`, `attendance`) route audits through this helper (~47 mutation paths).
+- **`GET /api/v1/audits`** — `auditService.list` with `module`, `entity_id`, `action`, pagination.
+- **React** `/audits` — filterable audit viewer + CSV export.
+- **`legacyApi.audits.list`** — Classic SPA can load server audit rows after API saves.
+- Legacy `recordAudit()` still writes local + optional direct Supabase rows for UI stamps; authoritative trail for API mutations is server-side.
+
+| Scenario | Expected |
+| --- | --- |
+| `POST /patients` success | Row in `hh_audit_logs` with `action=create` before HTTP 200 |
+| Audit insert fails (RLS/DB) | HTTP **503**, `code: audit_write_failed`, `details.persisted: true` |
+| `API_AUDIT_DISABLED=true` (CI) | Mutations succeed without audit insert |
+| `GET /audits?module=patient&entity_id=PID…` | Newest-first rows for that entity |
+
+### Phase 10 — Test matrix & CI (complete)
+
+- **Runner**: Vitest (`vitest.config.ts`) with path aliases matching `tsconfig.json`.
+- **Scripts**: `npm test`, `npm run test:watch`, `npm run typecheck`.
+- **CI**: `.github/workflows/vercel-web-ci.yml` — typecheck + unit tests on PR / `main` when `vercel-web/**` changes.
+- **Docs**: `docs/TEST_MATRIX.md` maps automated tests → README scenario tables.
+
+| Test file | Covers (from README matrices) |
+| --- | --- |
+| `inquiryRules.test.ts` | Open/closed predicates, duplicate phone, convert/edit/transition guards |
+| `inquiryValidation.test.ts` | FollowUp date required, legacy sync shape |
+| `billingRules.test.ts` | Close/reopen/edit, outstanding + force, totals sums |
+| `payoutRules.test.ts` | Lock/paid/adjust, transitions, amount validation |
+| `reportRules.test.ts` | `buildDashboardKpis`, `buildProfitLoss` |
+| `mutationAudit.test.ts` | `writeMutationAudit`, `finalizeWithAudit` (503 path) |
+
+Integration / E2E (Supabase + HTTP + Playwright) remain manual — see `docs/TEST_MATRIX.md`.
+
+### Pending after Phase 10
+- Port remaining Classic-only flows into React, then remove iframe.
+- Optional: gate `deploy-vercel.yml` on `vercel-web CI` job.
 
 ## Forbidden
 

@@ -185,3 +185,50 @@ export const inquiryListQuerySchema = z.object({
   followup_to: isoDate.optional()
 });
 export type InquiryListQuery = z.infer<typeof inquiryListQuerySchema>;
+
+/**
+ * Legacy SPA upsert — mirrors `toSbInquiry()` output.
+ */
+export const inquiryLegacySyncSchema = z
+  .object({
+    id: idSchema.optional(),
+    name: z.string().trim().min(1, "name is required"),
+    phone: inquiryPhoneSchema,
+    wa: z.string().trim().max(20).optional().default(""),
+    age: z.string().max(10).optional().default(""),
+    gender: z.string().max(20).optional().default(""),
+    city: z.string().max(80).optional().default(""),
+    area: z.string().max(120).optional().default(""),
+    service: z.string().max(120).optional().default(""),
+    /** Legacy dropdown uses mixed labels (Facebook, Just Dial, …) — store as-is. */
+    source: z.string().trim().max(40).optional().default(""),
+    potential: z
+      .string()
+      .trim()
+      .max(20)
+      .transform((s) => s.toUpperCase())
+      .pipe(z.enum(INQUIRY_POTENTIAL))
+      .optional()
+      .default("WARM"),
+    rating_emergency: ratingSchema.optional().default(5),
+    rating_flexibility: ratingSchema.optional().default(5),
+    rating_overall: ratingSchema.optional().default(5),
+    status: z.enum(INQUIRY_STATUSES).optional().default("New"),
+    assigned_to: z.string().max(80).optional().default(""),
+    followup_date: followupDateSchema,
+    notes: z.string().max(2000).optional().default(""),
+    created: z.string().max(40).optional().default("")
+  })
+  .superRefine((v, ctx) => {
+    if (
+      (v.status === "FollowUp" || v.status === "Negotiating") &&
+      !v.followup_date
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `followup_date is required when status is ${v.status}`,
+        path: ["followup_date"]
+      });
+    }
+  });
+export type InquiryLegacySyncInput = z.infer<typeof inquiryLegacySyncSchema>;

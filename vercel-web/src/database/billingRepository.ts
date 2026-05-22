@@ -130,6 +130,43 @@ export const billingRepository = {
     return callRpc<JsonRow>("hominal_save_receipt", { p_receipt: receipt }, SCOPE, opts);
   },
 
+  /**
+   * Replace the entire `hh_svc_entries` slice for a given `svc_key`.
+   * Backed by `hominal_replace_service_entries(p_svc_key, p_rows)`. Returns
+   * the row count inserted.
+   */
+  replaceSvcEntriesRpc(
+    svcKey: string,
+    rows: JsonRow[],
+    opts?: DbAccess
+  ): Promise<ApiResult<number | null>> {
+    return callRpc<number>(
+      "hominal_replace_service_entries",
+      { p_svc_key: svcKey, p_rows: rows },
+      `${SCOPE}.replaceSvcEntriesRpc`,
+      opts
+    );
+  },
+
+  /** Soft-delete a receipt via the audited DB RPC. */
+  softDeleteReceiptRpc(
+    receiptId: string,
+    billingId: string,
+    actor: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow | null>> {
+    return callRpc<JsonRow>(
+      "hominal_soft_delete_receipt",
+      {
+        p_receipt_id: receiptId,
+        p_billing_id: billingId,
+        p_deleted_by: actor
+      },
+      `${SCOPE}.softDeleteReceiptRpc`,
+      opts
+    );
+  },
+
   insertReceipt(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return insertRow(RECEIPTS, row, `${SCOPE}.insertReceipt`, opts);
   },

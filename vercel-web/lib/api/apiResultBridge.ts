@@ -32,6 +32,8 @@ function statusFor(code: string | undefined): number {
       return 409;
     case ErrorCodes.upstream:
       return 502;
+    case ErrorCodes.audit:
+      return 503;
     default:
       return 500;
   }

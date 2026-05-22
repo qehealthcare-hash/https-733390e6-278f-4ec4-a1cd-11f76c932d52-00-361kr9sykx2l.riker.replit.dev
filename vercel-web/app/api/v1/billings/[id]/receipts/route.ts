@@ -10,6 +10,12 @@ export const dynamic = "force-dynamic";
 
 type Params = { id: string };
 
+export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
+  requireRole(actor, ["Admin", "Manager", "Accountant", "Staff", "Viewer"]);
+  const result = await billingService.listReceiptsForBilling(params.id, { actor });
+  return respond(result);
+});
+
 export const POST = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin", "Manager", "Accountant", "Staff"]);
   return withIdempotency(

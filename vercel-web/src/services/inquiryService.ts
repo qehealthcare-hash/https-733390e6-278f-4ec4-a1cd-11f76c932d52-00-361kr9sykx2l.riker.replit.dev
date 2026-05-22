@@ -24,10 +24,12 @@ import {
   inquiryStatusSchema,
   inquiryConvertSchema,
   inquiryListQuerySchema,
+  inquiryLegacySyncSchema,
   type InquiryInput,
   type InquiryStatusInput,
   type InquiryConvertInput,
   type InquiryListQuery,
+  type InquiryLegacySyncInput,
   type InquiryStatus
 } from "@/validation/inquiryValidation";
 import { parseInput } from "@/validation/parseValidation";
@@ -44,7 +46,8 @@ import {
 } from "@/business/inquiryRules";
 import { newId } from "@/business/idRules";
 import { inquiryRepository } from "@/database/inquiryRepository";
-import { auditRepository } from "@/database/auditRepository";
+import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
+import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
   failure,
@@ -52,7 +55,6 @@ import {
   passFailure,
   success
 } from "@/utils/apiResponse";
-import type { JsonRow } from "@/database/types";
 
 export interface ActorLike {
   email: string;
@@ -79,19 +81,15 @@ async function fireAudit(
     after?: unknown;
     stamp?: string;
   }
-): Promise<void> {
-  await auditRepository.insert(
-    {
-      module: "inquiry",
-      entity_id: payload.entity_id,
-      action: payload.action,
-      actor: ctx.actor.email || "system",
-      stamp: payload.stamp,
-      before: payload.before ?? null,
-      after: payload.after ?? null
-    },
-    dbAccess(ctx)
-  );
+) {
+  return writeMutationAudit(dbAccess(ctx), ctx.actor.email || "system", {
+    module: "inquiry",
+    entity_id: payload.entity_id,
+    action: payload.action,
+    stamp: payload.stamp,
+    before: payload.before ?? null,
+    after: payload.after ?? null
+  });
 }
 
 type LoadResult<T> =
@@ -236,13 +234,15 @@ export const inquiryService = {
     if (!fresh.success) {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "create",
-      after: fresh.data,
-      stamp: `Created inquiry for ${input.name} (${input.phone})`
-    });
-    return success(inquiryToApi(fresh.data));
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "create",
+        after: fresh.data,
+        stamp: `Created inquiry for ${input.name} (${input.phone})`
+      }),
+      inquiryToApi(fresh.data)
+    );
   },
 
   async update(
@@ -292,14 +292,16 @@ export const inquiryService = {
     if (!fresh.success) {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data,
-      stamp: `Updated inquiry ${id}`
-    });
-    return success(inquiryToApi(fresh.data));
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data,
+        stamp: `Updated inquiry ${id}`
+      }),
+      inquiryToApi(fresh.data)
+    );
   },
 
   async setStatus(
@@ -351,14 +353,134 @@ export const inquiryService = {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "update",
-      before: existing.data,
-      after: fresh.data,
-      stamp: `Status ${existing.data.status} → ${input.status}${input.reason ? `: ${input.reason}` : ""}`
-    });
-    return success(inquiryToApi(fresh.data));
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "update",
+        before: existing.data,
+        after: fresh.data,
+        stamp: `Status ${existing.data.status} → ${input.status}${input.reason ? `: ${input.reason}` : ""}`
+      }),
+      inquiryToApi(fresh.data)
+    );
+  },
+
+  /**
+   * Legacy SPA upsert — mirrors `sbUpsert('hh_inquiries', [toSbInquiry(...)])`.
+   * Honours client `INQ…` ids and enforces open-phone duplicate prevention.
+   */
+  async syncLegacy(
+    rawInput: unknown,
+    ctx: InquiryServiceContext
+  ): Promise<ApiResult<JsonRow>> {
+    const parsed = parseInput(inquiryLegacySyncSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const input = parsed.data as InquiryLegacySyncInput;
+    const access = dbAccess(ctx);
+
+    let existing: JsonRow | null = null;
+    if (input.id) {
+      const byId = await inquiryRepository.findById(input.id, access);
+      if (!byId.success) return passFailure(byId);
+      existing = byId.data ?? null;
+    }
+
+    if (!existing) {
+      const dupCheck = await ensureNoActiveDuplicate(input.phone, undefined, ctx);
+      if (!dupCheck.success) return passFailure(dupCheck);
+    } else {
+      const editGuard = canEditInquiry(String(existing.status || ""));
+      if (!editGuard.success) {
+        return failure(editGuard.error || "Cannot edit inquiry", editGuard.code, editGuard.details);
+      }
+      const prevPhone = String(existing.phone || "");
+      if (input.phone && input.phone !== prevPhone) {
+        const dupCheck = await ensureNoActiveDuplicate(input.phone, String(existing.id), ctx);
+        if (!dupCheck.success) return passFailure(dupCheck);
+      }
+    }
+
+    const rowPayload: JsonRow = {
+      name: input.name,
+      phone: input.phone,
+      wa: input.wa || input.phone,
+      age: input.age || "",
+      gender: input.gender || "",
+      city: input.city || "",
+      area: input.area || "",
+      service: input.service || "",
+      source: input.source || "WHATSAPP",
+      potential: input.potential || "WARM",
+      rating_emergency: input.rating_emergency ?? 5,
+      rating_flexibility: input.rating_flexibility ?? 5,
+      rating_overall: input.rating_overall ?? 5,
+      status: input.status || "New",
+      assigned_to: input.assigned_to || "",
+      followup_date: input.followup_date || "",
+      notes: input.notes || "",
+      updated_by: ctx.actor.email
+    };
+
+    if (!existing) {
+      const insertId = input.id || newId.inquiry();
+      const inserted = await inquiryRepository.insert(
+        {
+          ...rowPayload,
+          id: insertId,
+          created: input.created || new Date().toISOString(),
+          created_by: ctx.actor.email
+        },
+        access
+      );
+      if (!inserted.success) {
+        const msg = (inserted.error || "").toLowerCase();
+        if (msg.includes("uq_hh_inquiries_active_phone") || msg.includes("duplicate key value")) {
+          return duplicateFailure(
+            "phone",
+            input.phone,
+            "An active inquiry already exists for this mobile"
+          );
+        }
+        return passFailure(inserted);
+      }
+      if (!inserted.data) return failure("Inquiry insert returned no row", ErrorCodes.internal);
+      return finalizeWithAudit(
+        await fireAudit(ctx, {
+          entity_id: insertId,
+          action: "create",
+          after: inserted.data,
+          stamp: `Legacy sync created inquiry for ${input.name}`
+        }),
+        inserted.data
+      );
+    }
+
+    const updated = await inquiryRepository.update(String(existing.id), rowPayload, access);
+    if (!updated.success) {
+      const msg = (updated.error || "").toLowerCase();
+      if (msg.includes("uq_hh_inquiries_active_phone")) {
+        return duplicateFailure(
+          "phone",
+          input.phone,
+          "Another active inquiry uses this mobile"
+        );
+      }
+      return passFailure(updated);
+    }
+    const fresh = await loadFreshInquiry(String(existing.id), ctx, updated.data ?? null);
+    if (!fresh.success) {
+      return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
+    }
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: String(existing.id),
+        action: "update",
+        before: existing,
+        after: fresh.data,
+        stamp: `Legacy sync (${input.status || "New"})`
+      }),
+      fresh.data
+    );
   },
 
   /**
@@ -443,20 +565,21 @@ export const inquiryService = {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "convert",
-      before: existing.data,
-      after: { patient_id: patientId, inquiry: fresh.data },
-      stamp: `Converted inquiry ${id} → patient ${patientId}`
-    });
-
-    return success({
-      patient_id: String(patientId),
-      inquiry_id: id,
-      inquiry: inquiryToApi(fresh.data),
-      alreadyConverted: false
-    });
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "convert",
+        before: existing.data,
+        after: { patient_id: patientId, inquiry: fresh.data },
+        stamp: `Converted inquiry ${id} → patient ${patientId}`
+      }),
+      {
+        patient_id: String(patientId),
+        inquiry_id: id,
+        inquiry: inquiryToApi(fresh.data),
+        alreadyConverted: false
+      }
+    );
   },
 
   async remove(
@@ -481,13 +604,15 @@ export const inquiryService = {
     const removed = await inquiryRepository.remove(id, dbAccess(ctx));
     if (!removed.success) return passFailure(removed);
 
-    await fireAudit(ctx, {
-      entity_id: id,
-      action: "delete",
-      before: existing.data,
-      stamp: `Deleted inquiry ${id}`
-    });
-    return success({ id });
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "delete",
+        before: existing.data,
+        stamp: `Deleted inquiry ${id}`
+      }),
+      { id }
+    );
   }
 };
 

@@ -246,11 +246,25 @@ export function canTransitionTo(
 // Patches applied to hh_billings
 // ───────────────────────────────────────────────────────────────────────────
 
-export function billingCloseRow(actorEmail: string, reason: string) {
+export function billingCloseRow(
+  actorEmail: string,
+  reason: string,
+  otherReason?: string
+) {
   return {
     status: "Closed" as BillingStatus,
     updated_by: actorEmail,
+    close_reason: reason || "",
+    close_reason_other: otherReason || "",
     notes: reason ? reason : undefined
+  };
+}
+
+export function billingPauseRow(actorEmail: string, pauseReason: string) {
+  return {
+    status: "Paused" as BillingStatus,
+    updated_by: actorEmail,
+    pause_reason: pauseReason || ""
   };
 }
 

@@ -83,3 +83,23 @@ export type PayoutLockInput = z.infer<typeof payoutLockSchema>;
 export type PayoutReopenInput = z.infer<typeof payoutReopenSchema>;
 export type PayoutRecomputeInput = z.infer<typeof payoutRecomputeSchema>;
 export type PayoutListQuery = z.infer<typeof payoutListQuerySchema>;
+
+/**
+ * Payout-charge row mirrors the columns
+ * `hominal_replace_payout_charges(p_rows)` reads.
+ */
+export const payoutChargeRowSchema = z.object({
+  date: z.string().optional().default(""),
+  partner: z.string().optional().default(""),
+  partner_id: z.string().optional().default(""),
+  term: z.string().optional().default(""),
+  amount: z.coerce.number().optional().default(0),
+  remarks: z.string().optional().default("")
+});
+
+/** POST /payouts/charges/replace — atomic replace by `svc_key`. */
+export const replacePayoutChargesSchema = z.object({
+  svc_key: z.string().trim().min(1, "svc_key is required").max(120),
+  rows: z.array(payoutChargeRowSchema).max(1000)
+});
+export type ReplacePayoutChargesInput = z.infer<typeof replacePayoutChargesSchema>;
