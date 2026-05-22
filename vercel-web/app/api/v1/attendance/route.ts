@@ -3,7 +3,7 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { attendanceService } from "@/services/attendanceService";
-import { respondLegacy } from "@/lib/api/apiResultBridge";
+import { respond } from "@/lib/api/apiResultBridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     to: url.searchParams.get("to") ?? undefined
   };
   const result = await attendanceService.list(query, { actor });
-  return respondLegacy(result);
+  return respond(result);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
@@ -30,6 +30,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /attendance" }, async () => {
     const body = await parseJsonBody(req);
     const result = await attendanceService.create(body, { actor });
-    return respondLegacy(result, 201);
+    return respond(result, 201);
   });
 });

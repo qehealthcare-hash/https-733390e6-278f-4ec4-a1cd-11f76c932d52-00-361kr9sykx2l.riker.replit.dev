@@ -1,23 +1,41 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
-import { badRequest, jsonOk } from "@/lib/api/errors";
 import { requireRole } from "@/lib/api/auth";
-import { billingService, billingSchema } from "@/lib/api/services/billing.service";
+import { billingService } from "@/services/billingService";
+import { respond } from "@/lib/api/apiResultBridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export const GET = withAuth(async (req: NextRequest) => {
-  const patientId = new URL(req.url).searchParams.get("patient_id");
-  if (!patientId) throw badRequest("patient_id is required");
-  const result = await billingService.listByPatient(patientId);
-  return jsonOk(result);
+/**
+ * GET /api/v1/billings
+ *
+ * - With `?patient_id=`: returns the patient's full billing history bundle
+ *   (`{ billings, receipts, services, totalsByBilling }`) so the UI can
+ *   render the whole ledger from a single refetch.
+ * - Without `patient_id`: paginated list across all billings.
+ */
+export const GET = withAuth(async (req: NextRequest, { actor }) => {
+  const url = new URL(req.url);
+  const patientId = url.searchParams.get("patient_id");
+  if (patientId) {
+    const result = await billingService.listByPatient(patientId, { actor });
+    return respond(result);
+  }
+  const query = {
+    limit: url.searchParams.get("limit") ?? undefined,
+    offset: url.searchParams.get("offset") ?? undefined,
+    q: url.searchParams.get("q") ?? undefined,
+    status: url.searchParams.get("status") ?? undefined,
+    period: url.searchParams.get("period") ?? undefined
+  };
+  const result = await billingService.list(query, { actor });
+  return respond(result);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, ["Admin", "Manager", "Accountant"]);
   const body = await parseJsonBody(req);
-  const input = billingSchema.parse(body);
-  const row = await billingService.create(input, actor);
-  return jsonOk(row, { status: 201 });
+  const result = await billingService.create(body, { actor });
+  return respond(result, 201);
 });

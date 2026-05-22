@@ -23,6 +23,7 @@ const SCOPE = "billingRepository";
 export interface BillingListFilters extends ListQuery {
   patient_id?: string;
   status?: string;
+  q?: string;
 }
 
 export const billingRepository = {
@@ -40,6 +41,22 @@ export const billingRepository = {
     );
   },
 
+  /** Latest bill for a patient regardless of status (used to surface a closed bill on refresh). */
+  findLatestByPatient(patientId: string, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
+    const db = resolveClient(opts);
+    return runQuery(
+      () =>
+        db
+          .from(BILLINGS)
+          .select("*")
+          .eq("patient_id", patientId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      `${SCOPE}.findLatestByPatient`
+    );
+  },
+
   listBillings(filters: BillingListFilters = {}, opts?: DbAccess): Promise<ApiResult<ListResult<JsonRow>>> {
     return listRows(
       BILLINGS,
@@ -48,6 +65,14 @@ export const billingRepository = {
         let query = q;
         if (filters.patient_id) query = query.eq("patient_id", filters.patient_id);
         if (filters.status) query = query.eq("status", filters.status);
+        if (filters.q) {
+          const term = filters.q.replace(/%/g, "");
+          query = query.or(
+            ["id", "patient_id", "status", "notes"]
+              .map((c) => `${c}.ilike.%${term}%`)
+              .join(",")
+          );
+        }
         return query;
       },
       { ...opts, ...filters, orderBy: filters.orderBy ?? "created_at", ascending: filters.ascending ?? false }
@@ -143,6 +168,95 @@ export const billingRepository = {
           .maybeSingle(),
       `${SCOPE}.findSvcByDutyRemark`
     );
+  },
+
+  /** Look up an svc row for a duty across *any* billing (post-reopen edge case). */
+  findSvcByDutyAcrossBillings(dutyId: string, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
+    const db = resolveClient(opts);
+    return runQuery(
+      () =>
+        db
+          .from(SVC)
+          .select("*")
+          .eq("remarks", `duty:${dutyId}`)
+          .order("date", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      `${SCOPE}.findSvcByDutyAcrossBillings`
+    );
+  },
+
+  /** Service entries inside a billing constrained to a YYYY-MM period. */
+  async listSvcByBillingAndPeriod(
+    billingId: string,
+    periodYM: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const start = `${periodYM}-01`;
+    const [y, m] = periodYM.split("-").map((n) => parseInt(n, 10));
+    const nextMonth = new Date(Date.UTC(y, m, 1));
+    const end = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from(SVC)
+          .select("*")
+          .eq("billing_id", billingId)
+          .gte("date", start)
+          .lt("date", end)
+          .order("date", { ascending: true }),
+      `${SCOPE}.listSvcByBillingAndPeriod`
+    );
+  },
+
+  /** Active (non-soft-deleted) receipts attached to a billing. */
+  async listActiveReceiptsByBilling(
+    billingId: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from(RECEIPTS)
+          .select("*")
+          .eq("billing_id", billingId)
+          .is("deleted_at", null)
+          .order("date", { ascending: true }),
+      `${SCOPE}.listActiveReceiptsByBilling`
+    );
+  },
+
+  /**
+   * For dashboard / reports parity: sum of svc totals for a given period
+   * across *all* billings. The legacy dashboard sums these client-side; we
+   * surface a canonical aggregate so the UI doesn't drift.
+   */
+  async sumServiceTotalsForPeriod(
+    periodYM: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<{ total: number; rows: JsonRow[] }>> {
+    const start = `${periodYM}-01`;
+    const [y, m] = periodYM.split("-").map((n) => parseInt(n, 10));
+    const nextMonth = new Date(Date.UTC(y, m, 1));
+    const end = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(SVC)
+          .select("billing_id, total, amt, count, date")
+          .gte("date", start)
+          .lt("date", end),
+      `${SCOPE}.sumServiceTotalsForPeriod`
+    );
+    if (!result.success) {
+      return { success: false, error: result.error, code: result.code, details: result.details };
+    }
+    const rows = result.data || [];
+    const total = rows.reduce((sum, r) => sum + Number(r.total || 0), 0);
+    return { success: true, data: { total, rows } };
   },
 
   findSvcDuplicate(

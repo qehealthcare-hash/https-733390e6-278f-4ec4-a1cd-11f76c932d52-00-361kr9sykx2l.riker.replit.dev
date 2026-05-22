@@ -16,14 +16,16 @@ export async function GET() {
     dbError = err instanceof Error ? err.message : String(err);
   }
   return NextResponse.json({
-    ok: true,
-    service: "hominal-crm-api",
-    version: 1,
-    time: new Date().toISOString(),
-    deps: {
-      supabase: { ok: dbOk, error: dbError || null },
-      openai: hasOpenAI(),
-      whatsapp: hasWhatsApp()
+    success: true,
+    data: {
+      service: "hominal-crm-api",
+      version: 1,
+      time: new Date().toISOString(),
+      deps: {
+        supabase: { ok: dbOk, error: dbError || null },
+        openai: hasOpenAI(),
+        whatsapp: hasWhatsApp()
+      }
     }
   });
 }

@@ -32,27 +32,44 @@ export function serverError(message = "Internal server error", details?: unknown
   return new ApiError(500, message, "internal_error", details);
 }
 
+/**
+ * Canonical API error envelope (Phase 6).
+ * All `/api/v1/*` routes return `{ success, data?, error?, details?, code? }`.
+ */
 export function jsonError(err: unknown) {
   if (err instanceof ZodError) {
     return NextResponse.json(
-      { ok: false, code: "validation_error", message: "Validation failed", details: err.flatten() },
+      {
+        success: false,
+        error: "Validation failed",
+        code: "validation_error",
+        details: err.flatten()
+      },
       { status: 422 }
     );
   }
   if (err instanceof ApiError) {
     return NextResponse.json(
-      { ok: false, code: err.code, message: err.message, details: err.details ?? null },
+      {
+        success: false,
+        error: err.message,
+        code: err.code,
+        details: err.details ?? null
+      },
       { status: err.status }
     );
   }
   const message = err instanceof Error ? err.message : "Internal server error";
   console.error("[api] unhandled", err);
-  return NextResponse.json({ ok: false, code: "internal_error", message }, { status: 500 });
+  return NextResponse.json(
+    { success: false, error: message, code: "internal_error" },
+    { status: 500 }
+  );
 }
 
+/** Success envelope — prefer `respond(success(data))` from services. */
 export function jsonOk<T>(data: T, init?: number | { status?: number; headers?: Record<string, string> }) {
-  if (typeof init === "number") {
-    return NextResponse.json({ ok: true, data }, { status: init });
-  }
-  return NextResponse.json({ ok: true, data }, init);
+  const status = typeof init === "number" ? init : init?.status ?? 200;
+  const headers = typeof init === "number" ? undefined : init?.headers;
+  return NextResponse.json({ success: true, data }, { status, headers });
 }

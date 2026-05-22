@@ -1,8 +1,24 @@
 import { z } from "zod";
-import { idSchema, moneySchema, monthPeriodSchema } from "@/validation/commonValidation";
+import { idSchema, moneySchema, monthPeriodSchema, positiveInt } from "@/validation/commonValidation";
 
+/** Lifecycle status recognised on a payout row. */
+export const PAYOUT_STATUSES = ["OPEN", "LOCKED", "PAID"] as const;
+export type PayoutStatus = (typeof PAYOUT_STATUSES)[number];
+
+/** Statuses where the payout row is locked from non-status edits. */
+export const PAYOUT_CLOSED_STATUSES = new Set<PayoutStatus>(["LOCKED", "PAID"]);
+
+/**
+ * Canonical Payout payload.
+ *
+ * `patient_id` and `duty_ids` are *traceability* fields surfaced to audit /
+ * UI breakdown. The DB row itself is keyed by `(employee_id, period_month)`
+ * — duplicate prevention runs against that natural key.
+ */
 export const payoutSchema = z.object({
   employee_id: idSchema,
+  patient_id: idSchema.optional(),
+  duty_ids: z.array(idSchema).optional().default([]),
   period_month: monthPeriodSchema,
   advance: moneySchema.optional().default(0),
   deduction: moneySchema.optional().default(0),
@@ -10,13 +26,22 @@ export const payoutSchema = z.object({
   remarks: z.string().optional().default("")
 });
 
-export const payoutAdjustmentSchema = z.object({
-  payout_id: idSchema,
-  advance: moneySchema.optional(),
-  deduction: moneySchema.optional(),
-  bonus: moneySchema.optional(),
-  remarks: z.string().optional()
-});
+export const payoutAdjustmentSchema = z
+  .object({
+    payout_id: idSchema,
+    advance: moneySchema.optional(),
+    deduction: moneySchema.optional(),
+    bonus: moneySchema.optional(),
+    remarks: z.string().optional()
+  })
+  .refine(
+    (v) =>
+      v.advance !== undefined ||
+      v.deduction !== undefined ||
+      v.bonus !== undefined ||
+      v.remarks !== undefined,
+    { message: "At least one of advance/deduction/bonus/remarks must be set" }
+  );
 
 export const payoutPaySchema = z.object({
   payout_id: idSchema,
@@ -25,6 +50,36 @@ export const payoutPaySchema = z.object({
   photo: z.string().optional().default("")
 });
 
+/** Lock a payout. */
+export const payoutLockSchema = z.object({
+  reason: z.string().trim().max(500).optional().default("")
+});
+
+/** Reopening a Locked payout always requires an audited reason. */
+export const payoutReopenSchema = z.object({
+  reason: z.string().trim().min(1, "reason is required to reopen a locked payout").max(500)
+});
+
+/** Recompute a payout from duty + attendance — RPC-driven. */
+export const payoutRecomputeSchema = z.object({
+  employee_id: idSchema,
+  period_month: monthPeriodSchema
+});
+
+export const payoutListQuerySchema = z.object({
+  limit: positiveInt.optional().default(50),
+  offset: positiveInt.optional().default(0),
+  q: z.string().optional().default(""),
+  employee_id: z.string().optional(),
+  patient_id: z.string().optional(),
+  status: z.enum(PAYOUT_STATUSES).optional(),
+  period: monthPeriodSchema.optional()
+});
+
 export type PayoutInput = z.infer<typeof payoutSchema>;
 export type PayoutAdjustmentInput = z.infer<typeof payoutAdjustmentSchema>;
 export type PayoutPayInput = z.infer<typeof payoutPaySchema>;
+export type PayoutLockInput = z.infer<typeof payoutLockSchema>;
+export type PayoutReopenInput = z.infer<typeof payoutReopenSchema>;
+export type PayoutRecomputeInput = z.infer<typeof payoutRecomputeSchema>;
+export type PayoutListQuery = z.infer<typeof payoutListQuerySchema>;

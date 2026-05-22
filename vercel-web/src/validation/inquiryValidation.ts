@@ -1,45 +1,139 @@
 import { z } from "zod";
-import { emailSchema, idSchema } from "@/validation/commonValidation";
+import { emailSchema, idSchema, isoDate } from "@/validation/commonValidation";
 
 /**
- * Accepts legacy `hh_*` field names and React UI aliases (patient_name, mobile, …).
+ * Inquiry lifecycle.
+ *
+ * Open: `New`, `Contacted`, `FollowUp`, `Negotiating`.
+ * Closed: `Converted`, `Closed`, `Lost`. (Matches the DB partial unique index
+ * `uq_hh_inquiries_active_phone` which only enforces dup-prevention while the
+ * inquiry is in an Open status.)
+ */
+export const INQUIRY_OPEN_STATUSES = ["New", "Contacted", "FollowUp", "Negotiating"] as const;
+export const INQUIRY_CLOSED_STATUSES = ["Converted", "Closed", "Lost"] as const;
+export const INQUIRY_STATUSES = [
+  ...INQUIRY_OPEN_STATUSES,
+  ...INQUIRY_CLOSED_STATUSES
+] as const;
+export type InquiryStatus = (typeof INQUIRY_STATUSES)[number];
+
+export const INQUIRY_CLOSED_SET = new Set<InquiryStatus>(INQUIRY_CLOSED_STATUSES);
+
+/** Lead source — also accepted lowercase since the legacy UI sends mixed case. */
+export const INQUIRY_SOURCES = [
+  "WHATSAPP",
+  "CALL",
+  "REFERRAL",
+  "WEBSITE",
+  "WALK_IN",
+  "FACEBOOK",
+  "INSTAGRAM",
+  "GOOGLE",
+  "OTHER"
+] as const;
+
+export const INQUIRY_POTENTIAL = ["HOT", "WARM", "COLD"] as const;
+
+/**
+ * Phone schema for inquiries.
+ *
+ * Loose by design — the legacy CRM accepts partials before the lead is
+ * qualified. We just normalise to digits-only so duplicate detection works.
+ */
+const inquiryPhoneSchema = z
+  .string()
+  .trim()
+  .min(7, "phone too short")
+  .max(20, "phone too long")
+  .regex(/^[0-9+\-\s()]+$/, "invalid phone characters")
+  .transform((p) => p.replace(/[^0-9+]/g, ""));
+
+/** Follow-up date may be empty, ISO-date, or YYYY-MM-DD. */
+const followupDateSchema = z
+  .string()
+  .trim()
+  .max(40)
+  .refine((v) => v === "" || !Number.isNaN(Date.parse(v)), "invalid follow-up date")
+  .optional()
+  .default("");
+
+const ratingSchema = z.coerce.number().int().min(0).max(10);
+
+/**
+ * Canonical inquiry payload.
+ *
+ * Accepts both legacy `hh_*` field names and React UI aliases
+ * (patient_name, mobile, service_required, …). After parsing,
+ * normalises to a single shape that matches `inquiryToRow`.
  */
 export const inquirySchema = z
   .object({
     id: idSchema.optional(),
     name: z.string().trim().min(1).max(120).optional(),
     patient_name: z.string().trim().min(1).max(120).optional(),
-    phone: z.string().trim().optional(),
-    mobile: z.string().trim().optional(),
-    wa: z.string().trim().optional(),
-    age: z.string().optional().default(""),
-    gender: z.string().optional().default(""),
-    city: z.string().optional().default("Ahmedabad"),
-    area: z.string().optional().default(""),
-    address: z.string().optional().default(""),
-    service: z.string().optional().default(""),
-    service_required: z.string().optional(),
-    source: z.string().optional().default("WHATSAPP"),
-    potential: z.string().optional().default("WARM"),
-    rating_emergency: z.coerce.number().min(0).max(10).optional(),
-    rating_flexibility: z.coerce.number().min(0).max(10).optional(),
-    rating_overall: z.coerce.number().min(0).max(10).optional(),
-    emergency_level: z.coerce.number().min(0).max(10).optional(),
-    flexibility_score: z.coerce.number().min(0).max(10).optional(),
-    priority_score: z.coerce.number().min(0).max(10).optional(),
-    status: z.string().optional().default("New"),
-    assigned_to: z.string().optional().default(""),
-    followup_date: z.string().optional().default(""),
-    remarks: z.string().optional().default(""),
-    notes: z.string().optional().default(""),
+    phone: inquiryPhoneSchema.optional(),
+    mobile: inquiryPhoneSchema.optional(),
+    wa: z.string().trim().max(20).optional().default(""),
+    age: z.string().max(10).optional().default(""),
+    gender: z.string().max(20).optional().default(""),
+    city: z.string().max(80).optional().default("Ahmedabad"),
+    area: z.string().max(120).optional().default(""),
+    address: z.string().max(500).optional().default(""),
+    service: z.string().max(120).optional().default(""),
+    service_required: z.string().max(120).optional(),
+    source: z
+      .string()
+      .trim()
+      .max(40)
+      .transform((s) => s.toUpperCase())
+      .pipe(z.enum(INQUIRY_SOURCES))
+      .optional()
+      .default("WHATSAPP"),
+    potential: z
+      .string()
+      .trim()
+      .max(20)
+      .transform((s) => s.toUpperCase())
+      .pipe(z.enum(INQUIRY_POTENTIAL))
+      .optional()
+      .default("WARM"),
+    rating_emergency: ratingSchema.optional(),
+    rating_flexibility: ratingSchema.optional(),
+    rating_overall: ratingSchema.optional(),
+    emergency_level: ratingSchema.optional(),
+    flexibility_score: ratingSchema.optional(),
+    priority_score: ratingSchema.optional(),
+    status: z.enum(INQUIRY_STATUSES).optional().default("New"),
+    assigned_to: z.string().max(80).optional().default(""),
+    followup_date: followupDateSchema,
+    remarks: z.string().max(2000).optional().default(""),
+    notes: z.string().max(2000).optional().default(""),
     email: emailSchema.optional()
   })
   .superRefine((v, ctx) => {
     if (!v.name && !v.patient_name) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "name is required", path: ["name"] });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "name is required",
+        path: ["name"]
+      });
     }
     if (!v.phone && !v.mobile) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "phone is required", path: ["phone"] });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "phone is required",
+        path: ["phone"]
+      });
+    }
+    if (
+      (v.status === "FollowUp" || v.status === "Negotiating") &&
+      !v.followup_date
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `followup_date is required when status is ${v.status}`,
+        path: ["followup_date"]
+      });
     }
   })
   .transform((v) => {
@@ -57,3 +151,37 @@ export const inquirySchema = z
   });
 
 export type InquiryInput = z.infer<typeof inquirySchema>;
+
+/** Stand-alone status change endpoint. */
+export const inquiryStatusSchema = z.object({
+  status: z.enum(INQUIRY_STATUSES),
+  reason: z.string().trim().max(500).optional().default(""),
+  followup_date: followupDateSchema
+});
+export type InquiryStatusInput = z.infer<typeof inquiryStatusSchema>;
+
+/** Convert payload. Lets the actor force-link to an explicit existing patient. */
+export const inquiryConvertSchema = z
+  .object({
+    patient_id: idSchema.optional(),
+    notes: z.string().trim().max(2000).optional().default("")
+  })
+  .default({ notes: "" });
+export type InquiryConvertInput = z.infer<typeof inquiryConvertSchema>;
+
+/** Query params for the listing route. */
+export const inquiryListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(500).optional().default(50),
+  offset: z.coerce.number().int().min(0).optional().default(0),
+  q: z.string().optional().default(""),
+  status: z.enum(INQUIRY_STATUSES).optional(),
+  open_only: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((v) => (v === true || v === "true" || v === "1")),
+  source: z.enum(INQUIRY_SOURCES).optional(),
+  assigned_to: z.string().optional(),
+  followup_from: isoDate.optional(),
+  followup_to: isoDate.optional()
+});
+export type InquiryListQuery = z.infer<typeof inquiryListQuerySchema>;

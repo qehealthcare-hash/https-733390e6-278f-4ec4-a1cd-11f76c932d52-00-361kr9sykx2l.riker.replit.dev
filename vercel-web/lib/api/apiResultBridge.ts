@@ -1,14 +1,18 @@
 /**
- * Bridge between layered services that return `ApiResult<T>` and the legacy
- * `{ ok, data, message, code, details }` envelope produced by `jsonOk` /
- * `jsonError`. Lets us migrate route-by-route without breaking existing
- * `lib/api-client.js` callers.
+ * Bridge between layered services (`ApiResult<T>`) and HTTP responses.
+ *
+ * Phase 6: every route returns the canonical envelope:
+ *   `{ success: boolean, data?, error?, details?, code? }`
+ *
+ * Use `respond(result)` in route handlers. Use `unwrap(result)` only in
+ * legacy `@deprecated` lib/api/services shims.
  */
 
 import type { NextResponse } from "next/server";
 import type { ApiResult } from "@/types/common";
 import { ErrorCodes } from "@/types/common";
-import { ApiError, jsonError, jsonOk } from "@/lib/api/errors";
+import { ApiError } from "@/lib/api/errors";
+import { toNextResponse } from "@/utils/apiResponse";
 
 function statusFor(code: string | undefined): number {
   switch (code) {
@@ -33,29 +37,23 @@ function statusFor(code: string | undefined): number {
   }
 }
 
-/** Convert an ApiResult into a legacy-envelope Next response. */
-export function respondLegacy<T>(
-  result: ApiResult<T>,
-  successStatus = 200
-): NextResponse {
+/**
+ * Convert an `ApiResult<T>` into a Next.js Response with the canonical envelope.
+ */
+export function respond<T>(result: ApiResult<T>, successStatus = 200): NextResponse {
   if (result.success) {
-    return jsonOk(result.data as T, successStatus);
+    return toNextResponse(result, { status: successStatus });
   }
-  return jsonError(
-    new ApiError(
-      statusFor(result.code),
-      result.error || "Request failed",
-      result.code || ErrorCodes.internal,
-      result.details
-    )
-  );
+  return toNextResponse(result);
 }
+
+/** @deprecated Alias for `respond` — same canonical envelope. */
+export const respondLegacy = respond;
 
 /**
  * Throw `ApiError` on failure, otherwise return `result.data`.
  *
- * Lets old throw-based callers in `lib/api/services/*.ts` consume the new
- * `ApiResult`-returning services without rewriting their control flow.
+ * For legacy throw-based shims in `lib/api/services/*.ts` only.
  */
 export function unwrap<T>(result: ApiResult<T>): T {
   if (result.success) return result.data as T;

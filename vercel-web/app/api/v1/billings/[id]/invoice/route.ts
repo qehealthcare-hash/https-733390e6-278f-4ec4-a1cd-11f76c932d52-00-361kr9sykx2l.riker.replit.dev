@@ -1,6 +1,6 @@
 import { withAuth } from "@/lib/api/handler";
-import { jsonOk } from "@/lib/api/errors";
-import { billingService } from "@/lib/api/services/billing.service";
+import { billingService } from "@/services/billingService";
+import { respond } from "@/lib/api/apiResultBridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,11 +8,13 @@ export const dynamic = "force-dynamic";
 type Params = { id: string };
 
 /**
- * Returns the invoice payload (billing + patient + services + receipts + totals).
- * The legacy CRM and the React UI render this into a PDF client-side using the
- * existing jsPDF templates — no need to pin a server-side PDF renderer here.
+ * GET /api/v1/billings/[id]/invoice
+ *
+ * Returns the canonical invoice payload (billing + services + receipts +
+ * totals + derived period). The UI renders this into PDF client-side;
+ * totals come from the server so dashboards and printouts match.
  */
-export const GET = withAuth<Params>(async (_req, { params }) => {
-  const payload = await billingService.invoicePayload(params.id);
-  return jsonOk(payload);
+export const GET = withAuth<Params>(async (_req, { params, actor }) => {
+  const result = await billingService.invoicePayload(params.id, { actor });
+  return respond(result);
 });

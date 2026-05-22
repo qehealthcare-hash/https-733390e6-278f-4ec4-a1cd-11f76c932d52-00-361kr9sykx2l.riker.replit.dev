@@ -14,6 +14,26 @@ function saveQueue(queue) {
   window.localStorage.setItem(offlineQueueKey, JSON.stringify(queue));
 }
 
+/**
+ * Unwrap Phase 6 canonical `{ success, data, error, details, code }` or legacy
+ * `{ ok, data, message }` for backward compatibility during iframe migration.
+ */
+function unwrapResponse(json, response) {
+  if (json && typeof json.success === "boolean") {
+    if (!json.success) {
+      var err = new Error(json.error || "Request failed");
+      if (json.code) err.code = json.code;
+      if (json.details !== undefined) err.details = json.details;
+      throw err;
+    }
+    return json.data;
+  }
+  if (!response.ok) {
+    throw new Error(json.message || json.error || "Request failed");
+  }
+  return json.data !== undefined ? json.data : json;
+}
+
 export async function flushOfflineQueue(session) {
   var queue = readQueue();
   if (!queue.length || !session?.access_token) return;
@@ -39,10 +59,7 @@ export async function request(path, options, session) {
   });
 
   var json = await response.json();
-  if (!response.ok) {
-    throw new Error(json.message || "Request failed");
-  }
-  return json.data;
+  return unwrapResponse(json, response);
 }
 
 export async function requestWithOfflineFallback(path, options, session) {

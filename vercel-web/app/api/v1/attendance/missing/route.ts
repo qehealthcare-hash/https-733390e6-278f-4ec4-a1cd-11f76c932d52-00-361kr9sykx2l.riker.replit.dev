@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
 import { attendanceService } from "@/services/attendanceService";
-import { respondLegacy } from "@/lib/api/apiResultBridge";
+import { respond } from "@/lib/api/apiResultBridge";
 import { ErrorCodes, type ApiResult } from "@/types/common";
 
 export const runtime = "nodejs";
@@ -24,10 +24,10 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
       error: "employee_id, from, to are required",
       code: ErrorCodes.badRequest
     };
-    return respondLegacy(result);
+    return respond(result);
   }
   const result = await attendanceService.listMissingForEmployee(employeeId, from, to, {
     actor
   });
-  return respondLegacy(result);
+  return respond(result);
 });

@@ -1,3 +1,5 @@
+import type { ApiResult } from "@/types/common";
+import { businessFailure, businessOk } from "@/business/businessResult";
 import type { PatientInput } from "@/validation/patientValidation";
 import { findPhoneDuplicate } from "@/business/phoneRules";
 
@@ -44,6 +46,10 @@ export function patientToApi(row: Record<string, unknown>) {
     pincode: row.pin || "",
     relname: row.relname || "",
     relphone: row.relphone || "",
+    relname2: row.relname2 || "",
+    relphone2: row.relphone2 || "",
+    relname3: row.relname3 || "",
+    relphone3: row.relphone3 || "",
     email: row.email || "",
     status: row.status || "Active",
     shift: row.shift || "",
@@ -67,4 +73,30 @@ export function findActivePatientDuplicate<
     excludeId,
     match: (r) => isActivePatient(r.status)
   });
+}
+
+export function canEditPatient(status: string | undefined | null): ApiResult<null> {
+  if (String(status || "") === "Closed") {
+    return businessFailure("Closed patients are read-only — reopen before editing");
+  }
+  return businessOk();
+}
+
+export function canAssignCaretaker(status: string | undefined | null): ApiResult<null> {
+  if (!isActivePatient(status)) {
+    return businessFailure("Caretaker can only be assigned to an Active patient", { status });
+  }
+  return businessOk();
+}
+
+export function patientClosePatch(actorEmail: string) {
+  return { status: "Closed" as const, updated_by: actorEmail };
+}
+
+export function patientAssignPatch(caretakerId: string, shift: string, actorEmail: string) {
+  return {
+    caretaker_id: caretakerId,
+    shift,
+    updated_by: actorEmail
+  };
 }

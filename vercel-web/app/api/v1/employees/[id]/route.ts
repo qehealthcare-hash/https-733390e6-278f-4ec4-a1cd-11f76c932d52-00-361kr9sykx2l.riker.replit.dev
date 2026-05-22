@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { employeeService } from "@/services/employeeService";
-import { respondLegacy } from "@/lib/api/apiResultBridge";
+import { respond } from "@/lib/api/apiResultBridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,14 +11,14 @@ type Params = { id: string };
 
 export const GET = withAuth<Params>(async (_req, { params, actor }) => {
   const result = await employeeService.getById(params.id, { actor });
-  return respondLegacy(result);
+  return respond(result);
 });
 
 export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin", "Manager"]);
   const body = await parseJsonBody(req);
   const result = await employeeService.update(params.id, body, { actor });
-  return respondLegacy(result);
+  return respond(result);
 });
 
 export const PUT = PATCH;
@@ -33,5 +33,5 @@ export const PUT = PATCH;
 export const DELETE = withAuth<Params>(async (_req, { params, actor }) => {
   requireRole(actor, ["Admin"]);
   const result = await employeeService.remove(params.id, { actor });
-  return respondLegacy(result);
+  return respond(result);
 });

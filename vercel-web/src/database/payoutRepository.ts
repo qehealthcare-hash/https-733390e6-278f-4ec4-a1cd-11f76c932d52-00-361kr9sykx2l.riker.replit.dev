@@ -8,8 +8,10 @@ import {
   deleteRow,
   callRpc,
   upsertRow,
-  listAll
+  listAll,
+  resolveClient
 } from "@/database/baseRepository";
+import { runListQuery, runQuery } from "@/database/supabaseClient";
 
 const PAYOUTS = "hh_payouts";
 const PAID_TX = "hh_paid_transactions";
@@ -20,11 +22,34 @@ export interface PayoutListFilters extends ListQuery {
   period?: string;
   employeeId?: string;
   status?: string;
+  q?: string;
 }
 
 export const payoutRepository = {
   findById(id: string, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return findById(PAYOUTS, id, SCOPE, opts);
+  },
+
+  /**
+   * Race-safe natural-key lookup matching the
+   * `hh_payouts_unique (employee_id, period_month)` constraint.
+   */
+  findByEmployeePeriod(
+    employeeId: string,
+    period: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow | null>> {
+    const db = resolveClient(opts);
+    return runQuery(
+      () =>
+        db
+          .from(PAYOUTS)
+          .select("*")
+          .eq("employee_id", employeeId)
+          .eq("period_month", period)
+          .maybeSingle(),
+      `${SCOPE}.findByEmployeePeriod`
+    );
   },
 
   list(filters: PayoutListFilters = {}, opts?: DbAccess): Promise<ApiResult<ListResult<JsonRow>>> {
@@ -36,6 +61,14 @@ export const payoutRepository = {
         if (filters.period) query = query.eq("period_month", filters.period);
         if (filters.employeeId) query = query.eq("employee_id", filters.employeeId);
         if (filters.status) query = query.eq("status", filters.status);
+        if (filters.q) {
+          const term = filters.q.replace(/%/g, "");
+          query = query.or(
+            ["id", "employee_id", "period_month", "status", "remarks"]
+              .map((c) => `${c}.ilike.%${term}%`)
+              .join(",")
+          );
+        }
         return query;
       },
       {
@@ -55,6 +88,28 @@ export const payoutRepository = {
     });
   },
 
+  /** Sum of net_amount for a period — dashboard total parity. */
+  async sumNetForPeriod(
+    period: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<{ total: number; rowCount: number; rows: JsonRow[] }>> {
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(PAYOUTS)
+          .select("id, employee_id, gross_amount, advance, deduction, bonus, net_amount, status")
+          .eq("period_month", period),
+      `${SCOPE}.sumNetForPeriod`
+    );
+    if (!result.success) {
+      return { success: false, error: result.error, code: result.code, details: result.details };
+    }
+    const rows = result.data || [];
+    const total = rows.reduce((sum, r) => sum + Number(r.net_amount || 0), 0);
+    return { success: true, data: { total, rowCount: rows.length, rows } };
+  },
+
   insert(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return insertRow(PAYOUTS, row, SCOPE, opts);
   },
@@ -72,8 +127,8 @@ export const payoutRepository = {
     employeeId: string,
     period: string,
     opts?: DbAccess
-  ): Promise<ApiResult<{ payout_id?: string } | null>> {
-    return callRpc<{ payout_id?: string }>(
+  ): Promise<ApiResult<{ payout_id?: string; gross?: number; duties?: number; hours?: number } | null>> {
+    return callRpc<{ payout_id?: string; gross?: number; duties?: number; hours?: number }>(
       "hh_recompute_payout",
       { p_employee_id: employeeId, p_period: period },
       SCOPE,
@@ -83,6 +138,10 @@ export const payoutRepository = {
 
   upsertPaidTransaction(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return upsertRow(PAID_TX, row, `${SCOPE}.paidTx`, opts, "id");
+  },
+
+  findPaidTransaction(payoutId: string, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
+    return findById(PAID_TX, payoutId, `${SCOPE}.paidTx`, opts);
   },
 
   listChargesByPayout(payoutId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {

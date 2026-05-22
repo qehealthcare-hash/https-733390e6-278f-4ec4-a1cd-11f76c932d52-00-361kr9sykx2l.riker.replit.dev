@@ -7,16 +7,20 @@ import {
   updateRow,
   deleteRow,
   listAll,
+  countWhere,
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery } from "@/database/supabaseClient";
 
 const TABLE = "hh_patients";
+const BILLINGS = "hh_billings";
+const RECEIPTS = "hh_receipts";
 const SCOPE = "patientRepository";
 
 export interface PatientListFilters extends ListQuery {
   q?: string;
   status?: string;
+  caretaker_id?: string;
 }
 
 export const patientRepository = {
@@ -31,10 +35,13 @@ export const patientRepository = {
       (q) => {
         let query = q;
         if (filters.status) query = query.eq("status", filters.status);
+        if (filters.caretaker_id) query = query.eq("caretaker_id", filters.caretaker_id);
         if (filters.q) {
           const term = filters.q.replace(/%/g, "");
           query = query.or(
-            ["name", "phone", "area", "city", "addr"].map((c) => `${c}.ilike.%${term}%`).join(",")
+            ["name", "phone", "area", "city", "addr", "relname", "relphone"]
+              .map((c) => `${c}.ilike.%${term}%`)
+              .join(",")
           );
         }
         return query;
@@ -43,7 +50,7 @@ export const patientRepository = {
     );
   },
 
-  /** Normalised phone suffix match for duplicate detection (last 8 digits). */
+  /** Active patients matching phone suffix (duplicate detection). */
   async findActiveByPhoneSuffix(
     phone: string,
     excludeId?: string,
@@ -53,7 +60,7 @@ export const patientRepository = {
     const suffix = normalized.slice(-8);
     if (!suffix) return { success: true, data: [] };
     const db = resolveClient(opts);
-    const result = await runListQuery(
+    const result = await runListQuery<JsonRow>(
       () =>
         db
           .from(TABLE)
@@ -75,13 +82,20 @@ export const patientRepository = {
     return updateRow(TABLE, id, patch, SCOPE, opts);
   },
 
-  /** Hard delete (legacy CRM uses soft-close via status update in services). */
   remove(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
     return deleteRow(TABLE, id, SCOPE, opts);
   },
 
+  countBillings(patientId: string, opts?: DbAccess): Promise<ApiResult<number>> {
+    return countWhere(BILLINGS, SCOPE, (q) => q.eq("patient_id", patientId), opts);
+  },
+
+  countDuties(patientId: string, opts?: DbAccess): Promise<ApiResult<number>> {
+    return countWhere("hh_duties", SCOPE, (q) => q.eq("patient_id", patientId), opts);
+  },
+
   listHistoryBillings(patientId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
-    return listAll("hh_billings", SCOPE, (q) => q.eq("patient_id", patientId), {
+    return listAll(BILLINGS, SCOPE, (q) => q.eq("patient_id", patientId), {
       ...opts,
       orderBy: "created_at",
       ascending: false
@@ -94,6 +108,25 @@ export const patientRepository = {
       orderBy: "start_at",
       ascending: false
     });
+  },
+
+  /** Receipts for a set of billing IDs (patient history ledger). */
+  async listReceiptsForBillings(
+    billingIds: string[],
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    if (!billingIds.length) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from(RECEIPTS)
+          .select("*")
+          .in("billing_id", billingIds)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false }),
+      `${SCOPE}.listReceiptsForBillings`
+    );
   },
 
   listHistoryAudits(patientId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {

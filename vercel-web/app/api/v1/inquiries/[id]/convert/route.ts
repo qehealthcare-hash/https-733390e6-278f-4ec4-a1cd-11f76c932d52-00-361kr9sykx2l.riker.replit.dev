@@ -1,15 +1,26 @@
-import { withAuth } from "@/lib/api/handler";
-import { jsonOk } from "@/lib/api/errors";
+import type { NextRequest } from "next/server";
+import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
-import { inquiryService } from "@/lib/api/services/inquiry.service";
+import { withIdempotency } from "@/lib/api/idempotency";
+import { inquiryService } from "@/services/inquiryService";
+import { respond } from "@/lib/api/apiResultBridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Params = { id: string };
 
-export const POST = withAuth<Params>(async (_req, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff"]);
-  const result = await inquiryService.convertToPatient(params.id, actor);
-  return jsonOk(result);
+/**
+ * POST /api/v1/inquiries/:id/convert
+ *
+ * Converts the inquiry to a patient via the `hh_convert_inquiry_to_patient`
+ * RPC. Idempotent — re-running returns the same `{ patient_id, inquiry_id }`.
+ */
+export const POST = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
+  requireRole(actor, ["Admin", "Manager", "Staff", "Executive"]);
+  return withIdempotency(req, actor, { route: "POST /inquiries/[id]/convert" }, async () => {
+    const body = await parseJsonBody(req).catch(() => ({}));
+    const result = await inquiryService.convertToPatient(params.id, body, { actor });
+    return respond(result, 201);
+  });
 });

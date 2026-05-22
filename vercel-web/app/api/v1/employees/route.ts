@@ -3,7 +3,7 @@ import { withAuth, parseJsonBody, pageParams } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { employeeService } from "@/services/employeeService";
-import { respondLegacy } from "@/lib/api/apiResultBridge";
+import { respond } from "@/lib/api/apiResultBridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +16,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     dept: url.searchParams.get("dept") || undefined
   };
   const result = await employeeService.list(opts, { actor });
-  return respondLegacy(result);
+  return respond(result);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
@@ -24,6 +24,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /employees" }, async () => {
     const body = await parseJsonBody(req);
     const result = await employeeService.create(body, { actor });
-    return respondLegacy(result, 201);
+    return respond(result, 201);
   });
 });
