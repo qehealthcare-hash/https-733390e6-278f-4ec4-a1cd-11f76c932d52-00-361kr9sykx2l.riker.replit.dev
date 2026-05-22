@@ -246,38 +246,21 @@ export function canTransitionTo(
 // Patches applied to hh_billings
 // ───────────────────────────────────────────────────────────────────────────
 
-export function billingCloseRow(
-  actorEmail: string,
-  reason: string,
-  otherReason?: string
-) {
-  return {
-    status: "Closed" as BillingStatus,
-    updated_by: actorEmail,
-    close_reason: reason || "",
-    close_reason_other: otherReason || "",
-    notes: reason ? reason : undefined
-  };
+/** Status-only patch — close metadata is stored in hh_audit_logs (production may lack close_reason columns). */
+export function billingCloseRow(_actorEmail: string, _reason?: string, _otherReason?: string) {
+  return { status: "Closed" as BillingStatus };
 }
 
-export function billingPauseRow(actorEmail: string, pauseReason: string) {
-  return {
-    status: "Paused" as BillingStatus,
-    updated_by: actorEmail,
-    pause_reason: pauseReason || ""
-  };
+export function billingPauseRow(_actorEmail: string, _pauseReason?: string) {
+  return { status: "Paused" as BillingStatus };
 }
 
-export function billingReopenRow(actorEmail: string, reason: string) {
-  return {
-    status: "Active" as BillingStatus,
-    updated_by: actorEmail,
-    notes: reason || ""
-  };
+export function billingReopenRow(_actorEmail: string, _reason?: string) {
+  return { status: "Active" as BillingStatus };
 }
 
-export function billingStatusRow(status: BillingStatus, actorEmail: string) {
-  return { status, updated_by: actorEmail };
+export function billingStatusRow(status: BillingStatus, _actorEmail: string) {
+  return { status };
 }
 
 // ───────────────────────────────────────────────────────────────────────────

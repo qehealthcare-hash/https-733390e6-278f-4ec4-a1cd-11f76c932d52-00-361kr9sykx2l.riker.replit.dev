@@ -78,7 +78,7 @@ export const attendanceRepository = {
         if (filters.q) {
           const term = filters.q.replace(/%/g, "");
           query = query.or(
-            ["status", "notes", "employee_id", "duty_id"]
+            ["status", "remarks", "employee_id", "duty_id"]
               .map((c) => `${c}.ilike.%${term}%`)
               .join(",")
           );

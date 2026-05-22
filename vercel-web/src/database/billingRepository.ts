@@ -68,7 +68,7 @@ export const billingRepository = {
         if (filters.q) {
           const term = filters.q.replace(/%/g, "");
           query = query.or(
-            ["id", "patient_id", "status", "notes"]
+            ["id", "patient_id", "status"]
               .map((c) => `${c}.ilike.%${term}%`)
               .join(",")
           );

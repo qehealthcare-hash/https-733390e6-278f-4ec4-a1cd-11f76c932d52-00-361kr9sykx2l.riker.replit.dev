@@ -31,7 +31,11 @@ export const employeeRepository = {
       SCOPE,
       (q) => {
         let query = q;
-        if (filters.status) query = query.eq("status", filters.status);
+        if (filters.status === "Active") {
+          query = query.or("leave_date.is.null,leave_date.eq.");
+        } else if (filters.status === "Inactive") {
+          query = query.not("leave_date", "is", null).neq("leave_date", "");
+        }
         if (filters.dept) query = query.eq("dept", filters.dept);
         if (filters.q) {
           const term = filters.q.replace(/%/g, "");
@@ -52,7 +56,8 @@ export const employeeRepository = {
     if (!suffix) return Promise.resolve({ success: true, data: [] });
     const db = resolveClient(opts);
     return runListQuery(
-      () => db.from(TABLE).select("id, fn, ln, phone, status").ilike("phone", `%${suffix}%`),
+      () =>
+        db.from(TABLE).select("id, fn, ln, phone, leave_date").ilike("phone", `%${suffix}%`),
       `${SCOPE}.findByPhoneSuffix`
     );
   },

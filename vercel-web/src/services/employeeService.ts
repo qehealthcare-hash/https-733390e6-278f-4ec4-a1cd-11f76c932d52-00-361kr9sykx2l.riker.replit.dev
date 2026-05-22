@@ -340,7 +340,6 @@ export const employeeService = {
       emp_type: input.emp_type || "",
       edu: input.edu || "",
       join_date: input.join_date || "",
-      leave_date: input.leave_date || "",
       exp: input.exp || "",
       shift: input.shift || "",
       salary: input.salary != null ? String(input.salary) : "",
@@ -356,7 +355,10 @@ export const employeeService = {
       ecrel: input.ecrel || "",
       skills: input.skills || "",
       area: input.area || "",
-      status: input.status || "Active",
+      leave_date:
+        (input.status || "Active") === "Inactive"
+          ? input.leave_date || new Date().toISOString().slice(0, 10)
+          : input.leave_date || "",
       updated_by: ctx.actor.email
     };
 

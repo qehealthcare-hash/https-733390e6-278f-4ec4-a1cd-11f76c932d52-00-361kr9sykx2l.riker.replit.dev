@@ -24,6 +24,10 @@ Watch mode: `npm run test:watch`.
 | Payout lock/adjust/pay | `payoutRules.test.ts` | payoutService |
 | Dashboard + P&amp;L math | `reportRules.test.ts` | reportService |
 | Audit enforcement | `mutationAudit.test.ts` | Phase 9 |
+| Audit row shape (+ user_id) | `auditTrail.test.ts` | Phase 9 |
+| Duty overlap + lifecycle | `dutyRules.test.ts` | dutyService |
+| Patient lifecycle + dup | `patientRules.test.ts` | patientService |
+| **Full workflow matrix** | `workflowMatrix.test.ts` | INTEGRATION_TEST_REPORT.md |
 
 ## CI
 

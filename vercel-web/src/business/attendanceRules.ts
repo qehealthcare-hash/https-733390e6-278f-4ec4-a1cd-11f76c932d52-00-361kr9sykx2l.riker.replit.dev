@@ -29,8 +29,16 @@ export function attendanceUpdateFields(
     check_out_at: checkOut || null,
     hours: hoursBetween(checkIn, checkOut || undefined),
     status,
-    notes
+    remarks: notes
   };
+}
+
+/** DB column is `remarks`; API contract uses `notes`. */
+export function attendanceNotesFromRow(row: {
+  notes?: string | null;
+  remarks?: string | null;
+}): string {
+  return String(row.notes ?? row.remarks ?? "");
 }
 
 export { payoutPeriodFromTimestamp };
@@ -79,12 +87,11 @@ export function buildAttendanceRow(
     duty_id: input.duty_id || null,
     employee_id: input.employee_id,
     patient_id: input.patient_id || null,
-    shift_type: input.shift_type || null,
     check_in_at: checkIn,
     check_out_at: checkOut,
     hours: hoursBetween(checkIn, checkOut),
     status: input.status,
-    notes: input.notes ?? "",
+    remarks: input.notes ?? "",
     created_by: actorEmail,
     updated_by: actorEmail
   };
@@ -102,12 +109,11 @@ export function buildAttendancePatch(
   return {
     duty_id: input.duty_id ?? existing.duty_id ?? null,
     patient_id: input.patient_id ?? existing.patient_id ?? null,
-    shift_type: input.shift_type ?? existing.shift_type ?? null,
     check_in_at: checkIn,
     check_out_at: checkOut,
     hours: hoursBetween(checkIn, checkOut),
     status: input.status,
-    notes: input.notes ?? existing.notes ?? "",
+    remarks: input.notes ?? attendanceNotesFromRow(existing) ?? "",
     updated_by: actorEmail
   };
 }

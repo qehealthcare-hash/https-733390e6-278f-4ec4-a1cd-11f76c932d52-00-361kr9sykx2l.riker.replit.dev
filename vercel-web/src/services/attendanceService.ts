@@ -135,7 +135,7 @@ function toAttendanceRow(row: JsonRow): AttendanceRow {
     check_out_at: (row.check_out_at as string | null) ?? null,
     hours: typeof row.hours === "number" ? row.hours : Number(row.hours ?? 0) || 0,
     status: String(row.status || "PRESENT"),
-    notes: (row.notes as string | null) ?? null
+    notes: String(row.notes ?? row.remarks ?? "") || null
   };
 }
 

@@ -13,13 +13,37 @@ export function employeeFullName(parts: { fn?: string; mn?: string; ln?: string 
   return [parts.fn, parts.mn, parts.ln].filter(Boolean).join(" ").trim();
 }
 
-export function isActiveEmployee(status: string | undefined | null): boolean {
-  return ACTIVE_STATUSES.has((status || "Active") as EmployeeStatus);
+/** Derive API status from DB row (status column or legacy leave_date marker). */
+export function employeeStatusFromRow(row: {
+  status?: string | null;
+  leave_date?: string | null;
+}): EmployeeStatus {
+  const explicit = String(row.status || "").trim();
+  if (explicit && (EMPLOYEE_STATUSES as readonly string[]).includes(explicit)) {
+    return explicit as EmployeeStatus;
+  }
+  const leave = String(row.leave_date || "").trim();
+  return leave ? "Inactive" : "Active";
 }
 
-/** DB row shape — keeps only known `hh_employees` columns. */
+export function isActiveEmployee(
+  statusOrRow: string | { status?: string | null; leave_date?: string | null } | null | undefined
+): boolean {
+  if (statusOrRow && typeof statusOrRow === "object") {
+    return employeeStatusFromRow(statusOrRow) === "Active";
+  }
+  return ACTIVE_STATUSES.has((statusOrRow || "Active") as EmployeeStatus);
+}
+
+function leaveDateForStatus(status: EmployeeStatus, existing?: string | null): string {
+  if (status === "Active") return "";
+  if (existing) return existing;
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** DB row shape — only columns that exist on production `hh_employees`. */
 export function employeeToRow(input: EmployeeInput) {
-  return {
+  const row: Record<string, unknown> = {
     fn: input.fn,
     mn: input.mn,
     ln: input.ln,
@@ -27,23 +51,23 @@ export function employeeToRow(input: EmployeeInput) {
     email: input.email || "",
     gender: input.gender,
     dob: input.dob,
-    addr: input.addr,
     area: input.area,
-    city: input.city,
     pin: input.pin,
     dept: input.dept,
     desig: input.desig,
     emp_type: input.emp_type,
     etype: input.etype,
     shift: input.shift,
-    salary: input.salary,
-    status: input.status,
-    join_date: input.join_date || input.join || null,
-    leave_date: input.leave_date || input.leave || null,
-    relname: input.relname,
-    relphone: input.relphone,
-    docs: input.docs ?? undefined
+    salary: input.salary != null ? String(input.salary) : "",
+    join_date: input.join_date || input.join || "",
+    leave_date: leaveDateForStatus(
+      input.status,
+      input.leave_date || input.leave || ""
+    ),
+    docs: input.docs ?? undefined,
+    updated_by: undefined
   };
+  return row;
 }
 
 /** Outbound shape — single contract for legacy + React clients. */
@@ -54,7 +78,7 @@ export function employeeToApi(row: Record<string, unknown>) {
     mn: String(row.mn || ""),
     ln: String(row.ln || "")
   });
-  const status = (row.status as EmployeeStatus) || "Active";
+  const status = employeeStatusFromRow(row);
   return {
     id: row.id,
     full_name: full,
@@ -67,9 +91,8 @@ export function employeeToApi(row: Record<string, unknown>) {
     email: row.email || "",
     gender: row.gender || "",
     dob: row.dob || "",
-    addr: row.addr || "",
     area: row.area || "",
-    city: row.city || "Ahmedabad",
+    presaddr: row.presaddr || row.permaddr || "",
     pin: row.pin || "",
     department: row.dept || "",
     designation: row.desig || "",
@@ -81,9 +104,9 @@ export function employeeToApi(row: Record<string, unknown>) {
     join_date: row.join_date || row.join || null,
     leave_date: row.leave_date || row.leave || null,
     status,
-    active: isActiveEmployee(status),
-    relname: row.relname || "",
-    relphone: row.relphone || "",
+    active: isActiveEmployee(row),
+    ecname: row.ecname || "",
+    ecphone: row.ecphone || "",
     docs: row.docs || [],
     created_at: row.created_at || row.created || null,
     updated_at: row.updated_at || null
@@ -92,11 +115,11 @@ export function employeeToApi(row: Record<string, unknown>) {
 
 /** Find an active employee that already uses this mobile (last 8 digits match). */
 export function findActiveEmployeeDuplicate<
-  T extends { id: string; phone?: string | null; status?: string | null }
+  T extends { id: string; phone?: string | null; status?: string | null; leave_date?: string | null }
 >(candidates: T[], phone: string, excludeId?: string): T | null {
   return findPhoneDuplicate(candidates, phone, {
     excludeId,
-    match: (r) => isActiveEmployee(r.status)
+    match: (r) => isActiveEmployee(r)
   });
 }
 
@@ -127,11 +150,9 @@ export function ensureNoHistoricalLinks(counts: EmployeeLinkCounts): ApiResult<n
 }
 
 /** Patch to deactivate (soft-delete) an employee. */
-export function deactivatePatch(actorEmail: string, reason = "") {
+export function deactivatePatch(actorEmail: string, _reason = "") {
   return {
-    status: "Inactive" as EmployeeStatus,
     leave_date: new Date().toISOString().slice(0, 10),
-    deactivation_reason: reason || null,
     updated_by: actorEmail
   };
 }
@@ -139,20 +160,17 @@ export function deactivatePatch(actorEmail: string, reason = "") {
 /** Patch to (re)activate. */
 export function activatePatch(actorEmail: string) {
   return {
-    status: "Active" as EmployeeStatus,
-    leave_date: null,
-    deactivation_reason: null,
+    leave_date: "",
     updated_by: actorEmail
   };
 }
 
 /** Patch for arbitrary status change (used by /status route). */
-export function statusPatch(status: EmployeeStatus, actorEmail: string, reason = "") {
-  if (status === "Inactive") return deactivatePatch(actorEmail, reason);
+export function statusPatch(status: EmployeeStatus, actorEmail: string, _reason = "") {
+  if (status === "Inactive") return deactivatePatch(actorEmail);
   if (status === "Active") return activatePatch(actorEmail);
   return {
-    status,
-    deactivation_reason: reason || null,
+    leave_date: leaveDateForStatus(status),
     updated_by: actorEmail
   };
 }

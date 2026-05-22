@@ -396,9 +396,8 @@ export const billingService = {
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as BillingEditInput;
 
-    const patch: JsonRow = { updated_by: ctx.actor.email };
+    const patch: JsonRow = {};
     if (input.sec_dep !== undefined) patch.sec_dep = input.sec_dep;
-    if (input.notes !== undefined) patch.notes = input.notes;
 
     const updated = await billingRepository.updateBilling(id, patch, dbAccess(ctx));
     if (!updated.success) return passFailure(updated);
@@ -1024,13 +1023,7 @@ export const billingService = {
           patient_id: input.patient_id,
           status: input.status || "Active",
           sec_dep: input.sec_dep ?? 0,
-          close_reason: input.close_reason || "",
-          close_reason_other: input.close_reason_other || "",
-          pause_reason: input.pause_reason || "",
-          created: input.created || new Date().toISOString(),
-          notes: input.notes || "",
-          created_by: ctx.actor.email,
-          updated_by: ctx.actor.email
+          created: input.created || new Date().toISOString()
         },
         access
       );
@@ -1076,9 +1069,8 @@ export const billingService = {
       }
     }
 
-    const patch: JsonRow = { updated_by: ctx.actor.email };
+    const patch: JsonRow = {};
     if (input.sec_dep !== undefined) patch.sec_dep = input.sec_dep;
-    if (input.notes) patch.notes = input.notes;
     if (nextStatus !== currentStatus) {
       if (nextStatus === "Paused") {
         Object.assign(patch, billingPauseRow(ctx.actor.email, input.pause_reason));
@@ -1090,13 +1082,9 @@ export const billingService = {
       } else {
         Object.assign(patch, billingStatusRow(nextStatus, ctx.actor.email));
       }
-    } else {
-      if (input.close_reason) patch.close_reason = input.close_reason;
-      if (input.close_reason_other) patch.close_reason_other = input.close_reason_other;
-      if (input.pause_reason) patch.pause_reason = input.pause_reason;
     }
 
-    if (Object.keys(patch).length === 1 && patch.updated_by) {
+    if (Object.keys(patch).length === 0) {
       return success(existing);
     }
 
