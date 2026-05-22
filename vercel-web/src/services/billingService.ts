@@ -73,6 +73,7 @@ import {
 } from "@/business/billingRules";
 import { newId } from "@/business/idRules";
 import { billingRepository } from "@/database/billingRepository";
+import { patientRepository } from "@/database/patientRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
@@ -162,6 +163,21 @@ export interface BillingWithTotals {
   receipts: JsonRow[];
   totals: BillingTotals;
   period: { from?: string; to?: string; months: string[] };
+  /**
+   * Patient snapshot for invoice / PDF headers. Joined from `hh_patients`
+   * by `billing.patient_id`. Surface only the fields the UI prints — name,
+   * phone, address — so we don't leak medical data through the billing
+   * view.
+   */
+  patient: {
+    id: string;
+    name: string;
+    phone: string;
+    address: string;
+    area: string;
+    city: string;
+    pincode: string;
+  } | null;
 }
 
 /** Load a billing bundle (billing + svc + receipts) and compute server-side totals. */
@@ -180,6 +196,27 @@ async function loadBundleWithTotals(
     receipts,
     secDep: Number(billing.sec_dep || 0)
   });
+
+  // Best-effort patient lookup — if it fails (404, schema drift, etc.) we
+  // still return the bill so the rest of the UI keeps working.
+  let patientSummary: BillingWithTotals["patient"] = null;
+  const patientId = String(billing.patient_id || "");
+  if (patientId) {
+    const patientResult = await patientRepository.findById(patientId, dbAccess(ctx));
+    if (patientResult.success && patientResult.data) {
+      const p = patientResult.data;
+      patientSummary = {
+        id: String(p.id ?? patientId),
+        name: String(p.full_name ?? p.name ?? "").trim(),
+        phone: String(p.mobile ?? p.phone ?? "").trim(),
+        address: String(p.address ?? p.addr ?? "").trim(),
+        area: String(p.area ?? "").trim(),
+        city: String(p.city ?? "").trim(),
+        pincode: String(p.pincode ?? p.pin ?? "").trim()
+      };
+    }
+  }
+
   return {
     success: true,
     data: {
@@ -187,7 +224,8 @@ async function loadBundleWithTotals(
       services,
       receipts,
       totals,
-      period: periodFromServices(services)
+      period: periodFromServices(services),
+      patient: patientSummary
     }
   };
 }

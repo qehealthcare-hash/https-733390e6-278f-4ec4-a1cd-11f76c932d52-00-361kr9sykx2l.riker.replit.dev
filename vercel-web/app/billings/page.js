@@ -334,13 +334,28 @@ export default function BillingsPage() {
         );
       })
       .join("");
+    var patient = bundle.patient || {};
+    var patientId = bundle.billing.patient_id || "-";
+    var patientName = patient.name || "-";
+    var patientPhone = patient.phone || "";
+    var patientAddress = [patient.address, patient.area, patient.city, patient.pincode]
+      .filter(Boolean)
+      .join(", ");
     var body =
       "<h2>Bill " +
       bundle.billing.id +
       "</h2>" +
       "<div class='meta'><strong>Patient:</strong> " +
-      (bundle.billing.patient_id || "-") +
-      "</div>" +
+      patientName +
+      " (" +
+      patientId +
+      ")</div>" +
+      (patientPhone
+        ? "<div class='meta'><strong>Phone:</strong> " + patientPhone + "</div>"
+        : "") +
+      (patientAddress
+        ? "<div class='meta'><strong>Address:</strong> " + patientAddress + "</div>"
+        : "") +
       "<div class='meta'><strong>Status:</strong> " +
       (bundle.billing.status || "Active") +
       "</div>" +
@@ -510,7 +525,12 @@ export default function BillingsPage() {
                   <div className="helper-box">
                     <div>
                       <strong>Status:</strong> {status}
-                      &nbsp;·&nbsp; <strong>Patient:</strong> {bundle.billing.patient_id || "-"}
+                      &nbsp;·&nbsp;{" "}
+                      <strong>Patient:</strong>{" "}
+                      {(bundle.patient && bundle.patient.name) || bundle.billing.patient_id || "-"}
+                      {bundle.patient && bundle.patient.name && bundle.billing.patient_id ? (
+                        <span className="mini-muted"> · {bundle.billing.patient_id}</span>
+                      ) : null}
                     </div>
                     <div className="grid-2" style={{ marginTop: 8 }}>
                       <div>

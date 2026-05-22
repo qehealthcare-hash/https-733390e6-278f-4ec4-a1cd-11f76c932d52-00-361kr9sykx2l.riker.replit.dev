@@ -19,6 +19,7 @@ import {
 } from "@/lib/crm-options";
 import { formatCurrency, formatDate, slugToText } from "@/lib/formatters";
 import { uploadDocument } from "@/lib/uploads";
+import { openPrintWindow } from "@/lib/print";
 
 function createInitialForm() {
   return {
@@ -368,6 +369,130 @@ export default function EmployeesPage() {
     }
   }
 
+  function openEmployeePdf(row, hideSensitive) {
+    var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
+    var score = rowScoreTotal(row);
+    var isActive = row.status ? row.status === "Active" : row.active !== false;
+    var docs = row.employee_documents || row.docs || [];
+    function escape(value) {
+      return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+      });
+    }
+    function field(label, value) {
+      return (
+        "<tr><th style='width:180px'>" +
+        escape(label) +
+        "</th><td>" +
+        escape(value || "-") +
+        "</td></tr>"
+      );
+    }
+    function mask(value) {
+      var s = String(value || "");
+      if (!s) return "";
+      if (s.length <= 4) return "****";
+      return "****" + s.slice(-4);
+    }
+    var rows = [
+      field("Employee ID", row.id),
+      field("Name", name),
+      field("Type", slugToText(row.emp_type || row.etype || row.employee_type || "")),
+      field("Designation", slugToText(row.role || row.desig || "")),
+      field("Department", slugToText(row.dept || row.department || "")),
+      field("Shift", slugToText(row.shift_type || row.shift || "")),
+      field("Education", slugToText(row.education || row.edu || "")),
+      field("Skills", row.skills),
+      field("Area", row.area),
+      field("Phone", hideSensitive ? "" : row.mobile || row.phone),
+      field("Alt phone", hideSensitive ? "" : row.phone2),
+      field("Email", row.email),
+      field("Aadhar", hideSensitive ? mask(row.aadhar) : row.aadhar),
+      field("PAN", hideSensitive ? mask(row.pan) : row.pan),
+      field("Permanent address", row.permaddr || row.addr || row.address),
+      field("Present address", row.presaddr),
+      field(
+        "PIN · District · State",
+        [row.pin || row.pincode, row.district, row.state].filter(Boolean).join(" · ")
+      ),
+      field(
+        "Emergency contact",
+        row.ecname
+          ? row.ecname + (row.ecphone ? " · " + row.ecphone : "") + (row.ecrel ? " (" + row.ecrel + ")" : "")
+          : ""
+      ),
+      field(
+        "Performance score",
+        score == null
+          ? "Not rated"
+          : score.toFixed(2) +
+              " / 10  (Exp " +
+              (row.score_experience ?? "-") +
+              " · Beh " +
+              (row.score_behaviour ?? "-") +
+              " · Tst " +
+              (row.score_testimonial ?? "-") +
+              ")"
+      ),
+      field("Status", (row.status || (isActive ? "Active" : "Inactive")) || "Active"),
+      field("Joining date", formatDate(row.join_date || row.join)),
+      row.leave_date || row.leave ? field("Leaving date", formatDate(row.leave_date || row.leave)) : "",
+      field("Salary", row.salary ? formatCurrency(row.salary) + " /mo" : ""),
+      field("Experience", row.exp),
+      field("Documents on file", String(docs.length || 0))
+    ].join("");
+    var body =
+      "<h2>Employee Profile</h2>" +
+      "<table><tbody>" +
+      rows +
+      "</tbody></table>" +
+      (docs.length
+        ? "<h3>Attached documents</h3><ol>" +
+          docs
+            .map(function (d) {
+              return "<li>" + escape(d.file_name || d.path || "Document") + "</li>";
+            })
+            .join("") +
+          "</ol>"
+        : "");
+    openPrintWindow(
+      hideSensitive ? "Employee Profile (sanitised)" : "Employee Profile - " + name,
+      body
+    );
+  }
+
+  function openEmployeeDirectoryPdf() {
+    var listRows = filtered
+      .map(function (row, index) {
+        var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
+        var score = rowScoreTotal(row);
+        var isActive = row.status ? row.status === "Active" : row.active !== false;
+        return (
+          "<tr>" +
+          "<td>" + (index + 1) + "</td>" +
+          "<td>" + (row.id || "-") + "</td>" +
+          "<td>" + (name || "-") + "</td>" +
+          "<td>" + slugToText(row.role || row.desig || "") + "</td>" +
+          "<td>" + slugToText(row.dept || row.department || "") + "</td>" +
+          "<td>" + slugToText(row.shift_type || row.shift || "") + "</td>" +
+          "<td>" + (score == null ? "—" : score.toFixed(1)) + "</td>" +
+          "<td>" + (row.mobile || row.phone || "") + "</td>" +
+          "<td>" + (row.status || (isActive ? "Active" : "Inactive")) + "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+    var body =
+      "<h2>Employee Directory</h2>" +
+      "<div class='meta'>" + filtered.length + " staff · generated " + formatDate(new Date().toISOString()) + "</div>" +
+      "<table><thead><tr>" +
+      "<th>#</th><th>ID</th><th>Name</th><th>Role</th><th>Dept</th><th>Shift</th><th>Score</th><th>Phone</th><th>Status</th>" +
+      "</tr></thead><tbody>" +
+      (listRows || "<tr><td colspan='9'>No employees match the current filters.</td></tr>") +
+      "</tbody></table>";
+    openPrintWindow("Employee Directory", body);
+  }
+
   async function deleteEmployee(id) {
     if (!window.confirm("Delete this employee? If they have history, they will be deactivated instead.")) return;
     setBusy(true);
@@ -670,7 +795,20 @@ export default function EmployeesPage() {
           </ModuleShell>
 
           <div className="page-grid">
-            <ModuleShell title="Workforce" description="Filter, edit, or change status. Soft-delete preserves history.">
+            <ModuleShell
+              title="Workforce"
+              description="Filter, edit, or change status. Soft-delete preserves history."
+              actions={
+                <div className="button-row">
+                  <button className="button secondary" type="button" onClick={openEmployeeDirectoryPdf}>
+                    Directory PDF
+                  </button>
+                  <button className="button secondary" type="button" onClick={resource.reload}>
+                    Refresh
+                  </button>
+                </div>
+              }
+            >
               <div className="toolbar">
                 <div className="field">
                   <label>Search</label>
@@ -822,6 +960,12 @@ export default function EmployeesPage() {
                               </button>
                             </>
                           )}
+                          <button className="button secondary" type="button" onClick={function () { openEmployeePdf(row, false); }}>
+                            PDF
+                          </button>
+                          <button className="button secondary" type="button" onClick={function () { openEmployeePdf(row, true); }}>
+                            PDF (sanitised)
+                          </button>
                           <button className="button danger" type="button" onClick={function () { deleteEmployee(row.id); }}>
                             Delete
                           </button>
