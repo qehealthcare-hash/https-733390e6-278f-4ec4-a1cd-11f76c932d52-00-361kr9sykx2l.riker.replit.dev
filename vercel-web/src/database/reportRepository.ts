@@ -43,11 +43,13 @@ export const reportRepository = {
   },
 
   countActiveEmployees(opts?: DbAccess): Promise<ApiResult<number>> {
-    // `status` is `''` by default → fall back to "anything other than Inactive".
+    // `hh_employees` has no `status` column — employee activity is encoded as
+    // `leave_date` (empty / null = still on staff, non-empty = left on that
+    // date). Mirror that in the count.
     return countWhere(
       "hh_employees",
       SCOPE,
-      (q) => q.not("status", "eq", "Inactive"),
+      (q) => q.or("leave_date.is.null,leave_date.eq."),
       opts
     );
   },

@@ -49,11 +49,11 @@ export const lookupService = {
   async services() {
     const { data, error } = await supabaseAdmin()
       .from("hh_app_settings")
-      .select("payload")
-      .eq("section", "services")
+      .select("value")
+      .eq("key", "services")
       .maybeSingle();
     if (error) throw error;
-    return data?.payload || [];
+    return data?.value || [];
   },
 
   async roles() {

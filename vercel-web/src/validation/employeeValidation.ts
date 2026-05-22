@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { idSchema } from "@/validation/commonValidation";
+import {
+  idSchema,
+  optionalEmail,
+  optionalShiftType,
+  optionalText
+} from "@/validation/commonValidation";
 
 /** Status values the API will accept. Inactive replaces hard-delete. */
 export const EMPLOYEE_STATUSES = ["Active", "Inactive", "OnLeave", "Suspended"] as const;
@@ -19,16 +24,26 @@ function normalizeMobile(raw: string | undefined | null): string {
   return (raw || "").replace(/[^0-9+]/g, "");
 }
 
-/** YYYY-MM-DD form input. */
-const dateOnly = z
-  .string()
-  .trim()
-  .optional()
-  .default("")
-  .refine(
-    (v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v) || !Number.isNaN(Date.parse(v)),
-    "Expected ISO date (YYYY-MM-DD)"
-  );
+/**
+ * YYYY-MM-DD form input. Coerces null / undefined / whitespace to "" so the
+ * UI's `GET → modify → PATCH` round-trip never trips a `null` rejection on
+ * an unset date column.
+ */
+const dateOnly = z.preprocess(
+  (v) => {
+    if (v == null) return "";
+    if (typeof v === "string") return v.trim();
+    return v;
+  },
+  z
+    .string()
+    .optional()
+    .default("")
+    .refine(
+      (v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v) || !Number.isNaN(Date.parse(v)),
+      "Expected ISO date (YYYY-MM-DD)"
+    )
+);
 
 export const employeeSchema = z
   .object({
@@ -40,20 +55,30 @@ export const employeeSchema = z
     full_name: z.string().trim().optional(),
     phone: z.string().trim().optional(),
     mobile: z.string().trim().optional(),
-    email: z.string().email().optional().or(z.literal("")),
+    email: optionalEmail,
     gender: z.string().optional().default(""),
     dob: dateOnly,
+    phone2: z.string().optional().default(""),
+    blood: z.string().optional().default(""),
     addr: z.string().optional().default(""),
+    address: z.string().optional().default(""),
     area: z.string().optional().default(""),
     city: z.string().optional().default("Ahmedabad"),
     pin: z.string().optional().default(""),
+    pincode: z.string().optional(),
+    district: z.string().optional().default(""),
+    state: z.string().optional().default(""),
     dept: z.string().optional().default(""),
     desig: z.string().optional().default(""),
     role: z.string().optional(),
     emp_type: z.string().optional().default(""),
     etype: z.string().optional(),
     shift: z.string().optional().default(""),
-    shift_type: z.enum(EMPLOYEE_SHIFT_TYPES).optional(),
+    shift_type: optionalShiftType,
+    edu: z.string().optional().default(""),
+    education: z.string().optional(),
+    exp: z.string().optional().default(""),
+    company: z.string().optional().default(""),
     join: dateOnly,
     join_date: dateOnly,
     joining_date: dateOnly,
@@ -62,9 +87,27 @@ export const employeeSchema = z
     salary: z.coerce.number().min(0, "Salary must be ≥ 0").optional().default(0),
     status: z.enum(EMPLOYEE_STATUSES).optional().default("Active"),
     active: z.boolean().optional(),
+    aadhar: z.string().optional().default(""),
+    pan: z.string().optional().default(""),
+    permaddr: z.string().optional().default(""),
+    permpin: z.string().optional().default(""),
+    permdist: z.string().optional().default(""),
+    permstate: z.string().optional().default(""),
+    presaddr: z.string().optional().default(""),
+    prespin: z.string().optional().default(""),
+    presdist: z.string().optional().default(""),
+    presstate: z.string().optional().default(""),
+    ecname: z.string().optional().default(""),
+    ecphone: z.string().optional().default(""),
+    ecrel: z.string().optional().default(""),
     relname: z.string().optional().default(""),
     relphone: z.string().optional().default(""),
-    docs: z.any().optional()
+    refname: z.string().optional().default(""),
+    refphone: z.string().optional().default(""),
+    skills: z.string().optional().default(""),
+    photo: z.any().optional(),
+    docs: z.any().optional(),
+    documents: z.any().optional()
   })
   .superRefine((v, ctx) => {
     const hasName = v.fn || v.ln || v.name || v.full_name;

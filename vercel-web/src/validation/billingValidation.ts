@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { idSchema, isoDate, moneySchema, monthPeriodSchema } from "@/validation/commonValidation";
+import {
+  idSchema,
+  isoDate,
+  moneySchema,
+  monthPeriodSchema,
+  optionalIsoDate
+} from "@/validation/commonValidation";
 
 /** Lifecycle states recognised for a billing record. */
 export const BILLING_STATUSES = ["Active", "Closed", "Cancelled", "Paused"] as const;
@@ -94,7 +100,10 @@ export const receiptSchema = z.object({
   id: idSchema.optional(),
   billing_id: idSchema,
   patient_id: z.string().optional().default(""),
-  date: z.string().optional().default(""),
+  // All date columns are normalised into ISO YYYY-MM-DD so dashboard /
+  // reports queries that use `gte('date', start).lt('date', end)` produce
+  // accurate aggregates regardless of which client wrote the row.
+  date: optionalIsoDate,
   type: z.string().optional().default(""),
   amount: moneySchema,
   method: z.string().optional().default(""),
@@ -102,8 +111,8 @@ export const receiptSchema = z.object({
   remarks: z.string().optional().default(""),
   service_type: z.string().optional().default(""),
   bill_mode: z.string().optional().default(""),
-  from_date: z.string().optional().default(""),
-  to_date: z.string().optional().default(""),
+  from_date: optionalIsoDate,
+  to_date: optionalIsoDate,
   paid_days: z.coerce.number().int().min(0).optional().default(0),
   paid_dates: z.array(z.string()).optional().default([]),
   deleted_at: z.string().optional(),
@@ -126,7 +135,10 @@ export const serviceEntryRowSchema = z.object({
   service_name: z.string().optional().default(""),
   partner: z.string().optional().default(""),
   partner_id: z.string().optional().default(""),
-  date: z.string().optional().default(""),
+  // Auto-normalised to ISO YYYY-MM-DD so per-month dashboard / report
+  // aggregates stay accurate across every code path that writes service
+  // entries (legacy duty-diary save, the duty-billing sync hook, etc.).
+  date: optionalIsoDate,
   freq: z.string().optional().default(""),
   amt: z.coerce.number().optional().default(0),
   count: z.coerce.number().optional().default(0),

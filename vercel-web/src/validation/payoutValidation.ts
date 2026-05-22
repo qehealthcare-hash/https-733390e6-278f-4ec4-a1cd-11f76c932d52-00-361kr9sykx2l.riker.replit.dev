@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { idSchema, moneySchema, monthPeriodSchema, positiveInt } from "@/validation/commonValidation";
+import {
+  idSchema,
+  moneySchema,
+  monthPeriodSchema,
+  optionalIsoDate,
+  positiveInt
+} from "@/validation/commonValidation";
 
 /** Lifecycle status recognised on a payout row. */
 export const PAYOUT_STATUSES = ["OPEN", "LOCKED", "PAID"] as const;
@@ -89,7 +95,9 @@ export type PayoutListQuery = z.infer<typeof payoutListQuerySchema>;
  * `hominal_replace_payout_charges(p_rows)` reads.
  */
 export const payoutChargeRowSchema = z.object({
-  date: z.string().optional().default(""),
+  // `date` is auto-normalised to ISO YYYY-MM-DD via `optionalIsoDate` so legacy
+  // SPA strings like "9 May 2026" don't sneak back into hh_payout_charges.
+  date: optionalIsoDate,
   partner: z.string().optional().default(""),
   partner_id: z.string().optional().default(""),
   term: z.string().optional().default(""),

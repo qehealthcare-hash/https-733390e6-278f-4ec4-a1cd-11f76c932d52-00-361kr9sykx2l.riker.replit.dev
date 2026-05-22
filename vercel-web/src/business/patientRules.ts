@@ -4,11 +4,12 @@ import type { PatientInput } from "@/validation/patientValidation";
 import { findPhoneDuplicate } from "@/business/phoneRules";
 
 export function patientToRow(input: PatientInput) {
-  return {
+  const row: Record<string, unknown> = {
     name: input.name,
     phone: input.phone,
     dob: input.dob,
     gender: input.gender,
+    blood: input.blood ?? "",
     addr: input.addr,
     area: input.area,
     city: input.city,
@@ -25,6 +26,10 @@ export function patientToRow(input: PatientInput) {
     caretaker_id: input.caretaker_id || null,
     docs: input.docs ?? undefined
   };
+  if (Object.prototype.hasOwnProperty.call(input, "photo")) {
+    row.photo = (input as { photo?: unknown }).photo ?? null;
+  }
+  return row;
 }
 
 export function patientToApi(row: Record<string, unknown>) {

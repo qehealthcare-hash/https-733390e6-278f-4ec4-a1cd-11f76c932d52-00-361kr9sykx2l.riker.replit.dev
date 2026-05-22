@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { emailSchema, idSchema, shiftTypeSchema } from "@/validation/commonValidation";
+import {
+  idSchema,
+  optionalEmail,
+  optionalShiftType,
+  shiftTypeSchema
+} from "@/validation/commonValidation";
 
 export const PATIENT_STATUSES = ["Active", "Closed", "On Hold"] as const;
 export type PatientStatus = (typeof PATIENT_STATUSES)[number];
@@ -38,6 +43,7 @@ export const patientSchema = z
     dob: z.string().max(20).optional().default(""),
     age: z.string().max(10).optional().default(""),
     gender: z.string().max(20).optional().default(""),
+    blood: z.string().max(10).optional().default(""),
     addr: z.string().max(500).optional().default(""),
     address: z.string().max(500).optional().default(""),
     area: z.string().max(120).optional().default(""),
@@ -50,12 +56,17 @@ export const patientSchema = z
     relphone2: z.string().max(20).optional().default(""),
     relname3: z.string().max(120).optional().default(""),
     relphone3: z.string().max(20).optional().default(""),
-    email: emailSchema.optional(),
+    email: optionalEmail,
     status: z.enum(PATIENT_STATUSES).optional().default("Active"),
+    // Reason text is accepted by the API (for audit) but NOT a column on
+    // hh_patients; the service layer omits it from the row write.
+    status_reason: z.string().max(120).optional().default(""),
+    status_reason_other: z.string().max(500).optional().default(""),
     shift: z.string().max(20).optional().default(""),
-    shift_type: shiftTypeSchema.optional(),
+    shift_type: optionalShiftType,
     caretaker_id: z.string().max(64).optional().default(""),
     assigned_staff_id: z.string().max(64).optional(),
+    photo: z.any().optional(),
     docs: z.any().optional()
   })
   .superRefine((v, ctx) => {

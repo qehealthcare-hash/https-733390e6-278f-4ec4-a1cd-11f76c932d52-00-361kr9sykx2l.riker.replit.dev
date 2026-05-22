@@ -1,8 +1,6 @@
 /** @type {import('next').NextConfig} */
-var nextConfig = {
-  experimental: {
-    typedRoutes: false
-  }
+const nextConfig = {
+  typedRoutes: false
 };
 
 export default nextConfig;

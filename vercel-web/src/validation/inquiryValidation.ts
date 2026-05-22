@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { emailSchema, idSchema, isoDate } from "@/validation/commonValidation";
+import { idSchema, isoDate, optionalEmail } from "@/validation/commonValidation";
 
 /**
  * Inquiry lifecycle.
@@ -108,7 +108,7 @@ export const inquirySchema = z
     followup_date: followupDateSchema,
     remarks: z.string().max(2000).optional().default(""),
     notes: z.string().max(2000).optional().default(""),
-    email: emailSchema.optional()
+    email: optionalEmail
   })
   .superRefine((v, ctx) => {
     if (!v.name && !v.patient_name) {

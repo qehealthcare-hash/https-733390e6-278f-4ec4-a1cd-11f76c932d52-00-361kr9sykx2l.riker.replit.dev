@@ -362,12 +362,23 @@ export const employeeService = {
       updated_by: ctx.actor.email
     };
 
-    if (Object.prototype.hasOwnProperty.call(input, "photo")) {
-      baseRow.photo = input.photo ?? null;
-    }
+    // NOTE: `hh_employees` has NO `photo` column. The legacy SPA used to
+    // upload a separate photo blob, but production schema stores employee
+    // documents inside `docs` (jsonb) only. We accept `photo` from callers
+    // but persist it as the first entry of `docs` for parity.
+    let nextDocs: unknown[] | undefined;
     if (Object.prototype.hasOwnProperty.call(input, "docs")) {
-      baseRow.docs = Array.isArray(input.docs) ? input.docs : [];
+      nextDocs = Array.isArray(input.docs) ? [...(input.docs as unknown[])] : [];
     }
+    if (Object.prototype.hasOwnProperty.call(input, "photo") && input.photo) {
+      nextDocs = nextDocs || [];
+      const photoEntry =
+        typeof input.photo === "object" && input.photo !== null
+          ? { kind: "photo", ...(input.photo as Record<string, unknown>) }
+          : { kind: "photo", value: input.photo };
+      nextDocs.unshift(photoEntry);
+    }
+    if (nextDocs !== undefined) baseRow.docs = nextDocs;
 
     if (!existing) {
       const insertId = input.id || newId.employee();

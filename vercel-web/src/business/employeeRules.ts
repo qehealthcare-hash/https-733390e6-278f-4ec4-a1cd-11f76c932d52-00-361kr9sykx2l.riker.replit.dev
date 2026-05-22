@@ -43,28 +43,80 @@ function leaveDateForStatus(status: EmployeeStatus, existing?: string | null): s
 
 /** DB row shape — only columns that exist on production `hh_employees`. */
 export function employeeToRow(input: EmployeeInput) {
+  const i = input as EmployeeInput & {
+    phone2?: string;
+    blood?: string;
+    address?: string;
+    district?: string;
+    state?: string;
+    edu?: string;
+    education?: string;
+    exp?: string;
+    company?: string;
+    aadhar?: string;
+    pan?: string;
+    permaddr?: string;
+    permpin?: string;
+    permdist?: string;
+    permstate?: string;
+    presaddr?: string;
+    prespin?: string;
+    presdist?: string;
+    presstate?: string;
+    ecname?: string;
+    ecphone?: string;
+    ecrel?: string;
+    refname?: string;
+    refphone?: string;
+    skills?: string;
+    photo?: unknown;
+    documents?: unknown;
+  };
   const row: Record<string, unknown> = {
     fn: input.fn,
     mn: input.mn,
     ln: input.ln,
     phone: input.phone,
+    phone2: i.phone2 || "",
     email: input.email || "",
     gender: input.gender,
     dob: input.dob,
+    blood: i.blood || "",
     area: input.area,
     pin: input.pin,
+    district: i.district || "",
+    state: i.state || "",
     dept: input.dept,
     desig: input.desig,
     emp_type: input.emp_type,
     etype: input.etype,
     shift: input.shift,
+    edu: i.edu || i.education || "",
+    exp: i.exp || "",
+    company: i.company || "",
+    aadhar: i.aadhar || "",
+    pan: i.pan || "",
+    permaddr: i.permaddr || "",
+    permpin: i.permpin || "",
+    permdist: i.permdist || "",
+    permstate: i.permstate || "",
+    presaddr: i.presaddr || "",
+    prespin: i.prespin || "",
+    presdist: i.presdist || "",
+    presstate: i.presstate || "",
+    ecname: i.ecname || "",
+    ecphone: i.ecphone || "",
+    ecrel: i.ecrel || "",
+    refname: i.refname || i.ecname || "",
+    refphone: i.refphone || i.ecphone || "",
+    skills: i.skills || "",
     salary: input.salary != null ? String(input.salary) : "",
     join_date: input.join_date || input.join || "",
     leave_date: leaveDateForStatus(
       input.status,
       input.leave_date || input.leave || ""
     ),
-    docs: input.docs ?? undefined,
+    docs: (input.docs ?? i.documents) ?? undefined,
     updated_by: undefined
   };
   return row;

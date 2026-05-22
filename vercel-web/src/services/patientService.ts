@@ -318,6 +318,11 @@ export const patientService = {
       if (!dup.success) return passFailure(dup);
     }
 
+    // NOTE: `hh_patients` columns are: id, name, email, phone, dob, gender,
+    // blood, addr, area, city, pin, relname/relphone (x3), status, photo,
+    // docs, caretaker_id, shift, created, created_at, updated_at,
+    // created_by, updated_by. `status_reason`, `status_reason_other`, and
+    // `address` are NOT columns — reasons live in `hh_audit_logs`.
     const baseRow: JsonRow = {
       name: input.name,
       email: input.email || "",
@@ -336,9 +341,6 @@ export const patientService = {
       relname3: input.relname3 || "",
       relphone3: input.relphone3 || "",
       status: input.status || "Active",
-      status_reason: input.status_reason || "",
-      status_reason_other: input.status_reason_other || "",
-      address: input.address || input.addr || "",
       updated_by: ctx.actor.email
     };
 
