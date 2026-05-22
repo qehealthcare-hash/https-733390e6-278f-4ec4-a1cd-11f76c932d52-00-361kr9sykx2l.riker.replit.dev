@@ -8,20 +8,54 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useRealtimeResource } from "@/hooks/use-realtime-resource";
 import { useAuth } from "@/components/providers/auth-provider";
 import { requestWithOfflineFallback } from "@/lib/api-client";
-import { educationOptions, employeeRoleOptions, shiftOptions } from "@/lib/crm-options";
-import { formatCurrency, formatMonth, slugToText } from "@/lib/formatters";
+import {
+  bloodGroupOptions,
+  departmentOptions,
+  educationOptions,
+  employeeRoleOptions,
+  employeeStatusOptions,
+  employeeTypeOptions,
+  shiftOptions
+} from "@/lib/crm-options";
+import { formatCurrency, formatDate, slugToText } from "@/lib/formatters";
 import { uploadDocument } from "@/lib/uploads";
 
 function createInitialForm() {
   return {
     id: "",
-    full_name: "",
+    fn: "",
+    mn: "",
+    ln: "",
+    email: "",
     mobile: "",
-    address: "",
+    phone2: "",
+    gender: "Female",
+    dob: "",
+    blood: "Unknown",
+    dept: "NURSING",
     role: "NURSE",
+    emp_type: "FULL_TIME",
     education: "ILLITERATE",
     shift_type: "DAY",
-    active: true,
+    join_date: new Date().toISOString().slice(0, 10),
+    leave_date: "",
+    exp: "",
+    salary: 0,
+    aadhar: "",
+    pan: "",
+    permaddr: "",
+    presaddr: "",
+    area: "",
+    city: "Ahmedabad",
+    pin: "",
+    district: "",
+    state: "Gujarat",
+    ecname: "",
+    ecphone: "",
+    ecrel: "",
+    skills: "",
+    status: "Active",
+    photo: null,
     documents: []
   };
 }
@@ -37,19 +71,25 @@ export default function EmployeesPage() {
   var [busy, setBusy] = useState(false);
   var [search, setSearch] = useState("");
   var [roleFilter, setRoleFilter] = useState("");
+  var [statusFilter, setStatusFilter] = useState("");
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
 
   var filtered = useMemo(
     function () {
       return resource.data.filter(function (row) {
-        var hay = [row.full_name, row.mobile, row.address, row.role, row.education].join(" ").toLowerCase();
+        var name = (row.full_name || row.name || (row.fn || "") + " " + (row.ln || "")).trim();
+        var hay = [name, row.mobile || row.phone, row.permaddr || row.addr, row.role || row.desig, row.dept, row.skills]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
         var matchesSearch = !search || hay.indexOf(search.toLowerCase()) >= 0;
-        var matchesRole = !roleFilter || row.role === roleFilter;
-        return matchesSearch && matchesRole;
+        var matchesRole = !roleFilter || (row.role || row.desig) === roleFilter;
+        var matchesStatus = !statusFilter || row.status === statusFilter;
+        return matchesSearch && matchesRole && matchesStatus;
       });
     },
-    [resource.data, search, roleFilter]
+    [resource.data, search, roleFilter, statusFilter]
   );
 
   function updateField(name, value) {
@@ -65,16 +105,44 @@ export default function EmployeesPage() {
   }
 
   function editEmployee(row) {
+    var fullName = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
+    var parts = fullName.split(/\s+/).filter(Boolean);
     setForm({
       id: row.id,
-      full_name: row.full_name || "",
-      mobile: row.mobile || "",
-      address: row.address || "",
-      role: row.role || "NURSE",
-      education: row.education || "ILLITERATE",
-      shift_type: row.shift_type || "DAY",
-      active: row.active !== false,
-      documents: row.employee_documents || []
+      fn: row.fn || parts[0] || "",
+      mn: row.mn || (parts.length > 2 ? parts.slice(1, -1).join(" ") : ""),
+      ln: row.ln || (parts.length > 1 ? parts[parts.length - 1] : ""),
+      email: row.email || "",
+      mobile: row.mobile || row.phone || "",
+      phone2: row.phone2 || "",
+      gender: row.gender || "Female",
+      dob: row.dob || "",
+      blood: row.blood || "Unknown",
+      dept: row.dept || "NURSING",
+      role: row.role || row.desig || "NURSE",
+      emp_type: row.emp_type || row.etype || "FULL_TIME",
+      education: row.education || row.edu || "ILLITERATE",
+      shift_type: row.shift_type || row.shift || "DAY",
+      join_date: row.join_date || row.joining_date || row.join || "",
+      leave_date: row.leave_date || row.leave || "",
+      exp: row.exp || "",
+      salary: row.salary || 0,
+      aadhar: row.aadhar || "",
+      pan: row.pan || "",
+      permaddr: row.permaddr || row.addr || row.address || "",
+      presaddr: row.presaddr || "",
+      area: row.area || "",
+      city: row.city || "Ahmedabad",
+      pin: row.pin || row.pincode || "",
+      district: row.district || "",
+      state: row.state || "Gujarat",
+      ecname: row.ecname || row.relname || "",
+      ecphone: row.ecphone || row.relphone || "",
+      ecrel: row.ecrel || "",
+      skills: row.skills || "",
+      status: row.status || (row.active === false ? "Inactive" : "Active"),
+      photo: row.photo && typeof row.photo === "object" ? row.photo : null,
+      documents: row.employee_documents || row.docs || []
     });
     setError("");
     setMessage("");
@@ -98,14 +166,35 @@ export default function EmployeesPage() {
         );
       }
       setForm(function (current) {
-        return {
-          ...current,
-          documents: current.documents.concat(uploaded)
-        };
+        return { ...current, documents: current.documents.concat(uploaded) };
       });
       setMessage("Employee documents uploaded");
     } catch (uploadError) {
       setError(uploadError.message || "Unable to upload employee documents");
+    } finally {
+      setBusy(false);
+      event.target.value = "";
+    }
+  }
+
+  async function handlePhotoUpload(event) {
+    var file = (event.target.files || [])[0];
+    if (!file) return;
+    setBusy(true);
+    setError("");
+    try {
+      var uploaded = await uploadDocument({
+        bucket: "employee-documents",
+        file: file,
+        session: auth.session,
+        supabase: auth.supabase
+      });
+      setForm(function (current) {
+        return { ...current, photo: uploaded };
+      });
+      setMessage("Photo uploaded");
+    } catch (uploadError) {
+      setError(uploadError.message || "Unable to upload photo");
     } finally {
       setBusy(false);
       event.target.value = "";
@@ -121,21 +210,63 @@ export default function EmployeesPage() {
       if (!form.documents.length) {
         throw new Error("At least one employee document is required");
       }
+      var fullName = [form.fn, form.mn, form.ln].filter(Boolean).join(" ").trim();
+      var payload = {
+        fn: form.fn,
+        mn: form.mn,
+        ln: form.ln,
+        name: fullName,
+        full_name: fullName,
+        email: form.email || "",
+        phone: form.mobile,
+        mobile: form.mobile,
+        phone2: form.phone2 || "",
+        gender: form.gender || "",
+        dob: form.dob || "",
+        blood: form.blood || "",
+        dept: form.dept || "",
+        desig: form.role,
+        role: form.role,
+        emp_type: form.emp_type || "",
+        etype: form.emp_type || "",
+        edu: form.education,
+        education: form.education,
+        shift: form.shift_type,
+        shift_type: form.shift_type,
+        join: form.join_date || "",
+        join_date: form.join_date || "",
+        joining_date: form.join_date || "",
+        leave: form.leave_date || "",
+        leave_date: form.leave_date || "",
+        exp: form.exp || "",
+        salary: Number(form.salary || 0),
+        aadhar: form.aadhar || "",
+        pan: form.pan || "",
+        permaddr: form.permaddr || "",
+        presaddr: form.presaddr || "",
+        addr: form.permaddr || form.presaddr || "",
+        address: form.permaddr || form.presaddr || "",
+        area: form.area || "",
+        city: form.city || "",
+        pin: form.pin || "",
+        pincode: form.pin || "",
+        district: form.district || "",
+        state: form.state || "",
+        ecname: form.ecname || "",
+        ecphone: form.ecphone || "",
+        ecrel: form.ecrel || "",
+        relname: form.ecname || "",
+        relphone: form.ecphone || "",
+        skills: form.skills || "",
+        status: form.status,
+        active: form.status === "Active",
+        photo: form.photo || undefined,
+        docs: form.documents,
+        documents: form.documents
+      };
       await requestWithOfflineFallback(
         form.id ? "/employees/" + form.id : "/employees",
-        {
-          method: form.id ? "PUT" : "POST",
-          body: {
-            full_name: form.full_name,
-            mobile: form.mobile,
-            address: form.address,
-            role: form.role,
-            education: form.education,
-            shift_type: form.shift_type,
-            active: form.active,
-            documents: form.documents
-          }
-        },
+        { method: form.id ? "PUT" : "POST", body: payload },
         auth.session
       );
       await resource.reload();
@@ -148,62 +279,40 @@ export default function EmployeesPage() {
     }
   }
 
-  async function deactivateEmployee(id) {
-    if (!window.confirm("Deactivate this employee? Historical duties, attendance and payouts will be kept.")) return;
+  async function changeStatus(id, nextStatus) {
+    var reason = "";
+    if (nextStatus !== "Active") {
+      reason = window.prompt("Reason for " + nextStatus + " (audited)", "") || "";
+    }
     setBusy(true);
     setError("");
-    setMessage("");
     try {
       await requestWithOfflineFallback(
         "/employees/" + id + "/status",
-        { method: "POST", body: { status: "Inactive", reason: "Deactivated from registry" } },
+        { method: "POST", body: { status: nextStatus, reason: reason } },
         auth.session
       );
       await resource.reload();
       if (form.id === id) resetForm();
-      setMessage("Employee deactivated");
-    } catch (deactivateError) {
-      setError(deactivateError.message || "Unable to deactivate employee");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function activateEmployee(id) {
-    setBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      await requestWithOfflineFallback(
-        "/employees/" + id + "/status",
-        { method: "POST", body: { status: "Active" } },
-        auth.session
-      );
-      await resource.reload();
-      setMessage("Employee activated");
-    } catch (activateError) {
-      setError(activateError.message || "Unable to activate employee");
+      setMessage("Employee → " + nextStatus);
+    } catch (err) {
+      setError(err.message || "Unable to change status");
     } finally {
       setBusy(false);
     }
   }
 
   async function deleteEmployee(id) {
-    if (!window.confirm("Delete this employee? If they have duties, payouts, or attendance, they will be deactivated instead.")) return;
+    if (!window.confirm("Delete this employee? If they have history, they will be deactivated instead.")) return;
     setBusy(true);
     setError("");
-    setMessage("");
     try {
       var result = await requestWithOfflineFallback("/employees/" + id, { method: "DELETE" }, auth.session);
       await resource.reload();
       if (form.id === id) resetForm();
-      if (result && result.mode === "soft") {
-        setMessage("Employee deactivated (historical data preserved).");
-      } else {
-        setMessage("Employee deleted");
-      }
-    } catch (deleteError) {
-      setError(deleteError.message || "Unable to delete employee");
+      setMessage(result && result.mode === "soft" ? "Employee deactivated (history preserved)" : "Employee deleted");
+    } catch (err) {
+      setError(err.message || "Unable to delete employee");
     } finally {
       setBusy(false);
     }
@@ -213,63 +322,211 @@ export default function EmployeesPage() {
     <AuthGuard permission="employees.read">
       <AppShell title="Employees">
         <div className="page-split">
-          <ModuleShell title={form.id ? "Edit Employee" : "Add Employee"} description="Nurse, attendant, staff, and accountant records with mandatory documents">
+          <ModuleShell
+            title={form.id ? "Edit employee" : "Add employee"}
+            description="Full HR profile: personal, ID, address, job, skills, emergency contact, photo and documents."
+          >
             <form className="stack" onSubmit={handleSubmit}>
-              <div className="grid-2">
+              <strong>Personal</strong>
+              <div className="grid-3">
                 <div className="field">
-                  <label>Name</label>
-                  <input value={form.full_name} onChange={function (event) { updateField("full_name", event.target.value); }} required />
+                  <label>First name</label>
+                  <input value={form.fn} onChange={function (event) { updateField("fn", event.target.value); }} required />
                 </div>
+                <div className="field">
+                  <label>Middle name</label>
+                  <input value={form.mn} onChange={function (event) { updateField("mn", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>Last name</label>
+                  <input value={form.ln} onChange={function (event) { updateField("ln", event.target.value); }} />
+                </div>
+              </div>
+              <div className="grid-3">
                 <div className="field">
                   <label>Mobile</label>
                   <input value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Role</label>
+                  <label>Alternate phone</label>
+                  <input value={form.phone2} onChange={function (event) { updateField("phone2", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>Email</label>
+                  <input type="email" value={form.email} onChange={function (event) { updateField("email", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>Date of birth</label>
+                  <input type="date" value={form.dob} onChange={function (event) { updateField("dob", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>Gender</label>
+                  <select value={form.gender} onChange={function (event) { updateField("gender", event.target.value); }}>
+                    <option>Female</option>
+                    <option>Male</option>
+                    <option>Other</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Blood group</label>
+                  <select value={form.blood} onChange={function (event) { updateField("blood", event.target.value); }}>
+                    {bloodGroupOptions.map(function (b) {
+                      return <option key={b} value={b}>{b}</option>;
+                    })}
+                  </select>
+                </div>
+              </div>
+
+              <strong>Identification</strong>
+              <div className="grid-2">
+                <div className="field">
+                  <label>Aadhar</label>
+                  <input value={form.aadhar} onChange={function (event) { updateField("aadhar", event.target.value); }} placeholder="1234 5678 9012" />
+                </div>
+                <div className="field">
+                  <label>PAN</label>
+                  <input value={form.pan} onChange={function (event) { updateField("pan", event.target.value.toUpperCase()); }} placeholder="ABCDE1234F" />
+                </div>
+              </div>
+
+              <strong>Address</strong>
+              <div className="field">
+                <label>Permanent address</label>
+                <textarea rows="2" value={form.permaddr} onChange={function (event) { updateField("permaddr", event.target.value); }} />
+              </div>
+              <div className="field">
+                <label>Present address</label>
+                <textarea rows="2" value={form.presaddr} onChange={function (event) { updateField("presaddr", event.target.value); }} />
+              </div>
+              <div className="grid-3">
+                <div className="field">
+                  <label>Area</label>
+                  <input value={form.area} onChange={function (event) { updateField("area", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>City</label>
+                  <input value={form.city} onChange={function (event) { updateField("city", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>Pincode</label>
+                  <input value={form.pin} onChange={function (event) { updateField("pin", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>District</label>
+                  <input value={form.district} onChange={function (event) { updateField("district", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>State</label>
+                  <input value={form.state} onChange={function (event) { updateField("state", event.target.value); }} />
+                </div>
+              </div>
+
+              <strong>Job</strong>
+              <div className="grid-3">
+                <div className="field">
+                  <label>Department</label>
+                  <select value={form.dept} onChange={function (event) { updateField("dept", event.target.value); }}>
+                    {departmentOptions.map(function (d) {
+                      return <option key={d.value} value={d.value}>{d.label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Role / designation</label>
                   <select value={form.role} onChange={function (event) { updateField("role", event.target.value); }}>
-                    {employeeRoleOptions.map(function (item) {
-                      return <option key={item.value} value={item.value}>{item.label}</option>;
+                    {employeeRoleOptions.map(function (r) {
+                      return <option key={r.value} value={r.value}>{r.label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Employment type</label>
+                  <select value={form.emp_type} onChange={function (event) { updateField("emp_type", event.target.value); }}>
+                    {employeeTypeOptions.map(function (e) {
+                      return <option key={e.value} value={e.value}>{e.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
                   <label>Education</label>
                   <select value={form.education} onChange={function (event) { updateField("education", event.target.value); }}>
-                    {educationOptions.map(function (item) {
-                      return <option key={item.value} value={item.value}>{item.label}</option>;
+                    {educationOptions.map(function (e) {
+                      return <option key={e.value} value={e.value}>{e.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
                   <label>Shift</label>
                   <select value={form.shift_type} onChange={function (event) { updateField("shift_type", event.target.value); }}>
-                    {shiftOptions.map(function (item) {
-                      return <option key={item.value} value={item.value}>{item.label}</option>;
+                    {shiftOptions.map(function (s) {
+                      return <option key={s.value} value={s.value}>{s.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Status</label>
-                  <select value={form.active ? "ACTIVE" : "INACTIVE"} onChange={function (event) { updateField("active", event.target.value === "ACTIVE"); }}>
-                    <option value="ACTIVE">Active</option>
-                    <option value="INACTIVE">Inactive</option>
-                  </select>
+                  <label>Salary (monthly)</label>
+                  <input type="number" min="0" value={form.salary} onChange={function (event) { updateField("salary", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>Joining date</label>
+                  <input type="date" value={form.join_date} onChange={function (event) { updateField("join_date", event.target.value); }} required />
+                </div>
+                <div className="field">
+                  <label>Leaving date</label>
+                  <input type="date" value={form.leave_date} onChange={function (event) { updateField("leave_date", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>Experience</label>
+                  <input value={form.exp} onChange={function (event) { updateField("exp", event.target.value); }} placeholder="e.g. 3 years" />
                 </div>
               </div>
               <div className="field">
-                <label>Address</label>
-                <textarea rows="3" value={form.address} onChange={function (event) { updateField("address", event.target.value); }} required />
+                <label>Skills</label>
+                <textarea rows="2" value={form.skills} onChange={function (event) { updateField("skills", event.target.value); }} placeholder="e.g. Wound care, IV, BP, post-op care" />
+              </div>
+
+              <strong>Emergency contact</strong>
+              <div className="grid-3">
+                <div className="field">
+                  <label>Name</label>
+                  <input value={form.ecname} onChange={function (event) { updateField("ecname", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>Phone</label>
+                  <input value={form.ecphone} onChange={function (event) { updateField("ecphone", event.target.value); }} />
+                </div>
+                <div className="field">
+                  <label>Relation</label>
+                  <input value={form.ecrel} onChange={function (event) { updateField("ecrel", event.target.value); }} placeholder="e.g. Spouse, Father" />
+                </div>
+              </div>
+
+              <strong>Status & files</strong>
+              <div className="grid-2">
+                <div className="field">
+                  <label>Status</label>
+                  <select value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
+                    {employeeStatusOptions.map(function (s) {
+                      return <option key={s.value} value={s.value}>{s.label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Photo</label>
+                  <input type="file" accept="image/*" onChange={handlePhotoUpload} />
+                  {form.photo ? <small>{form.photo.file_name || form.photo.path}</small> : null}
+                </div>
               </div>
               <div className="field">
                 <label>Documents</label>
                 <input type="file" multiple onChange={handleUpload} />
-                <small>Aadhar, PAN, certificates, and other supporting staff files.</small>
+                <small>Aadhar, PAN, certificates, contract, photos.</small>
               </div>
               <div className="document-list">
                 {form.documents.map(function (doc, index) {
                   return (
                     <div className="document-item" key={doc.path || index}>
-                      <div>{doc.file_name}</div>
+                      <div>{doc.file_name || doc.path}</div>
                       <button
                         className="button ghost"
                         type="button"
@@ -294,7 +551,7 @@ export default function EmployeesPage() {
               {message ? <div className="success-text">{message}</div> : null}
               <div className="button-row">
                 <button className="button primary" type="submit" disabled={busy}>
-                  {busy ? "Saving..." : form.id ? "Update Employee" : "Create Employee"}
+                  {busy ? "Saving..." : form.id ? "Update employee" : "Create employee"}
                 </button>
                 <button className="button secondary" type="button" onClick={resetForm}>
                   Clear
@@ -304,18 +561,31 @@ export default function EmployeesPage() {
           </ModuleShell>
 
           <div className="page-grid">
-            <ModuleShell title="Employee Registry" description="Document-backed workforce master with live sync">
+            <ModuleShell title="Workforce" description="Filter, edit, or change status. Soft-delete preserves history.">
               <div className="toolbar">
                 <div className="field">
                   <label>Search</label>
-                  <input value={search} onChange={function (event) { setSearch(event.target.value); }} placeholder="Name, role, mobile or address" />
+                  <input
+                    value={search}
+                    onChange={function (event) { setSearch(event.target.value); }}
+                    placeholder="Name, role, mobile, skills"
+                  />
                 </div>
                 <div className="field">
                   <label>Role</label>
                   <select value={roleFilter} onChange={function (event) { setRoleFilter(event.target.value); }}>
                     <option value="">All</option>
-                    {employeeRoleOptions.map(function (item) {
-                      return <option key={item.value} value={item.value}>{item.label}</option>;
+                    {employeeRoleOptions.map(function (r) {
+                      return <option key={r.value} value={r.value}>{r.label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Status</label>
+                  <select value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
+                    <option value="">All</option>
+                    {employeeStatusOptions.map(function (s) {
+                      return <option key={s.value} value={s.value}>{s.label}</option>;
                     })}
                   </select>
                 </div>
@@ -323,50 +593,59 @@ export default function EmployeesPage() {
               {!filtered.length ? (
                 <EmptyState
                   title={resource.loading ? "Loading employees..." : "No matching staff"}
-                  description="Your field workforce will appear here with their document-backed profiles and payout readiness."
+                  description="Your field workforce will appear here with their HR profile and payout readiness."
                 />
               ) : (
                 <div className="record-list">
                   {filtered.map(function (row) {
-                    var payoutRuns = row.payout_runs || [];
-                    var totalPending = payoutRuns.reduce(function (sum, run) {
-                      return sum + Number(run.pending_amount || 0);
-                    }, 0);
+                    var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
+                    var isActive = row.status ? row.status === "Active" : row.active !== false;
                     return (
                       <div className="record-card" key={row.id}>
                         <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                           <div>
-                            <h3>{row.full_name}</h3>
+                            <h3>{name || row.id}</h3>
                             <div className="record-meta">
-                              <span>{row.mobile}</span>
-                              <span>{slugToText(row.role)}</span>
-                              <span>{slugToText(row.shift_type)}</span>
+                              <span>{row.mobile || row.phone || "-"}</span>
+                              <span>{slugToText(row.role || row.desig || "")}</span>
+                              <span>{slugToText(row.shift_type || row.shift || "")}</span>
+                              {row.salary ? <span>{formatCurrency(row.salary)}/mo</span> : null}
                             </div>
                           </div>
-                          <span className={"status " + (row.active ? "active" : "paused")}>{row.active ? "Active" : "Inactive"}</span>
+                          <span className={"status " + (isActive ? "active" : "paused")}>{row.status || (isActive ? "Active" : "Inactive")}</span>
                         </div>
                         <div className="record-meta" style={{ marginTop: 12 }}>
-                          <span>{slugToText(row.education)}</span>
-                          <span>{row.employee_documents?.length || 0} documents</span>
-                          <span>Pending payout {formatCurrency(totalPending)}</span>
+                          <span>{slugToText(row.education || row.edu || "")}</span>
+                          {row.join_date || row.join ? <span>Joined {formatDate(row.join_date || row.join)}</span> : null}
+                          {row.aadhar ? <span>Aadhar ***{String(row.aadhar).slice(-4)}</span> : null}
+                          {row.pan ? <span>PAN {row.pan}</span> : null}
+                          <span>{(row.employee_documents || row.docs || []).length || 0} docs</span>
                         </div>
-                        {row.payout_runs?.length ? (
+                        {row.skills ? (
                           <div className="helper-box" style={{ marginTop: 12 }}>
-                            Latest payout cycle: {formatMonth(row.payout_runs[0].payout_month)} | Pending {formatCurrency(row.payout_runs[0].pending_amount)}
+                            <strong>Skills:</strong> {row.skills}
                           </div>
                         ) : null}
                         <div className="button-row" style={{ marginTop: 12 }}>
                           <button className="button secondary" type="button" onClick={function () { editEmployee(row); }}>
                             Edit
                           </button>
-                          {row.active === false || row.status === "Inactive" ? (
-                            <button className="button primary" type="button" onClick={function () { activateEmployee(row.id); }}>
+                          {!isActive ? (
+                            <button className="button primary" type="button" onClick={function () { changeStatus(row.id, "Active"); }}>
                               Activate
                             </button>
                           ) : (
-                            <button className="button ghost" type="button" onClick={function () { deactivateEmployee(row.id); }}>
-                              Deactivate
-                            </button>
+                            <>
+                              <button className="button secondary" type="button" onClick={function () { changeStatus(row.id, "OnLeave"); }}>
+                                On leave
+                              </button>
+                              <button className="button secondary" type="button" onClick={function () { changeStatus(row.id, "Suspended"); }}>
+                                Suspend
+                              </button>
+                              <button className="button ghost" type="button" onClick={function () { changeStatus(row.id, "Inactive"); }}>
+                                Deactivate
+                              </button>
+                            </>
                           )}
                           <button className="button danger" type="button" onClick={function () { deleteEmployee(row.id); }}>
                             Delete

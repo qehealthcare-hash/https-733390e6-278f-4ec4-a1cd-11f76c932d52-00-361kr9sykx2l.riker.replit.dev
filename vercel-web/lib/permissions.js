@@ -13,7 +13,7 @@ function normalizeRole(role) {
 }
 
 var rolePermissions = {
-  ADMIN: ["*", "audits.read"],
+  ADMIN: ["*", "audits.read", "users.read", "users.write", "settings.read", "settings.write", "doctors.read", "doctors.write", "vendors.read", "vendors.write"],
   STAFF: [
     "dashboard.read",
     "employees.read",
@@ -28,6 +28,8 @@ var rolePermissions = {
     "duties.write",
     "attendance.read",
     "attendance.write",
+    "doctors.read",
+    "vendors.read",
     "reports.read",
     "audits.read"
   ],
@@ -40,6 +42,9 @@ var rolePermissions = {
     "payouts.read",
     "payouts.write",
     "attendance.read",
+    "doctors.read",
+    "vendors.read",
+    "vendors.write",
     "reports.read",
     "audits.read"
   ],

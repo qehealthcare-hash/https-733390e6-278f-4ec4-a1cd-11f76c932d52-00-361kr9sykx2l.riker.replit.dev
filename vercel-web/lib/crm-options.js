@@ -2,7 +2,30 @@ export const employeeRoleOptions = [
   { value: "NURSE", label: "Nurse" },
   { value: "ATTENDANT", label: "Attendant" },
   { value: "STAFF", label: "Staff" },
-  { value: "ACCOUNTANT", label: "Accountant" }
+  { value: "ACCOUNTANT", label: "Accountant" },
+  { value: "OTHER", label: "Other" }
+];
+
+export const employeeStatusOptions = [
+  { value: "Active", label: "Active" },
+  { value: "OnLeave", label: "On leave" },
+  { value: "Suspended", label: "Suspended" },
+  { value: "Inactive", label: "Inactive" }
+];
+
+export const employeeTypeOptions = [
+  { value: "FULL_TIME", label: "Full-time" },
+  { value: "PART_TIME", label: "Part-time" },
+  { value: "CONTRACT", label: "Contract" },
+  { value: "INTERN", label: "Intern" }
+];
+
+export const departmentOptions = [
+  { value: "NURSING", label: "Nursing" },
+  { value: "ATTENDANT", label: "Attendant" },
+  { value: "ADMIN", label: "Admin" },
+  { value: "ACCOUNTS", label: "Accounts" },
+  { value: "OPS", label: "Operations" }
 ];
 
 export const educationOptions = [
@@ -19,9 +42,23 @@ export const shiftOptions = [
 ];
 
 export const patientStatusOptions = [
-  { value: "ACTIVE", label: "Active" },
-  { value: "CLOSED", label: "Closed" }
+  { value: "Active", label: "Active" },
+  { value: "On Hold", label: "On Hold" },
+  { value: "Closed", label: "Closed" }
 ];
+
+export const patientCloseReasonOptions = [
+  "Recovered",
+  "Discharged",
+  "Deceased",
+  "Discontinued",
+  "Cost Issues",
+  "Service Quality",
+  "Transferred",
+  "Other"
+];
+
+export const bloodGroupOptions = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Unknown"];
 
 export const inquirySourceOptions = [
   { value: "FACEBOOK", label: "Facebook" },
