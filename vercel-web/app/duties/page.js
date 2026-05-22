@@ -178,6 +178,35 @@ export default function DutiesPage() {
     }
   }
 
+  async function generateBillFromDuty(row) {
+    var serviceName = window.prompt(
+      "Service name for the billing entry",
+      row.service_type || "Caretaker"
+    );
+    if (!serviceName) return;
+    setBusy(true);
+    setError("");
+    try {
+      var data = await requestWithOfflineFallback(
+        "/billings/generate",
+        {
+          method: "POST",
+          body: { duty_id: row.id, service_name: serviceName }
+        },
+        auth.session
+      );
+      if (data && data.duplicate) {
+        setMessage("Duty already billed — entry reused");
+      } else {
+        setMessage("Billing entry generated");
+      }
+    } catch (err) {
+      setError(err.message || "Could not generate billing entry");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <AuthGuard permission="duties.read">
       <AppShell title="Duty calendar">
@@ -383,6 +412,17 @@ export default function DutiesPage() {
                               onClick={function () { runDutyAction(row.id, "check-out"); }}
                             >
                               Check out
+                            </button>
+                          ) : null}
+                          {row.status === "COMPLETED" || row.status === "IN_PROGRESS" ? (
+                            <button
+                              className="button secondary"
+                              type="button"
+                              disabled={busy}
+                              onClick={function () { generateBillFromDuty(row); }}
+                              title="Generate a service-entry in the patient's active bill"
+                            >
+                              Bill it
                             </button>
                           ) : null}
                           {row.status !== "CANCELLED" && row.status !== "COMPLETED" ? (
