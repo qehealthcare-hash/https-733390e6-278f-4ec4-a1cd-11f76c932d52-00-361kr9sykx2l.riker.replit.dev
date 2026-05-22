@@ -6,12 +6,37 @@ import {
   optionalText
 } from "@/validation/commonValidation";
 
+/**
+ * Optional 0-10 performance score. Accepts numbers, numeric strings,
+ * empty strings (treated as "not set"), null/undefined.
+ */
+const optionalScore = z.preprocess(
+  (v) => {
+    if (v == null) return undefined;
+    if (typeof v === "string") {
+      const trimmed = v.trim();
+      if (!trimmed) return undefined;
+      const n = Number(trimmed);
+      return Number.isFinite(n) ? n : trimmed;
+    }
+    return v;
+  },
+  z.number().min(0, "score must be ≥ 0").max(10, "score must be ≤ 10").optional()
+);
+
 /** Status values the API will accept. Inactive replaces hard-delete. */
 export const EMPLOYEE_STATUSES = ["Active", "Inactive", "OnLeave", "Suspended"] as const;
 export type EmployeeStatus = (typeof EMPLOYEE_STATUSES)[number];
 
-/** Shift values aligned with `crm-options.js` (DAY/NIGHT/24H/FULL). */
-export const EMPLOYEE_SHIFT_TYPES = ["DAY", "NIGHT", "24H", "FULL"] as const;
+/** Shift values aligned with `crm-options.js`. */
+export const EMPLOYEE_SHIFT_TYPES = [
+  "DAY",
+  "NIGHT",
+  "24H",
+  "FULL",
+  "ONE_TIME",
+  "CUSTOM"
+] as const;
 
 /** Designation / role catalogue. Keep loose: legacy data uses many strings. */
 export const EMPLOYEE_ROLES = ["NURSE", "ATTENDANT", "STAFF", "ACCOUNTANT", "OTHER"] as const;
@@ -105,6 +130,19 @@ export const employeeSchema = z
     refname: z.string().optional().default(""),
     refphone: z.string().optional().default(""),
     skills: z.string().optional().default(""),
+    /**
+     * Performance score (1-10). Three components mirror the legacy CRM:
+     * - score_experience  : skill / years-on-job
+     * - score_behaviour   : on-floor behaviour with patient & family
+     * - score_testimonial : patient / supervisor feedback
+     * `score_total` is the average of the three; we accept it on write so the
+     * client can show the value immediately without a round-trip, but the
+     * server keeps it consistent with the three components.
+     */
+    score_experience: optionalScore,
+    score_behaviour: optionalScore,
+    score_testimonial: optionalScore,
+    score_total: optionalScore,
     photo: z.any().optional(),
     docs: z.any().optional(),
     documents: z.any().optional()
@@ -146,6 +184,12 @@ export const employeeSchema = z
     const join = v.join || v.join_date || v.joining_date || "";
     const leave = v.leave || v.leave_date || "";
     const status: EmployeeStatus = v.status ?? (v.active === false ? "Inactive" : "Active");
+    const provided = [v.score_experience, v.score_behaviour, v.score_testimonial].filter(
+      (n): n is number => typeof n === "number"
+    );
+    const computedTotal = provided.length
+      ? Math.round((provided.reduce((a, b) => a + b, 0) / provided.length) * 100) / 100
+      : v.score_total;
     return {
       ...v,
       fn: v.fn || parts[0] || "",
@@ -163,7 +207,11 @@ export const employeeSchema = z
       joining_date: join,
       leave,
       leave_date: leave,
-      status
+      status,
+      score_experience: v.score_experience,
+      score_behaviour: v.score_behaviour,
+      score_testimonial: v.score_testimonial,
+      score_total: computedTotal
     };
   });
 

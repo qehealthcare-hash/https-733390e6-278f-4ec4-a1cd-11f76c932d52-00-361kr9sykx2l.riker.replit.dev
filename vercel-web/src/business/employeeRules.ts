@@ -117,6 +117,10 @@ export function employeeToRow(input: EmployeeInput) {
       input.leave_date || input.leave || ""
     ),
     docs: (input.docs ?? i.documents) ?? undefined,
+    score_experience: input.score_experience ?? null,
+    score_behaviour: input.score_behaviour ?? null,
+    score_testimonial: input.score_testimonial ?? null,
+    score_total: input.score_total ?? null,
     updated_by: undefined
   };
   return row;
@@ -160,6 +164,10 @@ export function employeeToApi(row: Record<string, unknown>) {
     ecname: row.ecname || "",
     ecphone: row.ecphone || "",
     docs: row.docs || [],
+    score_experience: row.score_experience != null ? Number(row.score_experience) : null,
+    score_behaviour: row.score_behaviour != null ? Number(row.score_behaviour) : null,
+    score_testimonial: row.score_testimonial != null ? Number(row.score_testimonial) : null,
+    score_total: row.score_total != null ? Number(row.score_total) : null,
     created_at: row.created_at || row.created || null,
     updated_at: row.updated_at || null
   };

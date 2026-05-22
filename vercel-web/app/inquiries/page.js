@@ -50,6 +50,7 @@ export default function InquiriesPage() {
   var [search, setSearch] = useState("");
   var [potentialFilter, setPotentialFilter] = useState("");
   var [statusFilter, setStatusFilter] = useState("");
+  var [sourceFilter, setSourceFilter] = useState("");
   var [openOnly, setOpenOnly] = useState(true);
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
@@ -64,11 +65,12 @@ export default function InquiriesPage() {
         var matchesSearch = !search || hay.indexOf(search.toLowerCase()) >= 0;
         var matchesPotential = !potentialFilter || row.potential === potentialFilter;
         var matchesStatus = !statusFilter || row.status === statusFilter;
+        var matchesSource = !sourceFilter || row.source === sourceFilter;
         var matchesOpen = !openOnly || OPEN_STATUSES.indexOf(row.status || "New") >= 0;
-        return matchesSearch && matchesPotential && matchesStatus && matchesOpen;
+        return matchesSearch && matchesPotential && matchesStatus && matchesSource && matchesOpen;
       });
     },
-    [resource.data, search, potentialFilter, statusFilter, openOnly]
+    [resource.data, search, potentialFilter, statusFilter, sourceFilter, openOnly]
   );
 
   function updateField(name, value) {
@@ -365,6 +367,15 @@ export default function InquiriesPage() {
                 </select>
               </div>
               <div className="field">
+                <label>Source</label>
+                <select value={sourceFilter} onChange={function (event) { setSourceFilter(event.target.value); }}>
+                  <option value="">All</option>
+                  {inquirySourceOptions.map(function (item) {
+                    return <option key={item.value} value={item.value}>{item.label}</option>;
+                  })}
+                </select>
+              </div>
+              <div className="field">
                 <label>
                   <input
                     type="checkbox"
@@ -384,14 +395,17 @@ export default function InquiriesPage() {
               />
             ) : (
               <div className="record-list">
-                {filtered.map(function (row) {
+                {filtered.map(function (row, index) {
                   var status = row.status || "New";
                   var isClosed = CLOSED_STATUSES.indexOf(status) >= 0;
                   return (
                     <div className="record-card" key={row.id}>
                       <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
-                          <h3>{row.patient_name || row.name}</h3>
+                          <h3>
+                            <span className="row-number">#{index + 1}</span>
+                            {row.patient_name || row.name}
+                          </h3>
                           <div className="record-meta">
                             <span>{row.mobile || row.phone}</span>
                             <span>{row.area || ""}, {row.city || ""}</span>

@@ -38,7 +38,9 @@ export const educationOptions = [
 export const shiftOptions = [
   { value: "DAY", label: "9 AM – 7 PM (Day)" },
   { value: "NIGHT", label: "8 PM – 8 AM (Night)" },
-  { value: "24H", label: "24 Hours" }
+  { value: "24H", label: "24 Hours" },
+  { value: "ONE_TIME", label: "One-time / 1 Hour" },
+  { value: "CUSTOM", label: "Custom hours" }
 ];
 
 export const patientStatusOptions = [

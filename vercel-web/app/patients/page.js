@@ -74,6 +74,10 @@ export default function PatientsPage() {
   var [error, setError] = useState("");
   var [search, setSearch] = useState("");
   var [statusFilter, setStatusFilter] = useState("");
+  var [genderFilter, setGenderFilter] = useState("");
+  var [areaFilter, setAreaFilter] = useState("");
+  var [pinFilter, setPinFilter] = useState("");
+  var [shiftFilter, setShiftFilter] = useState("");
   var [sortOrder, setSortOrder] = useState("desc");
 
   useEffect(
@@ -98,7 +102,22 @@ export default function PatientsPage() {
             .toLowerCase();
           var matchesSearch = !search || hay.indexOf(search.toLowerCase()) >= 0;
           var matchesStatus = !statusFilter || row.status === statusFilter;
-          return matchesSearch && matchesStatus;
+          var matchesGender = !genderFilter || row.gender === genderFilter;
+          var matchesArea =
+            !areaFilter ||
+            String(row.area || "").toLowerCase().indexOf(areaFilter.toLowerCase()) >= 0;
+          var matchesPin =
+            !pinFilter ||
+            String(row.pincode || row.pin || "").indexOf(pinFilter) >= 0;
+          var matchesShift = !shiftFilter || (row.shift_type || row.shift) === shiftFilter;
+          return (
+            matchesSearch &&
+            matchesStatus &&
+            matchesGender &&
+            matchesArea &&
+            matchesPin &&
+            matchesShift
+          );
         })
         .slice()
         .sort(function (left, right) {
@@ -107,7 +126,7 @@ export default function PatientsPage() {
           return sortOrder === "asc" ? leftTime - rightTime : rightTime - leftTime;
         });
     },
-    [resource.data, search, statusFilter, sortOrder]
+    [resource.data, search, statusFilter, genderFilter, areaFilter, pinFilter, shiftFilter, sortOrder]
   );
 
   function updateField(name, value) {
@@ -584,6 +603,41 @@ export default function PatientsPage() {
                   </select>
                 </div>
                 <div className="field">
+                  <label>Gender</label>
+                  <select value={genderFilter} onChange={function (event) { setGenderFilter(event.target.value); }}>
+                    <option value="">All</option>
+                    <option value="Female">Female</option>
+                    <option value="Male">Male</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Shift</label>
+                  <select value={shiftFilter} onChange={function (event) { setShiftFilter(event.target.value); }}>
+                    <option value="">All</option>
+                    {shiftOptions.map(function (item) {
+                      return <option key={item.value} value={item.value}>{item.label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Area</label>
+                  <input
+                    value={areaFilter}
+                    onChange={function (event) { setAreaFilter(event.target.value); }}
+                    placeholder="e.g. Naranpura"
+                  />
+                </div>
+                <div className="field">
+                  <label>Pincode</label>
+                  <input
+                    value={pinFilter}
+                    onChange={function (event) { setPinFilter(event.target.value); }}
+                    placeholder="e.g. 380013"
+                    inputMode="numeric"
+                  />
+                </div>
+                <div className="field">
                   <label>Sort by</label>
                   <select value={sortOrder} onChange={function (event) { setSortOrder(event.target.value); }}>
                     <option value="desc">Newest first</option>
@@ -601,6 +655,7 @@ export default function PatientsPage() {
                   <table>
                     <thead>
                       <tr>
+                        <th>#</th>
                         <th>ID</th>
                         <th>Name</th>
                         <th>Age/Sex</th>
@@ -613,9 +668,10 @@ export default function PatientsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filtered.map(function (row) {
+                      {filtered.map(function (row, index) {
                         return (
                           <tr key={row.id}>
+                            <td>{index + 1}</td>
                             <td>{row.id}</td>
                             <td>
                               <div className="table-primary">{row.full_name || row.name}</div>

@@ -54,10 +54,40 @@ function createInitialForm() {
     ecphone: "",
     ecrel: "",
     skills: "",
+    score_experience: 5,
+    score_behaviour: 5,
+    score_testimonial: 5,
     status: "Active",
     photo: null,
     documents: []
   };
+}
+
+function clampScore(value) {
+  var n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(10, n));
+}
+
+function computeScoreTotal(form) {
+  var parts = [form.score_experience, form.score_behaviour, form.score_testimonial]
+    .map(function (v) { return Number(v); })
+    .filter(function (v) { return Number.isFinite(v); });
+  if (!parts.length) return 0;
+  var avg = parts.reduce(function (a, b) { return a + b; }, 0) / parts.length;
+  return Math.round(avg * 100) / 100;
+}
+
+function rowScoreTotal(row) {
+  if (row == null) return null;
+  if (row.score_total != null && Number.isFinite(Number(row.score_total))) {
+    return Number(row.score_total);
+  }
+  var parts = [row.score_experience, row.score_behaviour, row.score_testimonial]
+    .map(function (v) { return Number(v); })
+    .filter(function (v) { return Number.isFinite(v); });
+  if (!parts.length) return null;
+  return Math.round((parts.reduce(function (a, b) { return a + b; }, 0) / parts.length) * 100) / 100;
 }
 
 export default function EmployeesPage() {
@@ -72,6 +102,12 @@ export default function EmployeesPage() {
   var [search, setSearch] = useState("");
   var [roleFilter, setRoleFilter] = useState("");
   var [statusFilter, setStatusFilter] = useState("");
+  var [deptFilter, setDeptFilter] = useState("");
+  var [typeFilter, setTypeFilter] = useState("");
+  var [genderFilter, setGenderFilter] = useState("");
+  var [eduFilter, setEduFilter] = useState("");
+  var [shiftFilter, setShiftFilter] = useState("");
+  var [scoreFilter, setScoreFilter] = useState("");
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
 
@@ -86,10 +122,33 @@ export default function EmployeesPage() {
         var matchesSearch = !search || hay.indexOf(search.toLowerCase()) >= 0;
         var matchesRole = !roleFilter || (row.role || row.desig) === roleFilter;
         var matchesStatus = !statusFilter || row.status === statusFilter;
-        return matchesSearch && matchesRole && matchesStatus;
+        var matchesDept = !deptFilter || (row.dept || row.department) === deptFilter;
+        var matchesType = !typeFilter || (row.emp_type || row.etype || row.employee_type) === typeFilter;
+        var matchesGender = !genderFilter || row.gender === genderFilter;
+        var matchesEdu = !eduFilter || (row.education || row.edu) === eduFilter;
+        var matchesShift = !shiftFilter || (row.shift_type || row.shift) === shiftFilter;
+        var matchesScore = true;
+        if (scoreFilter) {
+          var s = rowScoreTotal(row);
+          if (scoreFilter === "8plus") matchesScore = s != null && s >= 8;
+          else if (scoreFilter === "6to8") matchesScore = s != null && s >= 6 && s < 8;
+          else if (scoreFilter === "lt6") matchesScore = s != null && s < 6;
+          else if (scoreFilter === "unset") matchesScore = s == null;
+        }
+        return (
+          matchesSearch &&
+          matchesRole &&
+          matchesStatus &&
+          matchesDept &&
+          matchesType &&
+          matchesGender &&
+          matchesEdu &&
+          matchesShift &&
+          matchesScore
+        );
       });
     },
-    [resource.data, search, roleFilter, statusFilter]
+    [resource.data, search, roleFilter, statusFilter, deptFilter, typeFilter, genderFilter, eduFilter, shiftFilter, scoreFilter]
   );
 
   function updateField(name, value) {
@@ -140,6 +199,9 @@ export default function EmployeesPage() {
       ecphone: row.ecphone || row.relphone || "",
       ecrel: row.ecrel || "",
       skills: row.skills || "",
+      score_experience: row.score_experience != null ? Number(row.score_experience) : 5,
+      score_behaviour: row.score_behaviour != null ? Number(row.score_behaviour) : 5,
+      score_testimonial: row.score_testimonial != null ? Number(row.score_testimonial) : 5,
       status: row.status || (row.active === false ? "Inactive" : "Active"),
       photo: row.photo && typeof row.photo === "object" ? row.photo : null,
       documents: row.employee_documents || row.docs || []
@@ -258,6 +320,10 @@ export default function EmployeesPage() {
         relname: form.ecname || "",
         relphone: form.ecphone || "",
         skills: form.skills || "",
+        score_experience: clampScore(form.score_experience),
+        score_behaviour: clampScore(form.score_behaviour),
+        score_testimonial: clampScore(form.score_testimonial),
+        score_total: computeScoreTotal(form),
         status: form.status,
         active: form.status === "Active",
         photo: form.photo || undefined,
@@ -485,6 +551,49 @@ export default function EmployeesPage() {
                 <textarea rows="2" value={form.skills} onChange={function (event) { updateField("skills", event.target.value); }} placeholder="e.g. Wound care, IV, BP, post-op care" />
               </div>
 
+              <strong>Performance score (1-10)</strong>
+              <div className="grid-3">
+                <div className="field">
+                  <label>Experience</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="10"
+                    step="0.5"
+                    value={form.score_experience}
+                    onChange={function (event) { updateField("score_experience", event.target.value); }}
+                  />
+                  <small>{Number(form.score_experience).toFixed(1)}/10</small>
+                </div>
+                <div className="field">
+                  <label>Behaviour</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="10"
+                    step="0.5"
+                    value={form.score_behaviour}
+                    onChange={function (event) { updateField("score_behaviour", event.target.value); }}
+                  />
+                  <small>{Number(form.score_behaviour).toFixed(1)}/10</small>
+                </div>
+                <div className="field">
+                  <label>Testimonial</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="10"
+                    step="0.5"
+                    value={form.score_testimonial}
+                    onChange={function (event) { updateField("score_testimonial", event.target.value); }}
+                  />
+                  <small>{Number(form.score_testimonial).toFixed(1)}/10</small>
+                </div>
+              </div>
+              <div className="helper-box">
+                <strong>Total score:</strong> {computeScoreTotal(form).toFixed(2)} / 10
+              </div>
+
               <strong>Emergency contact</strong>
               <div className="grid-3">
                 <div className="field">
@@ -581,6 +690,61 @@ export default function EmployeesPage() {
                   </select>
                 </div>
                 <div className="field">
+                  <label>Department</label>
+                  <select value={deptFilter} onChange={function (event) { setDeptFilter(event.target.value); }}>
+                    <option value="">All</option>
+                    {departmentOptions.map(function (d) {
+                      return <option key={d.value} value={d.value}>{d.label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Type</label>
+                  <select value={typeFilter} onChange={function (event) { setTypeFilter(event.target.value); }}>
+                    <option value="">All</option>
+                    {employeeTypeOptions.map(function (t) {
+                      return <option key={t.value} value={t.value}>{t.label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Gender</label>
+                  <select value={genderFilter} onChange={function (event) { setGenderFilter(event.target.value); }}>
+                    <option value="">All</option>
+                    <option value="Female">Female</option>
+                    <option value="Male">Male</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Education</label>
+                  <select value={eduFilter} onChange={function (event) { setEduFilter(event.target.value); }}>
+                    <option value="">All</option>
+                    {educationOptions.map(function (e) {
+                      return <option key={e.value} value={e.value}>{e.label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Shift</label>
+                  <select value={shiftFilter} onChange={function (event) { setShiftFilter(event.target.value); }}>
+                    <option value="">All</option>
+                    {shiftOptions.map(function (s) {
+                      return <option key={s.value} value={s.value}>{s.label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Score</label>
+                  <select value={scoreFilter} onChange={function (event) { setScoreFilter(event.target.value); }}>
+                    <option value="">All</option>
+                    <option value="8plus">≥ 8 (top)</option>
+                    <option value="6to8">6 - 7.99</option>
+                    <option value="lt6">&lt; 6</option>
+                    <option value="unset">Not rated</option>
+                  </select>
+                </div>
+                <div className="field">
                   <label>Status</label>
                   <select value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
                     <option value="">All</option>
@@ -597,22 +761,33 @@ export default function EmployeesPage() {
                 />
               ) : (
                 <div className="record-list">
-                  {filtered.map(function (row) {
+                  {filtered.map(function (row, index) {
                     var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
                     var isActive = row.status ? row.status === "Active" : row.active !== false;
+                    var score = rowScoreTotal(row);
+                    var scoreClass = score == null ? "muted" : score >= 8 ? "high" : score >= 6 ? "mid" : "low";
                     return (
                       <div className="record-card" key={row.id}>
                         <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                           <div>
-                            <h3>{name || row.id}</h3>
+                            <h3>
+                              <span className="row-number">#{index + 1}</span>
+                              {name || row.id}
+                            </h3>
                             <div className="record-meta">
+                              <span>{row.id}</span>
                               <span>{row.mobile || row.phone || "-"}</span>
                               <span>{slugToText(row.role || row.desig || "")}</span>
                               <span>{slugToText(row.shift_type || row.shift || "")}</span>
                               {row.salary ? <span>{formatCurrency(row.salary)}/mo</span> : null}
                             </div>
                           </div>
-                          <span className={"status " + (isActive ? "active" : "paused")}>{row.status || (isActive ? "Active" : "Inactive")}</span>
+                          <div className="record-side">
+                            <span className={"score-pill score-" + scoreClass} title="Performance score">
+                              {score == null ? "—" : score.toFixed(1)}/10
+                            </span>
+                            <span className={"status " + (isActive ? "active" : "paused")}>{row.status || (isActive ? "Active" : "Inactive")}</span>
+                          </div>
                         </div>
                         <div className="record-meta" style={{ marginTop: 12 }}>
                           <span>{slugToText(row.education || row.edu || "")}</span>

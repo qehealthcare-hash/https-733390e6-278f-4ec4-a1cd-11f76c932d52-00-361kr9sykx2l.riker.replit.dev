@@ -100,15 +100,35 @@ export const monthPeriodSchema = z
   .string()
   .regex(/^\d{4}-(0[1-9]|1[0-2])$/, "period must be YYYY-MM");
 
+/**
+ * Shift types used by *scheduled duties* — strictly the four full-shift
+ * buckets that have well-defined start/end times. Keep narrow so the duty
+ * scheduler can do hour math without special-cases.
+ */
 export const shiftTypeSchema = z.enum(["DAY", "NIGHT", "24H", "FULL"]);
 
 /**
+ * Shift types used by *staff & patient profiles* — wider because the legacy
+ * CRM offers `1 Hour Service` (one-time visits) and `Custom hours` for
+ * staff who aren't on a standard shift.
+ */
+export const extendedShiftTypeSchema = z.enum([
+  "DAY",
+  "NIGHT",
+  "24H",
+  "FULL",
+  "ONE_TIME",
+  "CUSTOM"
+]);
+
+/**
  * Optional shift-type field that tolerates the empty / null values the
- * React forms send back when the user hasn't set a shift yet.
+ * React forms send back when the user hasn't set a shift yet. Uses the
+ * wider enum so it accepts ONE_TIME / CUSTOM employees.
  */
 export const optionalShiftType = z.preprocess(
   (v) => (v == null || v === "" ? undefined : v),
-  shiftTypeSchema.optional()
+  extendedShiftTypeSchema.optional()
 );
 
 /**
