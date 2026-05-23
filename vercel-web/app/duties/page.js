@@ -68,9 +68,14 @@ export default function DutiesPage() {
           setPatients(result[0] || []);
           setEmployees(result[1] || []);
         })
-        .catch(function () {
+        .catch(function (lookupError) {
           setPatients([]);
           setEmployees([]);
+          setError(
+            "Could not load patient / employee lookups — " +
+              (lookupError.message || "unknown error") +
+              ". Dropdowns will be empty until you reload."
+          );
         });
     },
     [auth.session, statusFilter]

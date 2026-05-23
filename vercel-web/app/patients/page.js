@@ -82,8 +82,13 @@ export default function PatientsPage() {
       if (!auth.session?.access_token) return;
       request("/lookups/employees", null, auth.session)
         .then(setEmployees)
-        .catch(function () {
+        .catch(function (lookupError) {
           setEmployees([]);
+          setError(
+            "Could not load the employee list — " +
+              (lookupError.message || "unknown error") +
+              ". Assignment lists may be incomplete."
+          );
         });
     },
     [auth.session]
@@ -536,6 +541,9 @@ export default function PatientsPage() {
                 })}
               </div>
               {error ? <div className="error-text">{error}</div> : null}
+              {!error && resource.error ? (
+                <div className="error-text">Live patient list error — {resource.error}</div>
+              ) : null}
               {message ? <div className="success-text">{message}</div> : null}
               <div className="button-row">
                 <button className="button primary" type="submit" disabled={busy}>

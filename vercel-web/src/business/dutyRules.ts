@@ -85,6 +85,30 @@ export function canReopenCompletedDuty(currentStatus: string, nextStatus: string
   return businessOk();
 }
 
+/**
+ * Block direct status edits that bypass check-in/out workflow on the form.
+ *
+ * Allowed shape transitions (other status changes happen via the dedicated
+ * check-in / check-out / cancel endpoints):
+ *   SCHEDULED → SCHEDULED | CANCELLED                 (edit/cancel)
+ *   IN_PROGRESS → IN_PROGRESS                         (edit only)
+ *   COMPLETED → COMPLETED                             (no edits; see above)
+ *   CANCELLED → CANCELLED                             (terminal)
+ *   NO_SHOW   → NO_SHOW | SCHEDULED                   (admin re-schedule)
+ */
+export function canEditDutyStatus(currentStatus: string, nextStatus: string): ApiResult<null> {
+  if (currentStatus === nextStatus) return businessOk();
+  // Anyone can flip a SCHEDULED duty to CANCELLED via the form.
+  if (currentStatus === "SCHEDULED" && nextStatus === "CANCELLED") return businessOk();
+  // Admin re-opening a no-show.
+  if (currentStatus === "NO_SHOW" && nextStatus === "SCHEDULED") return businessOk();
+  return businessFailure(
+    `Status transition ${currentStatus} → ${nextStatus} is not allowed from the duty form. ` +
+      `Use the Check-in / Check-out / Cancel actions instead.`,
+    { currentStatus, nextStatus }
+  );
+}
+
 export function canCancelDutyWithBilling(
   hasServiceLine: boolean,
   activeReceiptCount: number

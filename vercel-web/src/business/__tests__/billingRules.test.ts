@@ -10,6 +10,23 @@ import {
 import { ErrorCodes } from "@/types/common";
 import { expectFail, expectOk } from "@/test/assertions";
 
+describe("billingRules — Paused transitions", () => {
+  it("blocks Closed → Paused", () => {
+    expectFail(canTransitionTo("Closed", "Paused"), ErrorCodes.business);
+  });
+  it("blocks Paused → Closed", () => {
+    expectFail(canTransitionTo("Paused", "Closed"), ErrorCodes.business);
+  });
+  it("allows Active → Paused → Active → Closed", () => {
+    expectOk(canTransitionTo("Active", "Paused"));
+    expectOk(canTransitionTo("Paused", "Active"));
+    expectOk(canTransitionTo("Active", "Closed"));
+  });
+  it("Cancelled remains terminal", () => {
+    expectFail(canTransitionTo("Cancelled", "Active"), ErrorCodes.business);
+  });
+});
+
 describe("billingRules — test matrix", () => {
   it("blocks edit on Closed bill", () => {
     expectFail(canEditBilling("Closed"), ErrorCodes.business);

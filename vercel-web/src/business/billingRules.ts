@@ -226,7 +226,15 @@ export function canReopenBilling(status: string | null | undefined): ApiResult<n
   return businessOk();
 }
 
-/** Status transition matrix — illegal transitions short-circuit. */
+/**
+ * Status transition matrix — illegal transitions short-circuit.
+ *
+ * Allowed:
+ *   Active   → Paused | Closed | Cancelled
+ *   Paused   → Active | Cancelled       (must Reopen to bill again)
+ *   Closed   → Active                   (reopen path)
+ *   Cancelled→ (terminal — nothing)
+ */
 export function canTransitionTo(
   current: string | null | undefined,
   next: BillingStatus
@@ -238,6 +246,12 @@ export function canTransitionTo(
   }
   if (from === "Closed" && next === "Cancelled") {
     return businessFailure("Cancel a bill before closing — Closed → Cancelled is not allowed");
+  }
+  if (from === "Closed" && next === "Paused") {
+    return businessFailure("Closed bills must be Reopened (Active) before they can be Paused");
+  }
+  if (from === "Paused" && next === "Closed") {
+    return businessFailure("Reactivate a Paused bill before closing it so totals are recomputed");
   }
   return businessOk();
 }

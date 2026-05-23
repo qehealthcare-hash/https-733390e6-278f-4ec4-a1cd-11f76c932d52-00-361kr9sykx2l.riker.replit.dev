@@ -762,6 +762,9 @@ export default function EmployeesPage() {
                 })}
               </div>
               {error ? <div className="error-text">{error}</div> : null}
+              {!error && resource.error ? (
+                <div className="error-text">Live employee list error — {resource.error}</div>
+              ) : null}
               {message ? <div className="success-text">{message}</div> : null}
               <div className="button-row">
                 <button className="button primary" type="submit" disabled={busy}>

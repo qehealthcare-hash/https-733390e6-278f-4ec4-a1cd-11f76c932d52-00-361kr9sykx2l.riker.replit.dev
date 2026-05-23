@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canCancelDutyWithBilling,
+  canEditDutyStatus,
   canReopenCompletedDuty,
   dutiesTimeOverlap,
   isOverlapExcludedStatus,
@@ -10,6 +11,28 @@ import {
 } from "@/business/dutyRules";
 import { ErrorCodes } from "@/types/common";
 import { expectFail, expectOk } from "@/test/assertions";
+
+describe("dutyRules — form status guard", () => {
+  it("allows no-op (status unchanged)", () => {
+    expectOk(canEditDutyStatus("SCHEDULED", "SCHEDULED"));
+    expectOk(canEditDutyStatus("IN_PROGRESS", "IN_PROGRESS"));
+  });
+  it("allows SCHEDULED → CANCELLED from the form", () => {
+    expectOk(canEditDutyStatus("SCHEDULED", "CANCELLED"));
+  });
+  it("allows NO_SHOW → SCHEDULED (admin re-schedule)", () => {
+    expectOk(canEditDutyStatus("NO_SHOW", "SCHEDULED"));
+  });
+  it("blocks SCHEDULED → COMPLETED (must check in/out via dedicated endpoints)", () => {
+    expectFail(canEditDutyStatus("SCHEDULED", "COMPLETED"), ErrorCodes.business);
+  });
+  it("blocks SCHEDULED → IN_PROGRESS via the form", () => {
+    expectFail(canEditDutyStatus("SCHEDULED", "IN_PROGRESS"), ErrorCodes.business);
+  });
+  it("blocks IN_PROGRESS → COMPLETED via the form", () => {
+    expectFail(canEditDutyStatus("IN_PROGRESS", "COMPLETED"), ErrorCodes.business);
+  });
+});
 
 const slot = (id: string, employee: string, patient: string, start: string, end: string, status = "SCHEDULED") => ({
   id,

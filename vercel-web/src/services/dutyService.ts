@@ -30,6 +30,7 @@ import {
 import { parseInput } from "@/validation/parseValidation";
 import {
   canCancelDutyWithBilling,
+  canEditDutyStatus,
   canReopenCompletedDuty,
   dutyCancellationPatch,
   dutyCheckInPatch,
@@ -311,6 +312,15 @@ export const dutyService = {
         reopenCheck.error || "Completed duties cannot be reopened",
         reopenCheck.code,
         reopenCheck.details
+      );
+    }
+
+    const editStatusCheck = canEditDutyStatus(String(existing.data.status || ""), input.status);
+    if (!editStatusCheck.success) {
+      return failure(
+        editStatusCheck.error || "Illegal status transition for duty edit",
+        editStatusCheck.code,
+        editStatusCheck.details
       );
     }
 
