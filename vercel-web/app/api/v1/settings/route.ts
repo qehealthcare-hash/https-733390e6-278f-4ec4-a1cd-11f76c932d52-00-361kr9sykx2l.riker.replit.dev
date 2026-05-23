@@ -7,14 +7,14 @@ import { settingsService } from "@/lib/api/services/settings.service";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export const GET = withAuth(async () => {
-  const data = await settingsService.listAll();
+export const GET = withAuth(async (_req, { actor }) => {
+  const data = await settingsService.listAll(actor.accessToken);
   return jsonOk(data);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, ["Admin", "Manager"]);
   const body = await parseJsonBody(req);
-  const data = await settingsService.bulkSet(body);
+  const data = await settingsService.bulkSet(body, actor.accessToken);
   return jsonOk(data);
 });

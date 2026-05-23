@@ -45,7 +45,13 @@ export const billingSchema = z.object({
 
 /** PATCH body for `/billings/[id]/status`. */
 export const billingStatusSchema = z.object({
-  status: z.enum(BILLING_STATUSES)
+  status: z.enum(BILLING_STATUSES),
+  /**
+   * Optional optimistic-locking guard. When provided, the service rejects the
+   * write with code `conflict` if the persisted `updated_at` is newer (i.e.
+   * another user already saved between this client's load and save).
+   */
+  expected_updated_at: z.string().trim().optional()
 });
 
 /** Closing a bill requires acknowledging the closing actor. */
@@ -82,7 +88,11 @@ export const billingReopenSchema = z.object({
 export const billingEditSchema = z
   .object({
     sec_dep: moneySchema.optional(),
-    notes: z.string().optional()
+    notes: z.string().optional(),
+    /**
+     * Optional optimistic-locking guard — see billingStatusSchema for details.
+     */
+    expected_updated_at: z.string().trim().optional()
   })
   .refine((v) => v.sec_dep !== undefined || v.notes !== undefined, {
     message: "At least one field must be provided"

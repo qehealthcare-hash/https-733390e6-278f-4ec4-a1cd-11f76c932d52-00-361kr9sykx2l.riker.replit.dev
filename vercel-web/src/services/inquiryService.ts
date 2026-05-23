@@ -175,7 +175,9 @@ export const inquiryService = {
         assigned_to: query.assigned_to,
         open_only: query.open_only,
         followup_from: query.followup_from,
-        followup_to: query.followup_to
+        followup_to: query.followup_to,
+        created_from: query.from,
+        created_to: query.to
       },
       dbAccess(ctx)
     );

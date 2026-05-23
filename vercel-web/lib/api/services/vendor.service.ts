@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "../supabase";
+import { dbFor } from "../supabase";
 import { badRequest, notFound } from "../errors";
 
 const TABLE = "hh_vendors";
@@ -39,8 +39,11 @@ function nextVendorId(rows: VendorRow[]): string {
 }
 
 export const vendorService = {
-  async list(query: { q?: string; city?: string; limit?: number; offset?: number }) {
-    const db = supabaseAdmin();
+  async list(
+    query: { q?: string; city?: string; limit?: number; offset?: number },
+    accessToken?: string
+  ) {
+    const db = dbFor(accessToken);
     const limit = Math.min(Math.max(query.limit || 100, 1), 500);
     const offset = Math.max(query.offset || 0, 0);
     let q = db.from(TABLE).select("*", { count: "exact" }).order("name").range(offset, offset + limit - 1);
@@ -51,19 +54,19 @@ export const vendorService = {
     return { rows: data || [], total: count ?? (data || []).length };
   },
 
-  async get(id: string) {
-    const db = supabaseAdmin();
+  async get(id: string, accessToken?: string) {
+    const db = dbFor(accessToken);
     const { data, error } = await db.from(TABLE).select("*").eq("id", id).maybeSingle();
     if (error) throw error;
     if (!data) throw notFound("Vendor");
     return data;
   },
 
-  async create(input: Record<string, unknown>) {
+  async create(input: Record<string, unknown>, accessToken?: string) {
     if (!input.name || String(input.name).trim() === "") {
       throw badRequest("Vendor name is required");
     }
-    const db = supabaseAdmin();
+    const db = dbFor(accessToken);
     const existing = await db.from(TABLE).select("id").order("id", { ascending: false }).limit(500);
     if (existing.error) throw existing.error;
     const row = {
@@ -76,20 +79,20 @@ export const vendorService = {
     return data;
   },
 
-  async update(id: string, input: Record<string, unknown>) {
+  async update(id: string, input: Record<string, unknown>, accessToken?: string) {
     const payload = buildPayload(input);
     if (Object.keys(payload).length === 0) {
       throw badRequest("No editable fields supplied");
     }
-    const db = supabaseAdmin();
+    const db = dbFor(accessToken);
     const { data, error } = await db.from(TABLE).update(payload).eq("id", id).select("*").maybeSingle();
     if (error) throw error;
     if (!data) throw notFound("Vendor");
     return data;
   },
 
-  async remove(id: string) {
-    const db = supabaseAdmin();
+  async remove(id: string, accessToken?: string) {
+    const db = dbFor(accessToken);
     const { error } = await db.from(TABLE).delete().eq("id", id);
     if (error) throw error;
     return { id, deleted: true };

@@ -82,16 +82,17 @@ export default function ReportsPage() {
       var endDay = new Date(year, month, 0).getDate();
       var to = p + "-" + String(endDay).padStart(2, "0");
       var datasetErrors = [];
+      var periodQs = "&from=" + from + "&to=" + to;
       Promise.all([
-        request("/inquiries?limit=500", null, auth.session).catch(function (e) {
+        request("/inquiries?limit=500" + periodQs, null, auth.session).catch(function (e) {
           datasetErrors.push("inquiries: " + (e.message || "load failed"));
           return [];
         }),
-        request("/patients?limit=1000", null, auth.session).catch(function (e) {
+        request("/patients?limit=1000" + periodQs, null, auth.session).catch(function (e) {
           datasetErrors.push("patients: " + (e.message || "load failed"));
           return [];
         }),
-        request("/attendance?limit=2000&from=" + from + "&to=" + to, null, auth.session).catch(function (e) {
+        request("/attendance?limit=2000" + periodQs, null, auth.session).catch(function (e) {
           datasetErrors.push("attendance: " + (e.message || "load failed"));
           return [];
         }),
@@ -100,25 +101,14 @@ export default function ReportsPage() {
           return null;
         })
       ]).then(function (result) {
+        // API now scopes inquiries + patients to created_at within from/to,
+        // so we can trust the returned rows without a second client pass.
         var inqs = Array.isArray(result[0]) ? result[0] : (result[0] && result[0].rows) || [];
         var pats = Array.isArray(result[1]) ? result[1] : (result[1] && result[1].rows) || [];
         var atts = Array.isArray(result[2]) ? result[2] : (result[2] && result[2].rows) || [];
         var bills = result[3] && Array.isArray(result[3].rows) ? result[3].rows : [];
-        // Scope the unfiltered lists to the selected period using the
-        // best-available date field so on-screen totals match the period header.
-        function inPeriod(dateStr) {
-          if (!dateStr) return false;
-          var s = String(dateStr).slice(0, 10);
-          return s >= from && s <= to;
-        }
-        var scopedInqs = inqs.filter(function (r) {
-          return inPeriod(r.created_at || r.created || r.date);
-        });
-        var scopedPats = pats.filter(function (r) {
-          return inPeriod(r.created_at || r.created || r.start_date);
-        });
-        setInquiries(scopedInqs);
-        setPatients(scopedPats);
+        setInquiries(inqs);
+        setPatients(pats);
         setAttendance(atts);
         setBillings(bills);
         if (datasetErrors.length) {

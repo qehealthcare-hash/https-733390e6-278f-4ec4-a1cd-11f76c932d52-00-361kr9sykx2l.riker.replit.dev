@@ -153,7 +153,9 @@ export const patientService = {
         offset: query.offset,
         q: query.q,
         status: query.status,
-        caretaker_id: query.caretaker_id
+        caretaker_id: query.caretaker_id,
+        created_from: query.from,
+        created_to: query.to
       },
       dbAccess(ctx)
     );

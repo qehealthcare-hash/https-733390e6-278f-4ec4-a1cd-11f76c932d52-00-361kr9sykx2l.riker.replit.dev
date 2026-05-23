@@ -28,3 +28,15 @@ export function supabaseAsUser(accessToken: string): SupabaseClient {
     auth: { autoRefreshToken: false, persistSession: false }
   });
 }
+
+/**
+ * Helper for legacy `lib/api/services/*` modules: pick the user-scoped client
+ * when an access token is available so RLS applies; otherwise fall back to the
+ * service-role admin client. This lets us migrate routes incrementally — any
+ * route that passes `actor.accessToken` immediately runs under the caller's
+ * RLS policies instead of bypassing them via `supabaseAdmin()`.
+ */
+export function dbFor(accessToken?: string | null): SupabaseClient {
+  if (accessToken) return supabaseAsUser(accessToken);
+  return supabaseAdmin();
+}

@@ -1,11 +1,11 @@
-import { supabaseAdmin } from "../supabase";
+import { dbFor } from "../supabase";
 import { badRequest } from "../errors";
 
 const TABLE = "hh_app_settings";
 
 export const settingsService = {
-  async listAll() {
-    const db = supabaseAdmin();
+  async listAll(accessToken?: string) {
+    const db = dbFor(accessToken);
     const { data, error } = await db.from(TABLE).select("key, value");
     if (error) throw error;
     const map: Record<string, unknown> = {};
@@ -15,17 +15,17 @@ export const settingsService = {
     return map;
   },
 
-  async getKey(key: string) {
+  async getKey(key: string, accessToken?: string) {
     if (!key) throw badRequest("key is required");
-    const db = supabaseAdmin();
+    const db = dbFor(accessToken);
     const { data, error } = await db.from(TABLE).select("value").eq("key", key).maybeSingle();
     if (error) throw error;
     return data?.value ?? null;
   },
 
-  async setKey(key: string, value: unknown) {
+  async setKey(key: string, value: unknown, accessToken?: string) {
     if (!key) throw badRequest("key is required");
-    const db = supabaseAdmin();
+    const db = dbFor(accessToken);
     const { data, error } = await db
       .from(TABLE)
       .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" })
@@ -35,19 +35,19 @@ export const settingsService = {
     return data;
   },
 
-  async deleteKey(key: string) {
+  async deleteKey(key: string, accessToken?: string) {
     if (!key) throw badRequest("key is required");
-    const db = supabaseAdmin();
+    const db = dbFor(accessToken);
     const { error } = await db.from(TABLE).delete().eq("key", key);
     if (error) throw error;
     return { key, deleted: true };
   },
 
-  async bulkSet(items: Record<string, unknown>) {
+  async bulkSet(items: Record<string, unknown>, accessToken?: string) {
     if (!items || typeof items !== "object") {
       throw badRequest("Body must be an object of key→value pairs");
     }
-    const db = supabaseAdmin();
+    const db = dbFor(accessToken);
     const rows = Object.keys(items).map((key) => ({
       key,
       value: items[key],

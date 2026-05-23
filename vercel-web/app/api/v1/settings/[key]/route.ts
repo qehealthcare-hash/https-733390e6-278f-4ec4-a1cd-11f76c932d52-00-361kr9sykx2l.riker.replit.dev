@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 
 type Params = { key: string };
 
-export const GET = withAuth<Params>(async (_req: NextRequest, { params }) => {
-  const value = await settingsService.getKey(params.key);
+export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
+  const value = await settingsService.getKey(params.key, actor.accessToken);
   return jsonOk({ key: params.key, value });
 });
 
@@ -18,12 +18,12 @@ export const PUT = withAuth<Params>(async (req: NextRequest, { params, actor }) 
   requireRole(actor, ["Admin", "Manager"]);
   const body = await parseJsonBody(req);
   const value = body && Object.prototype.hasOwnProperty.call(body, "value") ? (body as { value: unknown }).value : body;
-  const data = await settingsService.setKey(params.key, value);
+  const data = await settingsService.setKey(params.key, value, actor.accessToken);
   return jsonOk(data);
 });
 
 export const DELETE = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin"]);
-  const data = await settingsService.deleteKey(params.key);
+  const data = await settingsService.deleteKey(params.key, actor.accessToken);
   return jsonOk(data);
 });

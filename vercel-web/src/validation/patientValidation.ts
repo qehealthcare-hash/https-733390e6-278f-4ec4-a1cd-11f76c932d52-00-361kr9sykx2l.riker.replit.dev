@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   idSchema,
+  isoDate,
   optionalEmail,
   optionalShiftType,
   shiftTypeSchema
@@ -109,7 +110,14 @@ export const patientListQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional().default(0),
   q: z.string().optional().default(""),
   status: z.enum(PATIENT_STATUSES).optional(),
-  caretaker_id: z.string().optional()
+  caretaker_id: z.string().optional(),
+  /**
+   * Inclusive YYYY-MM-DD bounds against `created_at` so Reports can ask the
+   * server for "patients registered in this period" instead of filtering on
+   * the client.
+   */
+  from: isoDate.optional(),
+  to: isoDate.optional()
 });
 
 export type PatientInput = z.infer<typeof patientSchema>;

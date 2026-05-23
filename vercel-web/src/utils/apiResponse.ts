@@ -45,6 +45,28 @@ export function duplicateFailure(field: string, value: unknown, error?: string):
   );
 }
 
+/**
+ * Convenience: optimistic-locking / concurrent-edit conflict.
+ *
+ * Use when a write would clobber another user's just-saved change because
+ * the client's `expected_updated_at` is older than the persisted row's
+ * `updated_at`. Carries the actual values so the UI can show a "reload"
+ * prompt with both timestamps.
+ */
+export function conflictFailure(
+  entity: string,
+  expected: unknown,
+  actual: unknown,
+  error?: string
+): ApiResult<never> {
+  return failure(
+    error ||
+      `${entity} was modified by another user — reload and try again`,
+    ErrorCodes.conflict,
+    { entity, expected_updated_at: expected, actual_updated_at: actual }
+  );
+}
+
 /** Convenience: not-found failure. */
 export function notFoundFailure(entity: string, idOrQuery?: unknown): ApiResult<never> {
   return failure(`${entity} not found`, ErrorCodes.notFound, idOrQuery !== undefined ? { entity, query: idOrQuery } : undefined);

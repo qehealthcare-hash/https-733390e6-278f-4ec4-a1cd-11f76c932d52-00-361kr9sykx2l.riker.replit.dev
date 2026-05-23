@@ -71,6 +71,7 @@ import {
   serviceKey,
   type BillingTotals
 } from "@/business/billingRules";
+import { assertNotStale } from "@/business/concurrencyRules";
 import { newId } from "@/business/idRules";
 import { billingRepository } from "@/database/billingRepository";
 import { patientRepository } from "@/database/patientRepository";
@@ -434,6 +435,13 @@ export const billingService = {
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as BillingEditInput;
 
+    const stale = assertNotStale(
+      "Billing",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
+
     const patch: JsonRow = {};
     if (input.sec_dep !== undefined) patch.sec_dep = input.sec_dep;
 
@@ -478,6 +486,13 @@ export const billingService = {
         transition.details
       );
     }
+
+    const stale = assertNotStale(
+      "Billing",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
 
     const patch = billingStatusRow(input.status, ctx.actor.email);
     const updated = await billingRepository.updateBilling(id, patch, dbAccess(ctx));

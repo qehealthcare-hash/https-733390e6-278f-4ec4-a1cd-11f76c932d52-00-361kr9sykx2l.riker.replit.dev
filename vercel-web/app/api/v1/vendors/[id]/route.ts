@@ -9,15 +9,15 @@ export const dynamic = "force-dynamic";
 
 type Params = { id: string };
 
-export const GET = withAuth<Params>(async (_req: NextRequest, { params }) => {
-  const data = await vendorService.get(params.id);
+export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
+  const data = await vendorService.get(params.id, actor.accessToken);
   return jsonOk(data);
 });
 
 export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin", "Manager", "Accountant"]);
   const body = await parseJsonBody(req);
-  const data = await vendorService.update(params.id, body);
+  const data = await vendorService.update(params.id, body, actor.accessToken);
   return jsonOk(data);
 });
 
@@ -25,6 +25,6 @@ export const PUT = PATCH;
 
 export const DELETE = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin"]);
-  const data = await vendorService.remove(params.id);
+  const data = await vendorService.remove(params.id, actor.accessToken);
   return jsonOk(data);
 });

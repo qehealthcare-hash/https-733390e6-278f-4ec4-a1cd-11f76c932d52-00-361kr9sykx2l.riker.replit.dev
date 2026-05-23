@@ -58,6 +58,7 @@ import {
   type PayoutPatientBreakdownRow,
   type PayoutTotals
 } from "@/business/payoutRules";
+import { assertNotStale } from "@/business/concurrencyRules";
 import { monthRangeUTC } from "@/business/dateRules";
 import { payoutRepository } from "@/database/payoutRepository";
 import { dutyRepository } from "@/database/dutyRepository";
@@ -476,6 +477,13 @@ export const payoutService = {
         editGuard.details
       );
     }
+
+    const stale = assertNotStale(
+      "Payout",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
 
     const existingData = existing.data;
     const merged = mergePayoutAdjustments(

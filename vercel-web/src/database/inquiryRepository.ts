@@ -24,6 +24,9 @@ export interface InquiryListFilters extends ListQuery {
   open_only?: boolean;
   followup_from?: string;
   followup_to?: string;
+  /** Inclusive YYYY-MM-DD created_at bounds (Reports period scoping). */
+  created_from?: string;
+  created_to?: string;
 }
 
 export const inquiryRepository = {
@@ -45,6 +48,11 @@ export const inquiryRepository = {
         }
         if (filters.followup_from) query = query.gte("followup_date", filters.followup_from);
         if (filters.followup_to) query = query.lte("followup_date", filters.followup_to);
+        if (filters.created_from) query = query.gte("created_at", filters.created_from);
+        if (filters.created_to) {
+          // Inclusive end-of-day so `to=2026-05-31` includes that day's rows.
+          query = query.lte("created_at", `${filters.created_to}T23:59:59.999Z`);
+        }
         if (filters.q) {
           const term = filters.q.replace(/%/g, "");
           query = query.or(

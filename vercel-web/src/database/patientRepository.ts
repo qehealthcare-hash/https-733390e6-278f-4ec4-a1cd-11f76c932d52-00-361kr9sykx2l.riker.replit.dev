@@ -21,6 +21,9 @@ export interface PatientListFilters extends ListQuery {
   q?: string;
   status?: string;
   caretaker_id?: string;
+  /** Inclusive YYYY-MM-DD created_at bounds (Reports period scoping). */
+  created_from?: string;
+  created_to?: string;
 }
 
 export const patientRepository = {
@@ -36,6 +39,10 @@ export const patientRepository = {
         let query = q;
         if (filters.status) query = query.eq("status", filters.status);
         if (filters.caretaker_id) query = query.eq("caretaker_id", filters.caretaker_id);
+        if (filters.created_from) query = query.gte("created_at", filters.created_from);
+        if (filters.created_to) {
+          query = query.lte("created_at", `${filters.created_to}T23:59:59.999Z`);
+        }
         if (filters.q) {
           const term = filters.q.replace(/%/g, "");
           query = query.or(

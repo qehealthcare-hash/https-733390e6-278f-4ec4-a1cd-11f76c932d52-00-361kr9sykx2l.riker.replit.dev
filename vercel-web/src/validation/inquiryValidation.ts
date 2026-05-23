@@ -182,7 +182,14 @@ export const inquiryListQuerySchema = z.object({
   source: z.enum(INQUIRY_SOURCES).optional(),
   assigned_to: z.string().optional(),
   followup_from: isoDate.optional(),
-  followup_to: isoDate.optional()
+  followup_to: isoDate.optional(),
+  /**
+   * Inclusive YYYY-MM-DD bounds against `created_at`. Used by the Reports
+   * module to scope inquiry totals to the selected period without dragging
+   * the entire table to the client.
+   */
+  from: isoDate.optional(),
+  to: isoDate.optional()
 });
 export type InquiryListQuery = z.infer<typeof inquiryListQuerySchema>;
 

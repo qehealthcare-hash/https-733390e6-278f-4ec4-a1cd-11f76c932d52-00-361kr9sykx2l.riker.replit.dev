@@ -38,7 +38,13 @@ export const payoutAdjustmentSchema = z
     advance: moneySchema.optional(),
     deduction: moneySchema.optional(),
     bonus: moneySchema.optional(),
-    remarks: z.string().optional()
+    remarks: z.string().optional(),
+    /**
+     * Optimistic-locking guard. When provided, the service rejects with code
+     * `conflict` if another user saved the payout between the client's load
+     * and this save.
+     */
+    expected_updated_at: z.string().trim().optional()
   })
   .refine(
     (v) =>
