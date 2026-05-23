@@ -1,7 +1,7 @@
 import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
 import type { PatientInput } from "@/validation/patientValidation";
-import { findPhoneDuplicate } from "@/business/phoneRules";
+import { findPhoneDuplicate, phoneDigitsKey } from "@/business/phoneRules";
 
 export function patientToRow(input: PatientInput) {
   const row: Record<string, unknown> = {
@@ -27,6 +27,8 @@ export function patientToRow(input: PatientInput) {
     age: input.age ?? "",
     disease_condition: input.disease_condition ?? "",
     start_date: input.start_date ?? "",
+    name_key: patientNameKey(input.name),
+    phone_digits: phoneDigitsKey(input.phone),
     docs: input.docs ?? undefined
   };
   if (Object.prototype.hasOwnProperty.call(input, "photo")) {
@@ -124,14 +126,30 @@ export function findActivePatientByName<
   return null;
 }
 
-/** Only registry-closed rows are read-only; legacy Duty Closed / Deceased etc. remain editable. */
+/** Registry soft-close (reopenable via Admin/Manager). */
 export function isRegistryClosedPatient(status: string | undefined | null): boolean {
   return String(status || "") === "Closed";
 }
 
+/** Terminal / inactive statuses — profile PATCH blocked; use reopen or status workflow. */
+export const PATIENT_READ_ONLY_STATUSES = new Set([
+  "Closed",
+  "Deceased",
+  "Expired",
+  "Discharged",
+  "Inactive"
+]);
+
+export function isPatientReadOnly(status: string | undefined | null): boolean {
+  return PATIENT_READ_ONLY_STATUSES.has(String(status || ""));
+}
+
 export function canEditPatient(status: string | undefined | null): ApiResult<null> {
-  if (isRegistryClosedPatient(status)) {
-    return businessFailure("Closed patients are read-only — reopen before editing");
+  const s = String(status || "");
+  if (isPatientReadOnly(s)) {
+    return businessFailure(
+      `${s} patients are read-only — reopen or change status before editing the profile`
+    );
   }
   return businessOk();
 }

@@ -1,6 +1,6 @@
 import type { EmployeeInput, EmployeeStatus } from "@/validation/employeeValidation";
 import { EMPLOYEE_STATUSES } from "@/validation/employeeValidation";
-import { findPhoneDuplicate } from "@/business/phoneRules";
+import { findPhoneDuplicate, phoneDigitsKey } from "@/business/phoneRules";
 import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
 
@@ -121,6 +121,8 @@ export function employeeToRow(input: EmployeeInput) {
         }
       : {}),
     docs: (input.docs ?? i.documents) ?? undefined,
+    name_key: employeeNameKey(input),
+    phone_digits: phoneDigitsKey(input.phone),
     ...(Object.prototype.hasOwnProperty.call(i, "photo")
       ? { photo: i.photo ?? null }
       : {}),
@@ -305,6 +307,26 @@ export function ensureNoHistoricalLinks(counts: EmployeeLinkCounts): ApiResult<n
     return businessFailure(
       "Employee has historical records; deactivate instead of deleting",
       { counts }
+    );
+  }
+  return businessOk();
+}
+
+/**
+ * Only Active employees accept full profile PATCH. Inactive / OnLeave /
+ * Suspended rows must be changed via PATCH /employees/:id/status (or
+ * re-activate) so lifecycle transitions stay auditable.
+ */
+export function canEditEmployee(
+  statusOrRow: string | { status?: string | null; leave_date?: string | null } | null | undefined
+): ApiResult<null> {
+  if (!isActiveEmployee(statusOrRow)) {
+    const label =
+      typeof statusOrRow === "object" && statusOrRow
+        ? employeeStatusFromRow(statusOrRow)
+        : String(statusOrRow || "Inactive");
+    return businessFailure(
+      `${label} employees are read-only — use Change Status or re-activate before editing the profile`
     );
   }
   return businessOk();

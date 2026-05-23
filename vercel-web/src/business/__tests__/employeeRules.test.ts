@@ -8,10 +8,13 @@ import {
   findActiveEmployeeByAadhar,
   normalizeAadhar,
   isActiveEmployee,
+  canEditEmployee,
   deactivatePatch,
   activatePatch,
   statusPatch
 } from "@/business/employeeRules";
+import { ErrorCodes } from "@/types/common";
+import { expectFail, expectOk } from "@/test/assertions";
 
 describe("employeeRules — status persistence (column + leave_date)", () => {
   it("treats empty leave_date as Active when status column absent", () => {
@@ -84,6 +87,24 @@ describe("employeeRules — status persistence (column + leave_date)", () => {
     );
     expect(hit?.id).toBe("1");
     expect(normalizeAadhar("9307-5317-2933")).toBe("930753172933");
+  });
+
+  it("canEditEmployee allows Active only", () => {
+    expectOk(canEditEmployee("Active"));
+    expectOk(canEditEmployee({ status: "Active", leave_date: "" }));
+    expectFail(canEditEmployee("OnLeave"), ErrorCodes.business);
+    expectFail(canEditEmployee({ status: "Inactive", leave_date: "2026-01-01" }), ErrorCodes.business);
+  });
+
+  it("employeeToRow writes name_key and phone_digits", () => {
+    const row = employeeToRow({
+      fn: "Kundanben",
+      ln: "Shah",
+      phone: "98765 43210",
+      status: "Active"
+    } as Parameters<typeof employeeToRow>[0]);
+    expect(row.name_key).toBe("kundanben shah");
+    expect(row.phone_digits).toBe("9876543210");
   });
 
   it("statusPatch persists OnLeave/Suspended as explicit status (not just leave_date)", () => {

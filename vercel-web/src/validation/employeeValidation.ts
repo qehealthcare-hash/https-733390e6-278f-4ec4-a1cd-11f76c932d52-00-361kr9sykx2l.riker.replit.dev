@@ -228,12 +228,16 @@ export const employeeSchema = z
     const computedTotal = provided.length
       ? Math.round((provided.reduce((a, b) => a + b, 0) / provided.length) * 100) / 100
       : v.score_total;
+    const aadharNorm = normalizeAadharDigits(v.aadhar);
+    const panNorm = normalizePan(v.pan);
     return {
       ...v,
       fn: v.fn || parts[0] || "",
       ln: v.ln || (parts.length > 1 ? parts[parts.length - 1] : ""),
       mn: v.mn || (parts.length > 2 ? parts.slice(1, -1).join(" ") : ""),
       phone: normalizeMobile(v.phone || v.mobile),
+      aadhar: aadharNorm || v.aadhar || "",
+      pan: panNorm || v.pan || "",
       emp_type: v.emp_type || v.etype || "",
       etype: v.etype || v.emp_type || "",
       desig: v.desig || v.role || "",

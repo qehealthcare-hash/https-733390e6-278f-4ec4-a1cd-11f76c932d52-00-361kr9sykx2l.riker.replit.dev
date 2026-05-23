@@ -48,6 +48,7 @@ import {
 import { phoneSuffix } from "@/business/phoneRules";
 import { assertNotStale } from "@/business/concurrencyRules";
 import { patientNameKey } from "@/business/patientRules";
+import { phoneDigitsKey } from "@/business/phoneRules";
 import { newId } from "@/business/idRules";
 import { patientRepository } from "@/database/patientRepository";
 import { employeeRepository } from "@/database/employeeRepository";
@@ -558,6 +559,8 @@ export const patientService = {
       relname3: input.relname3 || "",
       relphone3: input.relphone3 || "",
       status: input.status || "Active",
+      name_key: patientNameKey(input.name),
+      phone_digits: phoneDigitsKey(input.phone || ""),
       updated_by: ctx.actor.email
     };
 

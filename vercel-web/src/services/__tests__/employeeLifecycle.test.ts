@@ -126,7 +126,7 @@ beforeEach(() => {
 });
 
 describe("employee lifecycle", () => {
-  it("creates an employee and preserves status on partial edit", async () => {
+  it("blocks profile edit when employee is OnLeave", async () => {
     const created = await employeeService.create(
       { fn: "Asha", ln: "Verma", phone: "9876543210", status: "Active" },
       { actor: ACTOR }
@@ -140,9 +140,20 @@ describe("employee lifecycle", () => {
       { fn: "Asha", ln: "Verma", phone: "9876543210", area: "Naranpura" },
       { actor: ACTOR }
     );
-    expect(edited.success).toBe(true);
-    expect(employees[0].status).toBe("OnLeave");
-    expect(employees[0].area).toBe("Naranpura");
+    expect(edited.success).toBe(false);
+    expect(edited.code).toBe("business_rule_violation");
+  });
+
+  it("allows status change via setStatus while OnLeave", async () => {
+    const created = await employeeService.create(
+      { fn: "Asha", ln: "Verma", phone: "9876543211", status: "Active" },
+      { actor: ACTOR }
+    );
+    const id = (created.data as { id: string }).id;
+    await employeeService.setStatus(id, { status: "OnLeave", reason: "leave" }, { actor: ACTOR });
+    const back = await employeeService.setStatus(id, { status: "Active" }, { actor: ACTOR });
+    expect(back.success).toBe(true);
+    expect(employees.find((e) => e.id === id)?.status).toBe("Active");
   });
 
   it("blocks duplicate name and aadhar; respects confirm_duplicate_name", async () => {

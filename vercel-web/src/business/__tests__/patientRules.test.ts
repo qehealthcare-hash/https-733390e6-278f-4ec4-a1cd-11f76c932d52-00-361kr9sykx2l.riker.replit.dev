@@ -25,11 +25,15 @@ describe("patientRules — workflow matrix", () => {
     expect(isActivePatient("Closed")).toBe(false);
   });
 
-  it("blocks edits on Closed patients", () => {
+  it("blocks edits on terminal / inactive patient statuses", () => {
     expectFail(canEditPatient("Closed"), ErrorCodes.business);
+    expectFail(canEditPatient("Deceased"), ErrorCodes.business);
+    expectFail(canEditPatient("Expired"), ErrorCodes.business);
+    expectFail(canEditPatient("Discharged"), ErrorCodes.business);
+    expectFail(canEditPatient("Inactive"), ErrorCodes.business);
     expectOk(canEditPatient("Active"));
     expectOk(canEditPatient("Duty Closed"));
-    expectOk(canEditPatient("Deceased"));
+    expectOk(canEditPatient("Paused"));
   });
 
   it("blocks caretaker assignment when patient is inactive", () => {
@@ -104,6 +108,18 @@ describe("patientRules — workflow matrix", () => {
     expect(api.age).toBe("62");
     expect(api.disease_condition).toBe("Post-op care, knee replacement");
     expect(api.start_date).toBe("2026-05-23");
+  });
+
+  it("patientToRow writes name_key and phone_digits for DB indexes", () => {
+    const row = patientToRow(
+      patientSchema.parse({
+        name: "  Kundanben  Shah ",
+        phone: "+91 98765 43210",
+        relname: "Spouse"
+      })
+    );
+    expect(row.name_key).toBe("kundanben shah");
+    expect(row.phone_digits).toBe("9876543210");
   });
 
   it("clears age / disease_condition / start_date to empty string (never null) when missing", () => {

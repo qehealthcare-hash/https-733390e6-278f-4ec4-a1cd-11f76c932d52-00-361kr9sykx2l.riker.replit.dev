@@ -66,15 +66,15 @@ export const employeeRepository = {
   findActiveByName(nameKey: string, excludeId?: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
     if (!nameKey) return Promise.resolve({ success: true, data: [] });
     const db = resolveClient(opts);
-    const term = nameKey.replace(/%/g, "").slice(0, 80);
     return runListQuery(
       () => {
         let q = db
           .from(TABLE)
-          .select("id, fn, mn, ln, phone, status, leave_date, aadhar")
-          .eq("status", "Active");
+          .select("id, fn, mn, ln, phone, status, leave_date, aadhar, name_key")
+          .eq("status", "Active")
+          .eq("name_key", nameKey);
         if (excludeId) q = q.neq("id", excludeId);
-        return q.or(`fn.ilike.%${term}%,ln.ilike.%${term}%,mn.ilike.%${term}%`);
+        return q;
       },
       `${SCOPE}.findActiveByName`
     );

@@ -28,6 +28,7 @@ import { parseInput } from "@/validation/parseValidation";
 import {
   employeeToRow,
   employeeToApi,
+  canEditEmployee,
   employeeNameKey,
   findActiveEmployeeDuplicate,
   findActiveEmployeeByName,
@@ -40,7 +41,7 @@ import {
   type EmployeeLinkCounts
 } from "@/business/employeeRules";
 import { assertNotStale } from "@/business/concurrencyRules";
-import { phoneSuffix } from "@/business/phoneRules";
+import { phoneDigitsKey, phoneSuffix } from "@/business/phoneRules";
 import { newId } from "@/business/idRules";
 import { employeeRepository } from "@/database/employeeRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
@@ -298,6 +299,9 @@ export const employeeService = {
     if (!existing.success) return passFailure(existing);
     if (!existing.data) return notFoundFailure("Employee", id);
 
+    const editGuard = canEditEmployee(existing.data as { status?: string; leave_date?: string });
+    if (!editGuard.success) return passFailure(editGuard);
+
     const parsed = parseInput(employeeSchema, { ...(rawInput as object), id });
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as EmployeeInput;
@@ -465,6 +469,8 @@ export const employeeService = {
         (input.status || "Active") === "Inactive"
           ? input.leave_date || new Date().toISOString().slice(0, 10)
           : input.leave_date || "",
+      name_key: employeeNameKey({ fn: input.fn, mn: input.mn, ln: input.ln }),
+      phone_digits: phoneDigitsKey(phone),
       updated_by: ctx.actor.email
     };
 

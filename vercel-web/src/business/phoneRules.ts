@@ -8,6 +8,11 @@ export function phoneSuffix(phone: string | undefined | null): string {
   return normalizePhone(phone).slice(-8);
 }
 
+/** Last 10 digits — stored on hh_* rows and enforced by DB unique indexes. */
+export function phoneDigitsKey(phone: string | undefined | null): string {
+  return normalizePhone(phone).slice(-10);
+}
+
 export function phonesMatch(a: string | undefined | null, b: string | undefined | null): boolean {
   const sa = normalizePhone(a);
   const sb = normalizePhone(b);

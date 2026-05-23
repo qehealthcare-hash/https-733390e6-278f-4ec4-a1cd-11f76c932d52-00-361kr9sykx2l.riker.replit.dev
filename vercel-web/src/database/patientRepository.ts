@@ -11,6 +11,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery } from "@/database/supabaseClient";
+import { patientNameKey } from "@/business/patientRules";
 
 const TABLE = "hh_patients";
 const BILLINGS = "hh_billings";
@@ -91,16 +92,19 @@ export const patientRepository = {
     excludeId?: string,
     opts?: DbAccess
   ): Promise<ApiResult<JsonRow[]>> {
-    const trimmed = (name || "").trim();
-    if (!trimmed) return { success: true, data: [] };
+    const key = patientNameKey(name);
+    if (!key) return { success: true, data: [] };
     const db = resolveClient(opts);
     const result = await runListQuery<JsonRow>(
-      () =>
-        db
+      () => {
+        let q = db
           .from(TABLE)
-          .select("id, name, phone, status")
+          .select("id, name, phone, status, name_key")
           .eq("status", "Active")
-          .ilike("name", trimmed),
+          .eq("name_key", key);
+        if (excludeId) q = q.neq("id", excludeId);
+        return q;
+      },
       `${SCOPE}.findActiveByName`
     );
     if (!result.success) return result;

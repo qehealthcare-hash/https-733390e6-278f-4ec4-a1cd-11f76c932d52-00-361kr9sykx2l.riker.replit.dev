@@ -67,6 +67,17 @@ export const POST = withAuth(async (req, { actor }) => {
     throw badRequest("Object path is not allowed");
   }
 
+  const { data: pathInUse, error: pathCheckError } = await supabaseAdmin().rpc(
+    "crm_storage_path_in_use",
+    { p_bucket: bucket, p_path: path }
+  );
+  if (pathCheckError) {
+    throw serverError(`Document path check failed: ${pathCheckError.message}`);
+  }
+  if (!pathInUse) {
+    throw forbidden("Document path is not linked to any patient or employee record");
+  }
+
   const { data, error } = await supabaseAdmin()
     .storage.from(bucket)
     .createSignedUrl(path, expires_in, download_as ? { download: download_as } : undefined);

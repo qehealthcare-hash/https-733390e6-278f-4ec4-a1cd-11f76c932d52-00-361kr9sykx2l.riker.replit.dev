@@ -35,11 +35,9 @@ describe("employeeSchema — identity & contact fields", () => {
     expect(() => employeeSchema.parse({ ...base, aadhar: "1234 5678" })).toThrow();
   });
 
-  it("accepts a valid PAN in either case (uppercased downstream)", () => {
+  it("uppercases PAN on parse", () => {
     const lower = employeeSchema.parse({ ...base, pan: "abcde1234f" });
-    expect(lower.pan.toUpperCase()).toBe("ABCDE1234F");
-    const upper = employeeSchema.parse({ ...base, pan: "ABCDE1234F" });
-    expect(upper.pan).toBe("ABCDE1234F");
+    expect(lower.pan).toBe("ABCDE1234F");
   });
 
   it("rejects malformed PAN values", () => {
