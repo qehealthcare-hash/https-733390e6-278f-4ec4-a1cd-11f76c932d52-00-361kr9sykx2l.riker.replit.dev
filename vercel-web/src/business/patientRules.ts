@@ -24,6 +24,8 @@ export function patientToRow(input: PatientInput) {
     status: input.status,
     shift: input.shift,
     caretaker_id: input.caretaker_id || null,
+    disease_condition: input.disease_condition ?? "",
+    start_date: input.start_date ?? "",
     docs: input.docs ?? undefined
   };
   if (Object.prototype.hasOwnProperty.call(input, "photo")) {
@@ -61,6 +63,8 @@ export function patientToApi(row: Record<string, unknown>) {
     shift_type: row.shift || "",
     caretaker_id: row.caretaker_id || "",
     assigned_staff_id: row.caretaker_id || "",
+    disease_condition: row.disease_condition || "",
+    start_date: row.start_date || "",
     docs: row.docs || [],
     created_at: row.created_at || row.created || null,
     updated_at: row.updated_at || null

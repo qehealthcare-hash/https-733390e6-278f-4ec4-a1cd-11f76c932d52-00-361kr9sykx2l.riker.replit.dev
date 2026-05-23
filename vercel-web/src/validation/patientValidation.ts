@@ -66,6 +66,18 @@ export const patientSchema = z
     shift_type: optionalShiftType,
     caretaker_id: z.string().max(64).optional().default(""),
     assigned_staff_id: z.string().max(64).optional(),
+    /**
+     * Free-text patient diagnosis / condition. The new React form exposes
+     * this as a textarea; the legacy SPA did not have a backing column so
+     * it was silently dropped on every save until column 017.
+     */
+    disease_condition: z.string().max(2000).optional().default(""),
+    /**
+     * Care start date (YYYY-MM-DD). Stored as text to match the legacy
+     * date encoding everywhere else in the schema. Empty string means
+     * "use registration date".
+     */
+    start_date: z.string().max(20).optional().default(""),
     photo: z.any().optional(),
     docs: z.any().optional()
   })
