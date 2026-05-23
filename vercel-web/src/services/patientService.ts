@@ -20,8 +20,10 @@ import { ErrorCodes } from "@/types/common";
 import {
   patientSchema,
   patientAssignSchema,
+  patientCloseSchema,
   patientListQuerySchema,
   patientLegacySyncSchema,
+  type PatientCloseInput,
   type PatientInput,
   type PatientAssignInput,
   type PatientListQuery,
@@ -304,12 +306,22 @@ export const patientService = {
   /**
    * Soft-close: sets `status = Closed` (preserves duties / billings / receipts).
    * Idempotent on already-Closed rows — re-stamps `updated_by` so the audit
-   * trail is honest about who touched it.
+   * trail is honest about who touched it. Optional `rawCloseInput` carries
+   * the dropdown reason from the registry close dialog; it is appended to
+   * the audit stamp so the operator's "why" is recorded alongside "who".
    */
   async remove(
     id: string,
-    ctx: PatientServiceContext
+    ctx: PatientServiceContext,
+    rawCloseInput?: unknown
   ): Promise<ApiResult<ReturnType<typeof patientToApi>>> {
+    let reasonInput: PatientCloseInput = { reason: "", reason_other: "" };
+    if (rawCloseInput && Object.keys(rawCloseInput as Record<string, unknown>).length > 0) {
+      const parsed = parseInput(patientCloseSchema, rawCloseInput);
+      if (!parsed.success) return passFailure(parsed);
+      reasonInput = parsed.data as PatientCloseInput;
+    }
+
     const existing = await loadPatient(id, ctx);
     if (!existing.success) {
       return failure(existing.error || "Patient not found", existing.code, existing.details);
@@ -323,13 +335,22 @@ export const patientService = {
     if (!fresh.success) {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
+
+    const reasonLabel =
+      reasonInput.reason === "Other" && reasonInput.reason_other
+        ? `Other (${reasonInput.reason_other})`
+        : reasonInput.reason || "";
+    const stamp = reasonLabel
+      ? `Deactivated patient ${id} — Reason: ${reasonLabel}`
+      : `Deactivated patient ${id}`;
+
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
         action: "deactivate",
         before: existing.data,
-        after: fresh.data,
-        stamp: `Deactivated patient ${id}`
+        after: { ...fresh.data, close_reason: reasonLabel || null },
+        stamp
       }),
       patientToApi(fresh.data)
     );

@@ -7,7 +7,7 @@ import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useRealtimeResource } from "@/hooks/use-realtime-resource";
 import { useAuth } from "@/components/providers/auth-provider";
-import { requestWithOfflineFallback } from "@/lib/api-client";
+import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import {
   departmentOptions,
   educationOptions,
@@ -52,9 +52,13 @@ function createInitialForm() {
     ecphone: "",
     ecrel: "",
     skills: "",
-    score_experience: 5,
-    score_behaviour: 5,
-    score_testimonial: 5,
+    // Scores stay null = "Not rated" until the operator drags a slider.
+    // Tracked per-field so editing an unscored row + saving without touching
+    // the meter does not silently write 5/5/5.
+    score_experience: null,
+    score_behaviour: null,
+    score_testimonial: null,
+    score_touched: { score_experience: false, score_behaviour: false, score_testimonial: false },
     status: "Active",
     photo: null,
     documents: []
@@ -69,9 +73,9 @@ function clampScore(value) {
 
 function computeScoreTotal(form) {
   var parts = [form.score_experience, form.score_behaviour, form.score_testimonial]
-    .map(function (v) { return Number(v); })
-    .filter(function (v) { return Number.isFinite(v); });
-  if (!parts.length) return 0;
+    .filter(function (v) { return v != null && Number.isFinite(Number(v)); })
+    .map(function (v) { return Number(v); });
+  if (!parts.length) return null;
   var avg = parts.reduce(function (a, b) { return a + b; }, 0) / parts.length;
   return Math.round(avg * 100) / 100;
 }
@@ -90,6 +94,8 @@ function rowScoreTotal(row) {
 
 export default function EmployeesPage() {
   var auth = useAuth();
+  var isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
+  var canManage = isAdmin || ["MANAGER"].includes(String(auth.profile?.role || "").trim().toUpperCase());
   var [search, setSearch] = useState("");
   var [debouncedSearch, setDebouncedSearch] = useState("");
   var [pageSize, setPageSize] = useState(500);
@@ -130,6 +136,39 @@ export default function EmployeesPage() {
   var [scoreFilter, setScoreFilter] = useState("");
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
+
+  var [statusDialog, setStatusDialog] = useState(null);
+  var [historyDialog, setHistoryDialog] = useState(null);
+  var [historyData, setHistoryData] = useState(null);
+  var [historyLoading, setHistoryLoading] = useState(false);
+  var [historyError, setHistoryError] = useState("");
+
+  async function openHistory(row) {
+    var name = (row.full_name || row.name || ((row.fn || "") + " " + (row.ln || ""))).trim() || row.id;
+    setHistoryDialog({ id: row.id, name: name });
+    setHistoryData(null);
+    setHistoryError("");
+    setHistoryLoading(true);
+    try {
+      var results = await Promise.allSettled([
+        request("/employees/" + row.id + "/links", null, auth.session),
+        request("/audits?entity_id=" + encodeURIComponent(row.id) + "&limit=20", null, auth.session)
+      ]);
+      var linkCounts = results[0].status === "fulfilled" ? (results[0].value || {}) : {};
+      var auditPayload = results[1].status === "fulfilled" ? (results[1].value || {}) : {};
+      var auditRows = Array.isArray(auditPayload)
+        ? auditPayload
+        : auditPayload.rows || auditPayload.data || [];
+      setHistoryData({ counts: linkCounts, audit: auditRows });
+      if (results[0].status === "rejected" && results[1].status === "rejected") {
+        setHistoryError(results[0].reason?.message || results[1].reason?.message || "Could not load history");
+      }
+    } catch (err) {
+      setHistoryError(err?.message || "Could not load employee history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
 
   var filtered = useMemo(
     function () {
@@ -173,7 +212,11 @@ export default function EmployeesPage() {
 
   function updateField(name, value) {
     setForm(function (current) {
-      return { ...current, [name]: value };
+      var next = { ...current, [name]: value };
+      if (name === "score_experience" || name === "score_behaviour" || name === "score_testimonial") {
+        next.score_touched = { ...(current.score_touched || {}), [name]: true };
+      }
+      return next;
     });
   }
 
@@ -217,9 +260,17 @@ export default function EmployeesPage() {
       ecphone: row.ecphone || row.relphone || "",
       ecrel: row.ecrel || "",
       skills: row.skills || "",
-      score_experience: row.score_experience != null ? Number(row.score_experience) : 5,
-      score_behaviour: row.score_behaviour != null ? Number(row.score_behaviour) : 5,
-      score_testimonial: row.score_testimonial != null ? Number(row.score_testimonial) : 5,
+      score_experience: row.score_experience != null ? Number(row.score_experience) : null,
+      score_behaviour: row.score_behaviour != null ? Number(row.score_behaviour) : null,
+      score_testimonial: row.score_testimonial != null ? Number(row.score_testimonial) : null,
+      // Pre-marking touched=true only for fields that ALREADY have a value
+      // means an unscored employee saved without slider interaction will
+      // continue to be unscored (no silent 5/5/5 regression).
+      score_touched: {
+        score_experience: row.score_experience != null,
+        score_behaviour: row.score_behaviour != null,
+        score_testimonial: row.score_testimonial != null
+      },
       status: row.status || (row.active === false ? "Inactive" : "Active"),
       photo: row.photo && typeof row.photo === "object" ? row.photo : null,
       documents: row.employee_documents || row.docs || []
@@ -287,8 +338,12 @@ export default function EmployeesPage() {
     setError("");
     setMessage("");
     try {
-      if (!form.documents.length) {
-        throw new Error("At least one employee document is required");
+      // Documents are recommended for Active employees but no longer hard-required
+      // (it was blocking edits on legacy rows that never had docs uploaded).
+      // Warn instead so the operator is aware.
+      if (form.status === "Active" && !form.documents.length) {
+        // eslint-disable-next-line no-console
+        console.warn("Saving Active employee with no documents on file.");
       }
       var fullName = [form.fn, form.mn, form.ln].filter(Boolean).join(" ").trim();
       var payload = {
@@ -336,16 +391,27 @@ export default function EmployeesPage() {
         relname: form.ecname || "",
         relphone: form.ecphone || "",
         skills: form.skills || "",
-        score_experience: clampScore(form.score_experience),
-        score_behaviour: clampScore(form.score_behaviour),
-        score_testimonial: clampScore(form.score_testimonial),
-        score_total: computeScoreTotal(form),
         status: form.status,
         active: form.status === "Active",
         photo: form.photo || undefined,
         docs: form.documents,
         documents: form.documents
       };
+      // Only forward score fields the operator actually touched (or that
+      // already had a value loaded from the row). This prevents silent
+      // overwrites to 5/5/5 on edit-and-save of an unscored employee.
+      var touched = form.score_touched || {};
+      if (touched.score_experience && form.score_experience != null) {
+        payload.score_experience = clampScore(form.score_experience);
+      }
+      if (touched.score_behaviour && form.score_behaviour != null) {
+        payload.score_behaviour = clampScore(form.score_behaviour);
+      }
+      if (touched.score_testimonial && form.score_testimonial != null) {
+        payload.score_testimonial = clampScore(form.score_testimonial);
+      }
+      var maybeTotal = computeScoreTotal(form);
+      if (maybeTotal != null) payload.score_total = maybeTotal;
       await requestWithOfflineFallback(
         form.id ? "/employees/" + form.id : "/employees",
         { method: form.id ? "PUT" : "POST", body: payload },
@@ -361,11 +427,15 @@ export default function EmployeesPage() {
     }
   }
 
-  async function changeStatus(id, nextStatus) {
-    var reason = "";
-    if (nextStatus !== "Active") {
-      reason = window.prompt("Reason for " + nextStatus + " (audited)", "") || "";
+  function changeStatus(id, nextStatus, rowName) {
+    if (nextStatus === "Active") {
+      void applyStatusChange(id, nextStatus, "");
+      return;
     }
+    setStatusDialog({ id: id, name: rowName || "", nextStatus: nextStatus, reason: "" });
+  }
+
+  async function applyStatusChange(id, nextStatus, reason) {
     setBusy(true);
     setError("");
     try {
@@ -377,6 +447,7 @@ export default function EmployeesPage() {
       await resource.reload();
       if (form.id === id) resetForm();
       setMessage("Employee → " + nextStatus);
+      setStatusDialog(null);
     } catch (err) {
       setError(err.message || "Unable to change status");
     } finally {
@@ -678,47 +749,63 @@ export default function EmployeesPage() {
                 <textarea rows="2" value={form.skills} onChange={function (event) { updateField("skills", event.target.value); }} placeholder="e.g. Wound care, IV, BP, post-op care" />
               </div>
 
-              <strong>Performance score (1-10)</strong>
+              <strong>Performance score (0-10)</strong>
               <div className="grid-3">
-                <div className="field">
-                  <label>Experience</label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="10"
-                    step="0.5"
-                    value={form.score_experience}
-                    onChange={function (event) { updateField("score_experience", event.target.value); }}
-                  />
-                  <small>{Number(form.score_experience).toFixed(1)}/10</small>
-                </div>
-                <div className="field">
-                  <label>Behaviour</label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="10"
-                    step="0.5"
-                    value={form.score_behaviour}
-                    onChange={function (event) { updateField("score_behaviour", event.target.value); }}
-                  />
-                  <small>{Number(form.score_behaviour).toFixed(1)}/10</small>
-                </div>
-                <div className="field">
-                  <label>Testimonial</label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="10"
-                    step="0.5"
-                    value={form.score_testimonial}
-                    onChange={function (event) { updateField("score_testimonial", event.target.value); }}
-                  />
-                  <small>{Number(form.score_testimonial).toFixed(1)}/10</small>
-                </div>
+                {["score_experience", "score_behaviour", "score_testimonial"].map(function (key) {
+                  var label = key === "score_experience" ? "Experience" : key === "score_behaviour" ? "Behaviour" : "Testimonial";
+                  var raw = form[key];
+                  var touched = !!(form.score_touched && form.score_touched[key]);
+                  var displayValue = raw == null ? 5 : Number(raw);
+                  return (
+                    <div className="field" key={key}>
+                      <label>{label}</label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="10"
+                        step="0.5"
+                        value={displayValue}
+                        onChange={function (event) { updateField(key, event.target.value); }}
+                      />
+                      <small>
+                        {touched && raw != null ? Number(raw).toFixed(1) + "/10" : "Not rated"}
+                        {touched && raw != null ? (
+                          <button
+                            type="button"
+                            style={{
+                              marginLeft: 8,
+                              background: "none",
+                              border: 0,
+                              color: "var(--accent, #2563eb)",
+                              cursor: "pointer",
+                              padding: 0,
+                              font: "inherit",
+                              textDecoration: "underline"
+                            }}
+                            onClick={function () {
+                              setForm(function (current) {
+                                return {
+                                  ...current,
+                                  [key]: null,
+                                  score_touched: { ...(current.score_touched || {}), [key]: false }
+                                };
+                              });
+                            }}
+                          >
+                            Clear
+                          </button>
+                        ) : null}
+                      </small>
+                    </div>
+                  );
+                })}
               </div>
               <div className="helper-box">
-                <strong>Total score:</strong> {computeScoreTotal(form).toFixed(2)} / 10
+                <strong>Total score:</strong>{" "}
+                {(function () {
+                  var t = computeScoreTotal(form);
+                  return t == null ? "Not rated" : t.toFixed(2) + " / 10";
+                })()}
               </div>
 
               <strong>Emergency contact</strong>
@@ -971,19 +1058,22 @@ export default function EmployeesPage() {
                           <button className="button secondary" type="button" onClick={function () { editEmployee(row); }}>
                             Edit
                           </button>
+                          <button className="button ghost" type="button" onClick={function () { openHistory(row); }}>
+                            History
+                          </button>
                           {!isActive ? (
-                            <button className="button primary" type="button" onClick={function () { changeStatus(row.id, "Active"); }}>
+                            <button className="button primary" type="button" onClick={function () { changeStatus(row.id, "Active", row.full_name || row.name); }}>
                               Activate
                             </button>
                           ) : (
                             <>
-                              <button className="button secondary" type="button" onClick={function () { changeStatus(row.id, "OnLeave"); }}>
+                              <button className="button secondary" type="button" onClick={function () { changeStatus(row.id, "OnLeave", row.full_name || row.name); }}>
                                 On leave
                               </button>
-                              <button className="button secondary" type="button" onClick={function () { changeStatus(row.id, "Suspended"); }}>
+                              <button className="button secondary" type="button" onClick={function () { changeStatus(row.id, "Suspended", row.full_name || row.name); }}>
                                 Suspend
                               </button>
-                              <button className="button ghost" type="button" onClick={function () { changeStatus(row.id, "Inactive"); }}>
+                              <button className="button ghost" type="button" onClick={function () { changeStatus(row.id, "Inactive", row.full_name || row.name); }}>
                                 Deactivate
                               </button>
                             </>
@@ -994,9 +1084,11 @@ export default function EmployeesPage() {
                           <button className="button secondary" type="button" onClick={function () { openEmployeePdf(row, true); }}>
                             PDF (sanitised)
                           </button>
-                          <button className="button danger" type="button" onClick={function () { deleteEmployee(row.id); }}>
-                            Delete
-                          </button>
+                          {isAdmin ? (
+                            <button className="button danger" type="button" onClick={function () { deleteEmployee(row.id); }}>
+                              Delete
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -1007,6 +1099,91 @@ export default function EmployeesPage() {
           </div>
         </div>
       </AppShell>
+
+      {statusDialog ? (
+        <div className="modal-backdrop" onClick={function () { if (!busy) setStatusDialog(null); }}>
+          <div className="card modal-card" onClick={function (e) { e.stopPropagation(); }}>
+            <div className="modal-head">
+              <h3>Change status → {statusDialog.nextStatus}</h3>
+              <button className="button ghost" type="button" disabled={busy} onClick={function () { setStatusDialog(null); }}>×</button>
+            </div>
+            <p className="mini-muted">
+              {statusDialog.name ? statusDialog.name + " — " : ""}This change is written to the audit log.
+            </p>
+            <div className="field">
+              <label>Reason (optional)</label>
+              <textarea
+                rows="3"
+                value={statusDialog.reason}
+                onChange={function (e) {
+                  var value = e.target.value;
+                  setStatusDialog(function (current) { return current ? { ...current, reason: value } : current; });
+                }}
+                placeholder={"Why is this employee being marked " + statusDialog.nextStatus + "?"}
+              />
+            </div>
+            <div className="button-row" style={{ justifyContent: "flex-end" }}>
+              <button className="button ghost" type="button" disabled={busy} onClick={function () { setStatusDialog(null); }}>
+                Cancel
+              </button>
+              <button
+                className={statusDialog.nextStatus === "Inactive" ? "button danger" : "button primary"}
+                type="button"
+                disabled={busy}
+                onClick={function () { applyStatusChange(statusDialog.id, statusDialog.nextStatus, statusDialog.reason.trim()); }}
+              >
+                {busy ? "Saving..." : "Confirm " + statusDialog.nextStatus}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {historyDialog ? (
+        <div className="modal-backdrop" onClick={function () { setHistoryDialog(null); }}>
+          <div className="card modal-card modal-wide" onClick={function (e) { e.stopPropagation(); }}>
+            <div className="modal-head">
+              <h3>History — {historyDialog.name}</h3>
+              <button className="button ghost" type="button" onClick={function () { setHistoryDialog(null); }}>×</button>
+            </div>
+            {historyLoading ? <p className="mini-muted">Loading history…</p> : null}
+            {historyError ? <p style={{ color: "var(--danger)" }}>{historyError}</p> : null}
+            {historyData ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div className="grid-3">
+                  <div>
+                    <strong>Duties:</strong> {historyData.counts?.duties ?? 0}
+                  </div>
+                  <div>
+                    <strong>Attendance:</strong> {historyData.counts?.attendance ?? 0}
+                  </div>
+                  <div>
+                    <strong>Payouts:</strong> {historyData.counts?.payouts ?? 0}
+                  </div>
+                </div>
+                {Array.isArray(historyData.audit) && historyData.audit.length ? (
+                  <div>
+                    <strong>Recent audit trail:</strong>
+                    <ul style={{ paddingLeft: 18, marginTop: 6 }}>
+                      {historyData.audit.map(function (entry, idx) {
+                        return (
+                          <li key={entry.id || idx} className="mini-muted">
+                            {formatDate(entry.created_at)} — {entry.action || "change"}
+                            {entry.user_id ? " by " + entry.user_id : ""}
+                            {entry.stamp || entry.reason ? " (" + (entry.stamp || entry.reason) + ")" : ""}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="mini-muted">No audit entries available for this employee.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </AuthGuard>
   );
 }

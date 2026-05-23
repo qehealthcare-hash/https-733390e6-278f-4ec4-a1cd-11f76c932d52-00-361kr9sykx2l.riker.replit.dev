@@ -26,13 +26,27 @@ export const PUT = PATCH;
 export const DELETE = withAuth<Params>(async (req, { params, actor }) => {
   requireRole(actor, ["Admin", "Manager"]);
   // ?hard=1 → permanent delete (Admin-only, refuses if linked rows exist).
-  // Otherwise we soft-close, which is idempotent on already-Closed rows.
+  // Otherwise we soft-close, which is idempotent on already-Closed rows
+  // and accepts an optional `{ reason, reason_other }` JSON body so the
+  // operator's close reason is persisted to the audit stamp.
   const hard = new URL(req.url).searchParams.get("hard");
   if (hard === "1" || hard === "true") {
     requireRole(actor, ["Admin"]);
     const result = await patientService.removePermanent(params.id, { actor });
     return respond(result);
   }
-  const result = await patientService.remove(params.id, { actor });
+
+  let body: unknown = undefined;
+  try {
+    const raw = await req.text();
+    if (raw && raw.trim().length > 0) {
+      body = JSON.parse(raw);
+    }
+  } catch {
+    // Non-JSON body → ignore; fallback to no-reason close (backwards compat).
+    body = undefined;
+  }
+
+  const result = await patientService.remove(params.id, { actor }, body);
   return respond(result);
 });

@@ -4,49 +4,66 @@ import {
   employeeToRow,
   isActiveEmployee,
   deactivatePatch,
-  activatePatch
+  activatePatch,
+  statusPatch
 } from "@/business/employeeRules";
 
-describe("employeeRules — leave_date status mapping", () => {
+describe("employeeRules — status persistence (column + leave_date)", () => {
   it("treats empty leave_date as Active when status column absent", () => {
     expect(employeeStatusFromRow({ leave_date: "" })).toBe("Active");
     expect(isActiveEmployee({ leave_date: "" })).toBe(true);
   });
 
-  it("treats leave_date as Inactive marker", () => {
+  it("treats leave_date as Inactive marker when status missing", () => {
     expect(employeeStatusFromRow({ leave_date: "2026-05-01" })).toBe("Inactive");
     expect(isActiveEmployee({ leave_date: "2026-05-01" })).toBe(false);
   });
 
-  it("employeeToRow does not write status column", () => {
+  it("employeeToRow writes the explicit status column (Active)", () => {
     const row = employeeToRow({
       fn: "Test",
       ln: "User",
       phone: "9876543210",
       status: "Active"
     } as Parameters<typeof employeeToRow>[0]);
-    expect(row).not.toHaveProperty("status");
+    expect(row.status).toBe("Active");
     expect(row.leave_date).toBe("");
   });
 
-  it("maps Inactive to leave_date on write", () => {
+  it("employeeToRow writes status='Inactive' AND a leave_date stamp", () => {
     const row = employeeToRow({
       fn: "Test",
       ln: "User",
       phone: "9876543210",
       status: "Inactive"
     } as Parameters<typeof employeeToRow>[0]);
+    expect(row.status).toBe("Inactive");
     expect(String(row.leave_date)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("patches use leave_date only", () => {
+  it("deactivatePatch stamps both status AND leave_date", () => {
     expect(deactivatePatch("a@test.com")).toEqual({
+      status: "Inactive",
       leave_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
       updated_by: "a@test.com"
     });
+  });
+
+  it("activatePatch clears leave_date AND sets status='Active'", () => {
     expect(activatePatch("a@test.com")).toEqual({
+      status: "Active",
       leave_date: "",
       updated_by: "a@test.com"
     });
+  });
+
+  it("statusPatch persists OnLeave/Suspended as explicit status (not just leave_date)", () => {
+    const onLeave = statusPatch("OnLeave", "a@test.com", "vacation");
+    expect(onLeave.status).toBe("OnLeave");
+    expect(String(onLeave.leave_date)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    const suspended = statusPatch("Suspended", "a@test.com", "investigation");
+    expect(suspended.status).toBe("Suspended");
+    expect(String(suspended.leave_date)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

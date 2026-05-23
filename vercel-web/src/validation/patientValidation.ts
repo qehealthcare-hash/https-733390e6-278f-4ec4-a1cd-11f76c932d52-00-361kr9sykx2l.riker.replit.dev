@@ -114,6 +114,19 @@ export const patientAssignSchema = z.object({
   shift: shiftTypeSchema.default("DAY")
 });
 
+/**
+ * Payload for `DELETE /api/v1/patients/:id` (soft-close). `reason` is the
+ * dropdown selection (matches `patientCloseReasonOptions`); `reason_other`
+ * is required by the UI when the operator picks "Other". Both default to ""
+ * so old clients that DELETE without a body still work.
+ */
+export const patientCloseSchema = z.object({
+  reason: z.string().trim().max(120).optional().default(""),
+  reason_other: z.string().trim().max(500).optional().default("")
+});
+
+export type PatientCloseInput = z.infer<typeof patientCloseSchema>;
+
 export const patientListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional().default(50),
   offset: z.coerce.number().int().min(0).optional().default(0),

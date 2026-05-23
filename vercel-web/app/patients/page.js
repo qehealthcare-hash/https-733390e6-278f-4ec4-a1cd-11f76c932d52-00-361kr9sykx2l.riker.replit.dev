@@ -99,6 +99,15 @@ export default function PatientsPage() {
   var [shiftFilter, setShiftFilter] = useState("");
   var [sortOrder, setSortOrder] = useState("desc");
 
+  // Inline modals: close-reason dialog and full patient history viewer.
+  var [closeDialog, setCloseDialog] = useState(null); // { id, name, reason, reason_other }
+  var [historyDialog, setHistoryDialog] = useState(null); // { id, name }
+  var [historyData, setHistoryData] = useState(null);
+  var [historyLoading, setHistoryLoading] = useState(false);
+  var [historyError, setHistoryError] = useState("");
+
+  var isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
+
   useEffect(
     function () {
       if (!auth.session?.access_token) return;
@@ -368,16 +377,43 @@ export default function PatientsPage() {
     return normalized !== "Active";
   }
 
-  async function closePatient(id) {
-    if (!window.confirm("Close this patient? Their billing and duty history will be kept.")) return;
+  function openCloseDialog(row) {
+    setError("");
+    setMessage("");
+    setCloseDialog({
+      id: row.id,
+      name: row.full_name || row.name || row.id,
+      reason: "",
+      reason_other: ""
+    });
+  }
+
+  async function submitCloseDialog() {
+    if (!closeDialog) return;
+    if (!closeDialog.reason) {
+      setError("Pick a reason to close this patient");
+      return;
+    }
+    if (closeDialog.reason === "Other" && !closeDialog.reason_other.trim()) {
+      setError("Specify the other reason");
+      return;
+    }
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      await requestWithOfflineFallback("/patients/" + id, { method: "DELETE" }, auth.session);
+      await requestWithOfflineFallback(
+        "/patients/" + closeDialog.id,
+        {
+          method: "DELETE",
+          body: { reason: closeDialog.reason, reason_other: closeDialog.reason_other }
+        },
+        auth.session
+      );
       await resource.reload();
-      if (form.id === id) resetForm();
+      if (form.id === closeDialog.id) resetForm();
       setMessage("Patient closed");
+      setCloseDialog(null);
     } catch (closeError) {
       setError(closeError.message || "Unable to close patient");
     } finally {
@@ -406,6 +442,10 @@ export default function PatientsPage() {
   }
 
   async function deletePatientPermanently(id) {
+    if (!isAdmin) {
+      setError("Only an Admin can permanently delete patients.");
+      return;
+    }
     if (
       !window.confirm(
         "Permanently delete this patient? This cannot be undone. " +
@@ -431,6 +471,28 @@ export default function PatientsPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function openHistory(row) {
+    setHistoryDialog({ id: row.id, name: row.full_name || row.name || row.id });
+    setHistoryData(null);
+    setHistoryError("");
+    setHistoryLoading(true);
+    try {
+      var bundle = await request("/patients/" + row.id + "/history", null, auth.session);
+      setHistoryData(bundle);
+    } catch (historyErr) {
+      setHistoryError(historyErr.message || "Could not load patient history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  function closeHistory() {
+    setHistoryDialog(null);
+    setHistoryData(null);
+    setHistoryError("");
+    setHistoryLoading(false);
   }
 
   return (
@@ -773,6 +835,14 @@ export default function PatientsPage() {
                             <td>{formatDate(row.registered_at || row.created_at || row.created)}</td>
                             <td>
                               <div className="button-row">
+                                <button
+                                  className="button ghost"
+                                  type="button"
+                                  onClick={function () { openHistory(row); }}
+                                  disabled={busy}
+                                >
+                                  History
+                                </button>
                                 {isClosedStatus(row.status) ? (
                                   <>
                                     <button
@@ -783,14 +853,17 @@ export default function PatientsPage() {
                                     >
                                       Reopen
                                     </button>
-                                    <button
-                                      className="button danger"
-                                      type="button"
-                                      onClick={function () { deletePatientPermanently(row.id); }}
-                                      disabled={busy}
-                                    >
-                                      Delete
-                                    </button>
+                                    {isAdmin ? (
+                                      <button
+                                        className="button danger"
+                                        type="button"
+                                        onClick={function () { deletePatientPermanently(row.id); }}
+                                        disabled={busy}
+                                        title="Permanent delete (Admin only). Refused if linked billings, duties, or receipts exist."
+                                      >
+                                        Delete
+                                      </button>
+                                    ) : null}
                                   </>
                                 ) : (
                                   <>
@@ -805,7 +878,7 @@ export default function PatientsPage() {
                                     <button
                                       className="button danger"
                                       type="button"
-                                      onClick={function () { closePatient(row.id); }}
+                                      onClick={function () { openCloseDialog(row); }}
                                       disabled={busy}
                                     >
                                       Close
@@ -823,6 +896,193 @@ export default function PatientsPage() {
               )}
             </ModuleShell>
           </div>
+          {closeDialog ? (
+            <div className="modal-backdrop" onClick={function (event) {
+              if (event.target === event.currentTarget && !busy) setCloseDialog(null);
+            }}>
+              <div className="panel modal-card" role="dialog" aria-modal="true">
+                <h3>Close patient: {closeDialog.name}</h3>
+                <p className="mini-muted">
+                  Soft-close keeps all billings, duties and receipts. Pick a reason — it is
+                  recorded in the audit log.
+                </p>
+                <div className="field">
+                  <label>Reason</label>
+                  <select
+                    value={closeDialog.reason}
+                    onChange={function (event) {
+                      var value = event.target.value;
+                      setCloseDialog(function (d) {
+                        return d ? { ...d, reason: value } : d;
+                      });
+                    }}
+                    required
+                  >
+                    <option value="">Select reason</option>
+                    {patientCloseReasonOptions.map(function (r) {
+                      return <option key={r} value={r}>{r}</option>;
+                    })}
+                  </select>
+                </div>
+                {closeDialog.reason === "Other" ? (
+                  <div className="field">
+                    <label>Specify other reason</label>
+                    <input
+                      value={closeDialog.reason_other}
+                      onChange={function (event) {
+                        var value = event.target.value;
+                        setCloseDialog(function (d) {
+                          return d ? { ...d, reason_other: value } : d;
+                        });
+                      }}
+                      maxLength={500}
+                    />
+                  </div>
+                ) : null}
+                {error ? <div className="error-text">{error}</div> : null}
+                <div className="button-row">
+                  <button
+                    className="button ghost"
+                    type="button"
+                    onClick={function () { setCloseDialog(null); }}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="button danger"
+                    type="button"
+                    onClick={submitCloseDialog}
+                    disabled={busy}
+                  >
+                    {busy ? "Closing..." : "Close patient"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {historyDialog ? (
+            <div className="modal-backdrop" onClick={function (event) {
+              if (event.target === event.currentTarget) closeHistory();
+            }}>
+              <div className="panel modal-card modal-wide" role="dialog" aria-modal="true">
+                <div className="modal-head">
+                  <h3>History — {historyDialog.name}</h3>
+                  <button className="button ghost" type="button" onClick={closeHistory}>Close</button>
+                </div>
+                {historyLoading ? <p>Loading patient ledger...</p> : null}
+                {historyError ? <div className="error-text">{historyError}</div> : null}
+                {historyData ? (
+                  <div className="stack">
+                    <div className="mini-muted">
+                      Patient ID: {historyData.patient?.id || historyDialog.id}
+                      {" · "}Status: {historyData.patient?.status || "—"}
+                      {" · "}Billings: {historyData.linkCounts?.billings ?? 0}
+                      {" · "}Duties: {historyData.linkCounts?.duties ?? 0}
+                    </div>
+                    <div>
+                      <h4>Billings ({(historyData.billings || []).length})</h4>
+                      {historyData.billings && historyData.billings.length ? (
+                        <div className="table-wrap">
+                          <table>
+                            <thead>
+                              <tr><th>ID</th><th>Status</th><th>Total</th><th>Created</th></tr>
+                            </thead>
+                            <tbody>
+                              {historyData.billings.map(function (b) {
+                                return (
+                                  <tr key={b.id}>
+                                    <td>{b.id}</td>
+                                    <td>{b.status || "—"}</td>
+                                    <td>{b.total ?? b.amount ?? "—"}</td>
+                                    <td>{formatDate(b.created_at || b.created)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : <p className="mini-muted">No billings.</p>}
+                    </div>
+                    <div>
+                      <h4>Duties ({(historyData.duties || []).length})</h4>
+                      {historyData.duties && historyData.duties.length ? (
+                        <div className="table-wrap">
+                          <table>
+                            <thead>
+                              <tr><th>ID</th><th>Employee</th><th>Shift</th><th>Status</th><th>Start</th></tr>
+                            </thead>
+                            <tbody>
+                              {historyData.duties.map(function (d) {
+                                return (
+                                  <tr key={d.id}>
+                                    <td>{d.id}</td>
+                                    <td>{d.employee_id || d.caretaker_id || "—"}</td>
+                                    <td>{d.shift || d.shift_type || "—"}</td>
+                                    <td>{d.status || "—"}</td>
+                                    <td>{formatDate(d.start_at || d.start_date || d.created_at)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : <p className="mini-muted">No duties.</p>}
+                    </div>
+                    <div>
+                      <h4>Receipts ({(historyData.receipts || []).length})</h4>
+                      {historyData.receipts && historyData.receipts.length ? (
+                        <div className="table-wrap">
+                          <table>
+                            <thead>
+                              <tr><th>ID</th><th>Billing</th><th>Method</th><th>Amount</th><th>Created</th></tr>
+                            </thead>
+                            <tbody>
+                              {historyData.receipts.map(function (r) {
+                                return (
+                                  <tr key={r.id}>
+                                    <td>{r.id}</td>
+                                    <td>{r.billing_id}</td>
+                                    <td>{r.method || "—"}</td>
+                                    <td>{r.amount ?? "—"}</td>
+                                    <td>{formatDate(r.created_at || r.created)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : <p className="mini-muted">No receipts.</p>}
+                    </div>
+                    <div>
+                      <h4>Audit trail ({(historyData.audits || []).length})</h4>
+                      {historyData.audits && historyData.audits.length ? (
+                        <div className="table-wrap">
+                          <table>
+                            <thead>
+                              <tr><th>When</th><th>Actor</th><th>Action</th><th>Note</th></tr>
+                            </thead>
+                            <tbody>
+                              {historyData.audits.map(function (a) {
+                                return (
+                                  <tr key={a.id}>
+                                    <td>{formatDate(a.created_at)}</td>
+                                    <td>{a.actor || a.user_id || "—"}</td>
+                                    <td>{a.action || "—"}</td>
+                                    <td>{a.stamp || ""}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : <p className="mini-muted">No audit entries.</p>}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
       </AppShell>
     </AuthGuard>

@@ -112,6 +112,7 @@ export function employeeToRow(input: EmployeeInput) {
     skills: i.skills || "",
     salary: input.salary != null ? String(input.salary) : "",
     join_date: input.join_date || input.join || "",
+    status: input.status,
     leave_date: leaveDateForStatus(
       input.status,
       input.leave_date || input.leave || ""
@@ -212,6 +213,7 @@ export function ensureNoHistoricalLinks(counts: EmployeeLinkCounts): ApiResult<n
 /** Patch to deactivate (soft-delete) an employee. */
 export function deactivatePatch(actorEmail: string, _reason = "") {
   return {
+    status: "Inactive" as const,
     leave_date: new Date().toISOString().slice(0, 10),
     updated_by: actorEmail
   };
@@ -220,16 +222,28 @@ export function deactivatePatch(actorEmail: string, _reason = "") {
 /** Patch to (re)activate. */
 export function activatePatch(actorEmail: string) {
   return {
+    status: "Active" as const,
     leave_date: "",
     updated_by: actorEmail
   };
 }
 
-/** Patch for arbitrary status change (used by /status route). */
+/**
+ * Patch for arbitrary status change (used by /status route). Persists both
+ * the explicit `status` column (added in migration 022) AND the legacy
+ * `leave_date` column so older readers / reports stay consistent:
+ *
+ *   - Active                  → status='Active',   leave_date=''
+ *   - Inactive                → status='Inactive', leave_date=today (or existing)
+ *   - OnLeave / Suspended     → status=<picked>,   leave_date=today (HR off-roster)
+ *                               so duty / payout queries that filter by
+ *                               leave_date still treat them as off-roster.
+ */
 export function statusPatch(status: EmployeeStatus, actorEmail: string, _reason = "") {
-  if (status === "Inactive") return deactivatePatch(actorEmail);
   if (status === "Active") return activatePatch(actorEmail);
+  if (status === "Inactive") return deactivatePatch(actorEmail);
   return {
+    status,
     leave_date: leaveDateForStatus(status),
     updated_by: actorEmail
   };
