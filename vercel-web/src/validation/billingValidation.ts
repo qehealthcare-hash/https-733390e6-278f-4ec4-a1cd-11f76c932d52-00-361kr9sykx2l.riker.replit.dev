@@ -131,7 +131,10 @@ export type ReceiptSoftDeleteInput = z.infer<typeof receiptSoftDeleteSchema>;
  * `hominal_replace_service_entries(p_rows)` reads.
  */
 export const serviceEntryRowSchema = z.object({
-  billing_id: z.string().optional().default(""),
+  billing_id: z
+    .string()
+    .trim()
+    .min(1, "billing_id is required for a service entry row"),
   service_name: z.string().optional().default(""),
   partner: z.string().optional().default(""),
   partner_id: z.string().optional().default(""),
@@ -140,10 +143,10 @@ export const serviceEntryRowSchema = z.object({
   // entries (legacy duty-diary save, the duty-billing sync hook, etc.).
   date: optionalIsoDate,
   freq: z.string().optional().default(""),
-  amt: z.coerce.number().optional().default(0),
-  count: z.coerce.number().optional().default(0),
-  disc: z.coerce.number().optional().default(0),
-  total: z.coerce.number().optional().default(0),
+  amt: z.coerce.number().min(0, "amt cannot be negative").optional().default(0),
+  count: z.coerce.number().min(0, "count cannot be negative").optional().default(0),
+  disc: z.coerce.number().min(0, "disc cannot be negative").optional().default(0),
+  total: z.coerce.number().min(0, "total cannot be negative").optional().default(0),
   remarks: z.string().optional().default("")
 });
 

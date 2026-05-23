@@ -58,7 +58,7 @@ export default function VendorsPage() {
       reload();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [auth.session]
+    [auth.session, city]
   );
 
   var visible = useMemo(

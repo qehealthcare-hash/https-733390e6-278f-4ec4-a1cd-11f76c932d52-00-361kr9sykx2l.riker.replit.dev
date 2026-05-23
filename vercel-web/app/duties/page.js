@@ -200,6 +200,7 @@ export default function DutiesPage() {
       } else {
         setMessage("Billing entry generated");
       }
+      await reload();
     } catch (err) {
       setError(err.message || "Could not generate billing entry");
     } finally {
