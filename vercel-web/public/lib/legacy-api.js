@@ -441,6 +441,35 @@
         payload || {},
         { idempotencyKey: "duty-checkout:" + dutyId }
       );
+    },
+
+    /** POST /duties/:id/materialize — expand to per-day diary rows (optional dry_run). */
+    materialize: function (dutyId, payload) {
+      if (!dutyId) {
+        return Promise.resolve({ ok: false, status: 0, transport: "business", error: "dutyId required" });
+      }
+      return request(
+        "POST",
+        "/duties/" + encodeURIComponent(dutyId) + "/materialize",
+        payload || {}
+      );
+    },
+
+    /** GET /duties/totals — patient outstanding + partner payout pending. */
+    totals: function (params) {
+      return request("GET", "/duties/totals" + dutyQueryString(params));
+    },
+
+    /** POST /duties/:id/partners — replace extra_partners. */
+    assignPartners: function (dutyId, payload) {
+      if (!dutyId) {
+        return Promise.resolve({ ok: false, status: 0, transport: "business", error: "dutyId required" });
+      }
+      return request(
+        "POST",
+        "/duties/" + encodeURIComponent(dutyId) + "/partners",
+        payload || {}
+      );
     }
   };
 

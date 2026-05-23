@@ -42,6 +42,38 @@ export function dutyIdFromRemarks(remarks: string | null | undefined): string | 
   return m ? m[1] : null;
 }
 
+export function parseDutyDiaryRemarks(remarks: string | null | undefined): {
+  dutyId: string;
+  isoDate: string;
+  employeeId: string;
+} | null {
+  const m = String(remarks || "").match(/^duty:([^:]+):(\d{4}-\d{2}-\d{2}):([^:]+)$/);
+  if (!m) return null;
+  return { dutyId: m[1], isoDate: m[2], employeeId: m[3] };
+}
+
+export function diarySlotKey(isoDate: string, employeeId: string): string {
+  return `${isoDate}:${employeeId}`;
+}
+
+/** Expected per-day × partner slots for a duty window (optional date clip). */
+export function expectedDiarySlotKeys(
+  startAt: string,
+  endAt: string,
+  partners: DutyPartnerAssignment[],
+  clip?: { from?: string; to?: string }
+): Set<string> {
+  const keys = new Set<string>();
+  for (const isoDate of eachDutyCalendarDay(startAt, endAt)) {
+    if (clip?.from && isoDate < clip.from) continue;
+    if (clip?.to && isoDate > clip.to) continue;
+    for (const p of partners) {
+      if (p.employee_id) keys.add(diarySlotKey(isoDate, p.employee_id));
+    }
+  }
+  return keys;
+}
+
 /** Inclusive calendar days from duty start through end (UTC date parts). */
 export function eachDutyCalendarDay(startAt: string, endAt: string): string[] {
   const start = new Date(startAt);

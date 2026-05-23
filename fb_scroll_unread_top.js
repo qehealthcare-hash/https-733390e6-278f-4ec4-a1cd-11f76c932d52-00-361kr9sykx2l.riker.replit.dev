@@ -4,12 +4,9 @@
     return r.left < 540 && r.top > 230 && r.bottom < window.innerHeight &&
       el.scrollHeight > el.clientHeight + 80;
   });
-  candidates.sort(function (a, b) {
-    return (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight);
-  });
-  var el = candidates[0];
-  if (!el) return "NO_SCROLL_CONTAINER";
-  var before = el.scrollTop;
-  el.scrollTop = 0;
-  return "TOP:" + before + "->" + el.scrollTop + "/" + el.scrollHeight;
+  if (!candidates.length) return "NO_SCROLL_CONTAINER";
+  var before = candidates.map(function (el) { return el.scrollTop; }).join(",");
+  candidates.forEach(function (el) { el.scrollTop = 0; });
+  var after = candidates.map(function (el) { return el.scrollTop; }).join(",");
+  return "TOP:" + before + "->" + after;
 }());

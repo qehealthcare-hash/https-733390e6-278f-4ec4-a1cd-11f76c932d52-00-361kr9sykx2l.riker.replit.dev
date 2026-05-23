@@ -150,11 +150,19 @@ function asSlot(row: JsonRow): DutyTimeSlot {
 }
 
 async function ensureNoOverlap(
-  input: { employee_id: string; patient_id: string; start_at: string; end_at: string; status: DutyStatus },
+  input: {
+    employee_id: string;
+    patient_id: string;
+    start_at: string;
+    end_at: string;
+    status: DutyStatus;
+    confirm_staff_overlap?: boolean;
+  },
   excludeId: string | undefined,
   ctx: DutyServiceContext
 ): Promise<ApiResult<null>> {
   if (!shouldCheckDutyOverlap(input.status)) return success(null);
+  if (input.confirm_staff_overlap) return success(null);
   const access = dbAccess(ctx);
 
   const empRows = await dutyRepository.findOverlapping(
@@ -176,12 +184,12 @@ async function ensureNoOverlap(
     return duplicateFailure(
       "employee_window",
       empConflict.id,
-      "Staff already has a duty overlapping this time"
+      "Staff already has a duty overlapping this time. Confirm to assign anyway (relief / partner share)."
     );
   }
 
   // Legacy CRM allows multiple partners on one patient per day (svc diary);
-  // only block the same employee double-booked.
+  // only the same employee on the same window needs explicit confirmation.
 
   return success(null);
 }
@@ -268,7 +276,11 @@ export const dutyService = {
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as DutyInput;
 
-    const overlap = await ensureNoOverlap(input, input.id, ctx);
+    const overlap = await ensureNoOverlap(
+      { ...input, confirm_staff_overlap: input.confirm_staff_overlap },
+      input.id,
+      ctx
+    );
     if (!overlap.success) return passFailure(overlap);
 
     const id = input.id || newId.duty();
@@ -333,7 +345,11 @@ export const dutyService = {
       );
     }
 
-    const overlap = await ensureNoOverlap(input, id, ctx);
+    const overlap = await ensureNoOverlap(
+      { ...input, confirm_staff_overlap: input.confirm_staff_overlap },
+      id,
+      ctx
+    );
     if (!overlap.success) return passFailure(overlap);
 
     const patch = {
@@ -360,6 +376,117 @@ export const dutyService = {
       }),
       fresh.data
     );
+  },
+
+  /**
+   * Totals for the duty-form summary banner: patient outstanding across all
+   * bills + partner payout (all hh_payout_charges to that employee, less paid).
+   */
+  async totalsFor(
+    patientId: string | undefined,
+    employeeId: string | undefined,
+    ctx: DutyServiceContext
+  ): Promise<
+    ApiResult<{
+      patient: {
+        patient_id: string;
+        bills: number;
+        billed: number;
+        received: number;
+        outstanding: number;
+        sec_dep: number;
+      } | null;
+      partner: {
+        employee_id: string;
+        charged: number;
+        paid: number;
+        pending: number;
+      } | null;
+    }>
+  > {
+    const access = dbAccess(ctx);
+    const { billingRepository } = await import("@/database/billingRepository");
+    const { computeBillingTotals } = await import("@/business/billingRules");
+
+    let patientSummary: {
+      patient_id: string;
+      bills: number;
+      billed: number;
+      received: number;
+      outstanding: number;
+      sec_dep: number;
+    } | null = null;
+
+    if (patientId) {
+      const bills = await billingRepository.listBillingsByPatient(patientId, access);
+      if (!bills.success) return passFailure(bills);
+      const billRows = bills.data || [];
+      let billed = 0;
+      let received = 0;
+      let outstanding = 0;
+      let secDep = 0;
+      for (const b of billRows) {
+        const bid = String(b.id);
+        const [svc, rcpt] = await Promise.all([
+          billingRepository.listSvcByBilling(bid, access),
+          billingRepository.listActiveReceiptsByBilling(bid, access)
+        ]);
+        if (!svc.success) return passFailure(svc);
+        if (!rcpt.success) return passFailure(rcpt);
+        const t = computeBillingTotals({
+          services: svc.data || [],
+          receipts: rcpt.data || [],
+          secDep: Number(b.sec_dep || 0)
+        });
+        billed += t.services;
+        received += t.receipts;
+        outstanding += t.outstanding;
+        secDep += t.sec_dep;
+      }
+      patientSummary = {
+        patient_id: patientId,
+        bills: billRows.length,
+        billed,
+        received,
+        outstanding,
+        sec_dep: secDep
+      };
+    }
+
+    let partnerSummary: { employee_id: string; charged: number; paid: number; pending: number } | null = null;
+    if (employeeId) {
+      const db = (await import("@/database/supabaseClient")).runListQuery;
+      const { resolveClient } = await import("@/database/baseRepository");
+      const client = resolveClient(access);
+      const chargesRes = await db<{ amount?: number | string | null }>(
+        () =>
+          client
+            .from("hh_payout_charges")
+            .select("amount")
+            .eq("partner_id", employeeId),
+        "dutyService.totalsFor.charges"
+      );
+      if (!chargesRes.success) return passFailure(chargesRes);
+      const paidRes = await db<{ amount?: number | string | null }>(
+        () =>
+          client
+            .from("hh_paid_transactions")
+            .select("amount")
+            .eq("employee_id", employeeId),
+        "dutyService.totalsFor.paid"
+      );
+      if (!paidRes.success) return passFailure(paidRes);
+      const charged = (chargesRes.data || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+      const paid = (paidRes.data || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+      partnerSummary = {
+        employee_id: employeeId,
+        charged,
+        paid,
+        pending: Math.max(0, charged - paid)
+      };
+    }
+
+    return success({ patient: patientSummary, partner: partnerSummary });
   },
 
   async materialize(
@@ -460,6 +587,46 @@ export const dutyService = {
     ctx: DutyServiceContext
   ): Promise<ApiResult<DutyApiRow>> {
     return dutyService.cancel(id, rawInput, ctx);
+  },
+
+  /**
+   * Hard-delete a duty + all of its diary rows. Refuses if the bill already
+   * has receipts (we never silently corrupt finance data).
+   * Admin-only.
+   */
+  async hardDelete(
+    id: string,
+    ctx: DutyServiceContext
+  ): Promise<ApiResult<{ id: string; deleted: true }>> {
+    const existing = await loadDuty(id, ctx);
+    if (!existing.success) return passFailure(existing);
+
+    const rollback = await rollbackBillingFromDuty(existing.data, ctx);
+    if (!rollback.success) return passFailure(rollback);
+
+    const access = dbAccess(ctx);
+    const removed = await dutyRepository.remove(id, access);
+    if (!removed.success) return passFailure(removed);
+
+    const employeeId = (existing.data.employee_id as string | undefined) || "";
+    if (employeeId) {
+      const period = payoutPeriodForDuty(
+        String(existing.data.start_at || ""),
+        new Date().toISOString()
+      );
+      await payoutRepository.recomputeRpc(employeeId, period, access);
+    }
+
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "delete",
+        before: existing.data,
+        after: null,
+        stamp: "Hard delete (duty + diary)"
+      }),
+      { id, deleted: true as const }
+    );
   },
 
   async checkIn(

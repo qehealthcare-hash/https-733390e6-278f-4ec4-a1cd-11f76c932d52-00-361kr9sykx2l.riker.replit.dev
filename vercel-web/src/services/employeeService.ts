@@ -408,17 +408,26 @@ export const employeeService = {
     }
 
     const phone = String(input.phone || "").replace(/[^0-9+]/g, "");
+    const existingId = existing?.id ? String(existing.id) : undefined;
     if (isActiveEmployee(input.status)) {
       const dups = await loadDuplicateCandidates(phone, ctx);
       if (!dups.success || !dups.data) return passFailure(dups);
-      const conflict = findActiveEmployeeDuplicate(
-        dups.data,
-        phone,
-        existing?.id ? String(existing.id) : undefined
-      );
+      const conflict = findActiveEmployeeDuplicate(dups.data, phone, existingId);
       if (conflict) {
         return duplicateFailure("mobile", phone, "Active employee already exists for this mobile");
       }
+
+      const nameProbe = {
+        fn: input.fn || "",
+        mn: input.mn || "",
+        ln: input.ln || ""
+      } as unknown as EmployeeInput;
+      const nameCheck = await ensureNoActiveNameDuplicate(nameProbe, existingId, ctx);
+      if (!nameCheck.success) return passFailure(nameCheck);
+
+      const aadharProbe = { aadhar: input.aadhar || "" } as unknown as EmployeeInput;
+      const aadharCheck = await ensureNoActiveAadharDuplicate(aadharProbe, existingId, ctx);
+      if (!aadharCheck.success) return passFailure(aadharCheck);
     }
 
     const baseRow: JsonRow = {
@@ -459,23 +468,21 @@ export const employeeService = {
       updated_by: ctx.actor.email
     };
 
-    // NOTE: `hh_employees` has NO `photo` column. The legacy SPA used to
-    // upload a separate photo blob, but production schema stores employee
-    // documents inside `docs` (jsonb) only. We accept `photo` from callers
-    // but persist it as the first entry of `docs` for parity.
-    let nextDocs: unknown[] | undefined;
     if (Object.prototype.hasOwnProperty.call(input, "docs")) {
-      nextDocs = Array.isArray(input.docs) ? [...(input.docs as unknown[])] : [];
+      baseRow.docs = Array.isArray(input.docs) ? [...(input.docs as unknown[])] : [];
     }
-    if (Object.prototype.hasOwnProperty.call(input, "photo") && input.photo) {
-      nextDocs = nextDocs || [];
-      const photoEntry =
-        typeof input.photo === "object" && input.photo !== null
-          ? { kind: "photo", ...(input.photo as Record<string, unknown>) }
-          : { kind: "photo", value: input.photo };
-      nextDocs.unshift(photoEntry);
+    // hh_employees gained a `photo jsonb` column in migration 031. Persist the
+    // structured photo object directly so the React form / PDF and the legacy
+    // SPA share the same shape (the legacy client also reads `employee.photo`).
+    if (Object.prototype.hasOwnProperty.call(input, "photo")) {
+      const raw = (input as { photo?: unknown }).photo;
+      baseRow.photo =
+        raw && typeof raw === "object"
+          ? (raw as Record<string, unknown>)
+          : raw == null
+            ? null
+            : { value: raw };
     }
-    if (nextDocs !== undefined) baseRow.docs = nextDocs;
 
     if (!existing) {
       const insertId = input.id || newId.employee();

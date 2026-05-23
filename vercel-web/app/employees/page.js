@@ -17,8 +17,9 @@ import {
   shiftOptions
 } from "@/lib/crm-options";
 import { formatCurrency, formatDate, slugToText } from "@/lib/formatters";
-import { uploadDocument } from "@/lib/uploads";
+import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
 import { CameraCaptureModal } from "@/components/ui/camera-capture";
+import { DocumentCard, DocumentList } from "@/components/ui/document-card";
 import { openPrintWindow } from "@/lib/print";
 
 function createInitialForm() {
@@ -255,10 +256,10 @@ export default function EmployeesPage() {
       leave_date: row.leave_date || row.leave || "",
       exp: row.exp || "",
       salary: row.salary || 0,
-      aadhar: row.aadhar || "",
-      pan: row.pan || "",
-      permaddr: row.permaddr || row.addr || row.address || "",
-      presaddr: row.presaddr || "",
+      aadhar: row.aadhar != null ? String(row.aadhar) : "",
+      pan: row.pan != null ? String(row.pan) : "",
+      permaddr: row.permaddr != null ? String(row.permaddr) : "",
+      presaddr: row.presaddr != null ? String(row.presaddr) : "",
       area: row.area || "",
       city: row.city || "Ahmedabad",
       pin: row.pin || row.pincode || "",
@@ -435,14 +436,19 @@ export default function EmployeesPage() {
       if (form.confirm_duplicate_name) {
         payload.confirm_duplicate_name = true;
       }
-      await requestWithOfflineFallback(
+      var saved = await requestWithOfflineFallback(
         form.id ? "/employees/" + form.id : "/employees",
         { method: form.id ? "PUT" : "POST", body: payload },
         auth.session
       );
       await resource.reload();
-      resetForm();
-      setMessage(form.id ? "Employee updated successfully" : "Employee created successfully");
+      if (form.id && saved) {
+        editEmployee(saved);
+        setMessage("Employee updated — fields reflect saved values");
+      } else {
+        resetForm();
+        setMessage("Employee created successfully");
+      }
     } catch (submitError) {
       var code = submitError?.code;
       if (code === "conflict") {
@@ -523,11 +529,30 @@ export default function EmployeesPage() {
     }
   }
 
-  function openEmployeePdf(row, hideSensitive) {
+  async function resolveDocLinks(docs) {
+    if (!Array.isArray(docs) || !docs.length || !auth.session) return [];
+    var resolved = [];
+    for (var i = 0; i < docs.length; i += 1) {
+      var d = docs[i];
+      try {
+        var data = await getDocumentSignedUrl(d, auth.session, { expiresIn: 1800 });
+        resolved.push({ ...d, signedUrl: data && data.signedUrl ? data.signedUrl : "" });
+      } catch (_e) {
+        resolved.push({ ...d, signedUrl: "" });
+      }
+    }
+    return resolved;
+  }
+
+  async function openEmployeePdf(row, hideSensitive) {
     var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
     var score = rowScoreTotal(row);
     var isActive = row.status ? row.status === "Active" : row.active !== false;
-    var docs = row.employee_documents || row.docs || [];
+    var rawDocs = row.employee_documents || row.docs || [];
+    var photoDoc = row.photo && typeof row.photo === "object" && row.photo.path ? row.photo : null;
+    var resolvedDocs = await resolveDocLinks(rawDocs);
+    var resolvedPhoto = photoDoc ? (await resolveDocLinks([photoDoc]))[0] : null;
+    var docs = rawDocs;
     function escape(value) {
       return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
         return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
@@ -594,20 +619,68 @@ export default function EmployeesPage() {
       field("Experience", row.exp),
       field("Documents on file", String(docs.length || 0))
     ].join("");
+    function isImg(d) {
+      var m = String(d.mime_type || "").toLowerCase();
+      if (m.indexOf("image/") === 0) return true;
+      var n = String(d.file_name || d.path || "").toLowerCase();
+      return /\.(jpe?g|png|webp|heic|heif|gif)$/.test(n);
+    }
+    function isPdf(d) {
+      if (String(d.mime_type || "").toLowerCase() === "application/pdf") return true;
+      var n = String(d.file_name || d.path || "").toLowerCase();
+      return /\.pdf$/.test(n);
+    }
+    var photoHtml = resolvedPhoto && resolvedPhoto.signedUrl
+      ? "<div style='text-align:center;margin:8px 0 16px'><img src='" +
+        escape(resolvedPhoto.signedUrl) +
+        "' alt='Employee photo' style='max-width:160px;max-height:200px;border:1px solid #cbd5e1;border-radius:8px'/></div>"
+      : "";
+    var docsHtml = "";
+    if (resolvedDocs.length) {
+      docsHtml = "<h3>Attached documents (" + resolvedDocs.length + ")</h3>";
+      docsHtml += "<ol style='line-height:1.7'>";
+      resolvedDocs.forEach(function (d) {
+        var name = escape(d.file_name || d.path || "Document");
+        var tag = isPdf(d) ? "PDF" : isImg(d) ? "IMG" : "FILE";
+        var link = d.signedUrl
+          ? "<a href='" + escape(d.signedUrl) + "' target='_blank' rel='noopener'>" + name + "</a>"
+          : name;
+        docsHtml += "<li>[" + tag + "] " + link + "</li>";
+      });
+      docsHtml += "</ol>";
+      var imageDocs = resolvedDocs.filter(function (d) {
+        return isImg(d) && d.signedUrl;
+      });
+      if (imageDocs.length) {
+        docsHtml +=
+          "<h3>Document previews</h3>" +
+          "<div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px'>" +
+          imageDocs
+            .map(function (d) {
+              return (
+                "<div style='border:1px solid #e2e8f0;border-radius:8px;padding:8px;text-align:center'>" +
+                "<div style='font-size:12px;color:#475569;margin-bottom:6px'>" +
+                escape(d.file_name || d.path) +
+                "</div>" +
+                "<img src='" +
+                escape(d.signedUrl) +
+                "' alt='" +
+                escape(d.file_name || "doc") +
+                "' style='max-width:100%;max-height:320px;object-fit:contain'/>" +
+                "</div>"
+              );
+            })
+            .join("") +
+          "</div>";
+      }
+    }
     var body =
       "<h2>Employee Profile</h2>" +
+      photoHtml +
       "<table><tbody>" +
       rows +
       "</tbody></table>" +
-      (docs.length
-        ? "<h3>Attached documents</h3><ol>" +
-          docs
-            .map(function (d) {
-              return "<li>" + escape(d.file_name || d.path || "Document") + "</li>";
-            })
-            .join("") +
-          "</ol>"
-        : "");
+      docsHtml;
     openPrintWindow(
       hideSensitive ? "Employee Profile (sanitised)" : "Employee Profile - " + name,
       body
@@ -941,13 +1014,17 @@ export default function EmployeesPage() {
                       Use camera
                     </button>
                   </div>
-                  {form.photo
-                    ? <small>{form.photo.file_name || form.photo.path}</small>
-                    : <small>Mobile camera works from the file picker too.</small>}
+                  {form.photo ? (
+                    <div style={{ marginTop: 8 }}>
+                      <DocumentCard doc={form.photo} session={auth.session} />
+                    </div>
+                  ) : (
+                    <small>Mobile camera works from the file picker too.</small>
+                  )}
                 </div>
               </div>
               <div className="field">
-                <label>Documents</label>
+                <label>Documents ({form.documents.length})</label>
                 <input
                   type="file"
                   multiple
@@ -956,31 +1033,20 @@ export default function EmployeesPage() {
                 />
                 <small>Aadhar, PAN, certificates, contract, photos. JPG/PNG/HEIC/PDF up to 25 MB each.</small>
               </div>
-              <div className="document-list">
-                {form.documents.map(function (doc, index) {
-                  return (
-                    <div className="document-item" key={doc.path || index}>
-                      <div>{doc.file_name || doc.path}</div>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        onClick={function () {
-                          setForm(function (current) {
-                            return {
-                              ...current,
-                              documents: current.documents.filter(function (item) {
-                                return item.path !== doc.path;
-                              })
-                            };
-                          });
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+              <DocumentList
+                docs={form.documents}
+                session={auth.session}
+                onRemove={function (doc) {
+                  setForm(function (current) {
+                    return {
+                      ...current,
+                      documents: current.documents.filter(function (item) {
+                        return item.path !== doc.path;
+                      })
+                    };
+                  });
+                }}
+              />
               {conflictPrompt ? (
                 <div
                   className="error-text"

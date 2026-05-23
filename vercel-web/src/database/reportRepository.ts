@@ -196,6 +196,28 @@ export const reportRepository = {
     );
   },
 
+  /** Partner payout charge ledger rows (legacy diary + duty calendar materialized). */
+  listPayoutChargesInRange(
+    fromDate: string,
+    toDate: string,
+    filters: { partner_id?: string } = {},
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () => {
+        let q = db
+          .from("hh_payout_charges")
+          .select("id, svc_key, date, partner, partner_id, amount, remarks")
+          .gte("date", fromDate)
+          .lt("date", toDate);
+        if (filters.partner_id) q = q.eq("partner_id", filters.partner_id);
+        return q;
+      },
+      `${SCOPE}.listPayoutChargesInRange`
+    );
+  },
+
   /**
    * Active (non-soft-deleted) receipts within an ISO `created_at` window.
    * Used for "collected revenue" and "profit/loss".

@@ -15,7 +15,9 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     offset: url.searchParams.get("offset") ?? undefined,
     q: url.searchParams.get("q") ?? undefined,
     status: url.searchParams.get("status") ?? undefined,
-    caretaker_id: url.searchParams.get("caretaker_id") ?? undefined
+    caretaker_id: url.searchParams.get("caretaker_id") ?? undefined,
+    from: url.searchParams.get("from") ?? undefined,
+    to: url.searchParams.get("to") ?? undefined
   };
   const result = await patientService.list(query, { actor });
   return respond(result);

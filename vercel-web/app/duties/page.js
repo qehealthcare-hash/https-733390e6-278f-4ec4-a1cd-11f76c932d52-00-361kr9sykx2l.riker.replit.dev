@@ -72,6 +72,85 @@ function dutyTouchesDay(row, isoDay) {
   return isoDay >= start && isoDay <= end;
 }
 
+var SHIFT_CHIP_STYLES = {
+  DAY: { bg: "#dbeafe", border: "#3b82f6", text: "#1e3a8a" },
+  NIGHT: { bg: "#ede9fe", border: "#7c3aed", text: "#4c1d95" },
+  "24H": { bg: "#ffedd5", border: "#ea580c", text: "#9a3412" },
+  FULL: { bg: "#dcfce7", border: "#16a34a", text: "#14532d" }
+};
+
+function shiftChipStyle(shift) {
+  return SHIFT_CHIP_STYLES[String(shift || "DAY").toUpperCase()] || SHIFT_CHIP_STYLES.DAY;
+}
+
+function shortLabel(name, id) {
+  var n = String(name || id || "").trim();
+  if (n.length <= 14) return n;
+  return n.slice(0, 12) + "…";
+}
+
+function dutyMatchesEmployee(row, employeeId) {
+  if (!employeeId) return true;
+  if (row.employee_id === employeeId) return true;
+  var extras = row.extra_partners;
+  if (!Array.isArray(extras)) return false;
+  return extras.some(function (p) {
+    return p && p.employee_id === employeeId;
+  });
+}
+
+function FinancialBifurcation(props) {
+  var totals = props.totals;
+  var outstanding = props.outstanding;
+  if (!props.patientId && !props.employeeId) return null;
+  return (
+    <div
+      className="helper-box"
+      style={{
+        gridColumn: "1 / -1",
+        background: "#f8fafc",
+        border: "1px solid #e2e8f0",
+        marginTop: 4
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>Outstanding & payout</div>
+      {props.patientId && totals && totals.patient ? (
+        <div>
+          <span className="mini-muted">Patient · </span>
+          billed {formatCurrency(totals.patient.billed)} · received{" "}
+          {formatCurrency(totals.patient.received)} ·{" "}
+          <strong style={{ color: totals.patient.outstanding > 0 ? "#b91c1c" : "#15803d" }}>
+            outstanding {formatCurrency(totals.patient.outstanding)}
+          </strong>
+          {totals.patient.sec_dep ? " · sec.dep " + formatCurrency(totals.patient.sec_dep) : ""}
+          <span className="mini-muted"> · {totals.patient.bills} bill(s)</span>
+        </div>
+      ) : props.patientId && outstanding && outstanding.totals ? (
+        <div>
+          <span className="mini-muted">Active bill {outstanding.billing_id} · </span>
+          outstanding {formatCurrency(outstanding.totals.outstanding)}
+        </div>
+      ) : props.patientId ? (
+        <div className="mini-muted">No billing on file for this patient</div>
+      ) : null}
+      {props.employeeId && totals && totals.partner ? (
+        <div style={{ marginTop: totals.patient || outstanding ? 6 : 0 }}>
+          <span className="mini-muted">Partner · </span>
+          earned {formatCurrency(totals.partner.charged)} · paid{" "}
+          {formatCurrency(totals.partner.paid)} ·{" "}
+          <strong style={{ color: totals.partner.pending > 0 ? "#b45309" : "#15803d" }}>
+            net pending payout {formatCurrency(totals.partner.pending)}
+          </strong>
+        </div>
+      ) : props.employeeId ? (
+        <div className="mini-muted" style={{ marginTop: 6 }}>
+          Loading partner payout…
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function DutiesPage() {
   var auth = useAuth();
   var [viewMonth, setViewMonth] = useState(monthKey(new Date()));
@@ -81,16 +160,21 @@ export default function DutiesPage() {
   var [employees, setEmployees] = useState([]);
   var [services, setServices] = useState([]);
   var [filterPatient, setFilterPatient] = useState("");
+  var [filterEmployee, setFilterEmployee] = useState("");
   var [form, setForm] = useState(createInitialForm());
   var [statusFilter, setStatusFilter] = useState("");
   var [busy, setBusy] = useState(false);
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
   var [cancelDialog, setCancelDialog] = useState(null);
+  var [deleteDialog, setDeleteDialog] = useState(null);
+  var [overlapDialog, setOverlapDialog] = useState(null);
   var [conflictBanner, setConflictBanner] = useState("");
   var [outstanding, setOutstanding] = useState(null);
-  var [patientSummary, setPatientSummary] = useState(null);
+  var [totals, setTotals] = useState(null);
+  var [filterTotals, setFilterTotals] = useState(null);
   var [selectedDay, setSelectedDay] = useState("");
+  var [previewDialog, setPreviewDialog] = useState(null);
 
   var ym = useMemo(
     function () {
@@ -117,8 +201,15 @@ export default function DutiesPage() {
       var path = "/duties?limit=500&from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to);
       if (statusFilter) path += "&status=" + encodeURIComponent(statusFilter);
       if (filterPatient) path += "&patient_id=" + encodeURIComponent(filterPatient);
+      if (filterEmployee) path += "&employee_id=" + encodeURIComponent(filterEmployee);
       var data = await request(path, null, auth.session);
-      setRows(Array.isArray(data && data.rows) ? data.rows : []);
+      var list = Array.isArray(data && data.rows) ? data.rows : [];
+      if (filterEmployee) {
+        list = list.filter(function (r) {
+          return dutyMatchesEmployee(r, filterEmployee);
+        });
+      }
+      setRows(list);
       setError("");
     } catch (err) {
       setError(err.message || "Unable to load duties");
@@ -156,12 +247,34 @@ export default function DutiesPage() {
     }
   }
 
+  async function loadTotals(patientId, employeeId) {
+    if (!auth.session?.access_token) {
+      return null;
+    }
+    if (!patientId && !employeeId) {
+      return null;
+    }
+    var qs = [];
+    if (patientId) qs.push("patient_id=" + encodeURIComponent(patientId));
+    if (employeeId) qs.push("employee_id=" + encodeURIComponent(employeeId));
+    try {
+      return await request("/duties/totals?" + qs.join("&"), null, auth.session);
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  async function refreshFormTotals() {
+    var data = await loadTotals(form.patient_id, form.employee_id);
+    setTotals(data || null);
+  }
+
   useEffect(
     function () {
       if (!auth.session?.access_token) return;
       reload();
     },
-    [auth.session, viewMonth, statusFilter, filterPatient]
+    [auth.session, viewMonth, statusFilter, filterPatient, filterEmployee]
   );
 
   useEffect(
@@ -198,16 +311,50 @@ export default function DutiesPage() {
 
   useEffect(
     function () {
-      var pid = filterPatient || form.patient_id;
-      if (!pid || !auth.session?.access_token) {
-        setPatientSummary(null);
+      if (!form.patient_id && !form.employee_id) {
+        setTotals(null);
         return;
       }
-      request("/duties/summary?patient_id=" + encodeURIComponent(pid), null, auth.session)
-        .then(function (data) { setPatientSummary(data || null); })
-        .catch(function () { setPatientSummary(null); });
+      loadTotals(form.patient_id, form.employee_id).then(function (data) {
+        setTotals(data || null);
+      });
     },
-    [filterPatient, form.patient_id, auth.session, rows]
+    [form.patient_id, form.employee_id, auth.session]
+  );
+
+  useEffect(
+    function () {
+      if (!filterPatient && !filterEmployee) {
+        setFilterTotals(null);
+        return;
+      }
+      loadTotals(filterPatient, filterEmployee).then(function (data) {
+        setFilterTotals(data);
+      });
+    },
+    [filterPatient, filterEmployee, auth.session]
+  );
+
+  var patientNameById = useMemo(
+    function () {
+      var map = {};
+      patients.forEach(function (p) {
+        map[p.id] = p.name || p.full_name || p.id;
+      });
+      return map;
+    },
+    [patients]
+  );
+
+  var employeeNameById = useMemo(
+    function () {
+      var map = {};
+      employees.forEach(function (e) {
+        map[e.id] = e.full_name || e.name || e.id;
+      });
+      return map;
+    },
+    [employees]
   );
 
   var dayDuties = useMemo(
@@ -281,6 +428,55 @@ export default function DutiesPage() {
     });
   }
 
+  function buildPayload(confirmOverlap) {
+    return {
+      patient_id: form.patient_id,
+      employee_id: form.employee_id,
+      service_name: form.service_name,
+      service_type: form.service_name,
+      shift_type: form.shift_type,
+      start_at: toIsoFromLocal(form.start_at),
+      end_at: toIsoFromLocal(form.end_at),
+      status: form.status,
+      notes: form.notes,
+      charge_per_day: Number(form.charge_per_day || 0),
+      payout_per_day: Number(form.payout_per_day || 0),
+      payout_term: form.payout_term,
+      extra_partners: form.extra_partners
+        .filter(function (p) {
+          return p.employee_id;
+        })
+        .map(function (p) {
+          return {
+            employee_id: p.employee_id,
+            charge_per_day: Number(p.charge_per_day || form.charge_per_day || 0),
+            payout_per_day: Number(p.payout_per_day || form.payout_per_day || 0),
+            payout_term: p.payout_term || form.payout_term
+          };
+        }),
+      materialize: form.materialize,
+      expected_updated_at: form.expected_updated_at || undefined,
+      confirm_staff_overlap: !!confirmOverlap
+    };
+  }
+
+  async function submitPayload(payload) {
+    if (form.id) {
+      await requestWithOfflineFallback(
+        "/duties/" + encodeURIComponent(form.id),
+        { method: "PATCH", body: payload },
+        auth.session
+      );
+    } else {
+      await requestWithOfflineFallback("/duties", { method: "POST", body: payload }, auth.session);
+    }
+    await reload();
+    await loadOutstanding(form.patient_id);
+    await refreshFormTotals();
+    resetForm();
+    setMessage(form.id ? "Duty updated — diary rows synced when materialize is on" : "Duty created");
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     setBusy(true);
@@ -288,87 +484,54 @@ export default function DutiesPage() {
     setMessage("");
     setConflictBanner("");
     try {
-      var payload = {
-        patient_id: form.patient_id,
-        employee_id: form.employee_id,
-        service_name: form.service_name,
-        service_type: form.service_name,
-        shift_type: form.shift_type,
-        start_at: toIsoFromLocal(form.start_at),
-        end_at: toIsoFromLocal(form.end_at),
-        status: form.status,
-        notes: form.notes,
-        charge_per_day: Number(form.charge_per_day || 0),
-        payout_per_day: Number(form.payout_per_day || 0),
-        payout_term: form.payout_term,
-        extra_partners: form.extra_partners
-          .filter(function (p) {
-            return p.employee_id;
-          })
-          .map(function (p) {
-            return {
-              employee_id: p.employee_id,
-              charge_per_day: Number(p.charge_per_day || form.charge_per_day || 0),
-              payout_per_day: Number(p.payout_per_day || form.payout_per_day || 0),
-              payout_term: p.payout_term || form.payout_term
-            };
-          }),
-        materialize: form.materialize,
-        expected_updated_at: form.expected_updated_at || undefined
-      };
-      if (form.id) {
-        await requestWithOfflineFallback(
-          "/duties/" + encodeURIComponent(form.id),
-          { method: "PATCH", body: payload },
-          auth.session
-        );
-      } else {
-        await requestWithOfflineFallback("/duties", { method: "POST", body: payload }, auth.session);
-      }
-      await reload();
-      await loadOutstanding(form.patient_id);
-      resetForm();
-      setMessage(form.id ? "Duty updated — diary rows synced when materialize is on" : "Duty created");
+      await submitPayload(buildPayload(false));
     } catch (submitError) {
+      var msg = String(submitError.message || "").toLowerCase();
       var code = submitError.code || "";
-      if (code === "CONFLICT" || String(submitError.message || "").toLowerCase().indexOf("stale") >= 0) {
+      if (msg.indexOf("overlapping") >= 0 || code === "DUPLICATE") {
+        setOverlapDialog({ message: submitError.message || "Staff has another overlapping duty" });
+      } else if (code === "CONFLICT" || msg.indexOf("stale") >= 0) {
         setConflictBanner(submitError.message || "Record changed elsewhere — reload and retry");
+        setError(submitError.message || "Unable to save duty");
+      } else {
+        setError(submitError.message || "Unable to save duty");
       }
-      var conflictDutyId =
-        submitError.details && submitError.details.field === "employee_window"
-          ? submitError.details.value
-          : null;
-      if (conflictDutyId) {
-        try {
-          var conflict = await request(
-            "/duties/" + encodeURIComponent(conflictDutyId),
-            null,
-            auth.session
-          );
-          var pname = "";
-          for (var i = 0; i < patients.length; i++) {
-            if (patients[i].id === conflict.patient_id) {
-              pname = patients[i].name || patients[i].full_name || "";
-              break;
-            }
-          }
-          setConflictBanner(
-            (submitError.message || "Staff has overlapping duty") +
-              " — " + (pname || conflict.patient_id) +
-              " (" + String(conflict.start_at || "").slice(0, 10) +
-              " → " + String(conflict.end_at || "").slice(0, 10) + ")"
-          );
-        } catch (_lookupErr) {
-          setConflictBanner(submitError.message || "Staff has overlapping duty");
-        }
-      }
-      setError(submitError.message || "Unable to save duty");
     } finally {
       setBusy(false);
     }
   }
 
-  async function runMaterialize(dutyId) {
+  async function confirmOverlapAndSave() {
+    setBusy(true);
+    setError("");
+    try {
+      await submitPayload(buildPayload(true));
+      setOverlapDialog(null);
+    } catch (err) {
+      setError(err.message || "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runMaterialize(dutyId, skipPreview) {
+    if (!skipPreview) {
+      setBusy(true);
+      setError("");
+      try {
+        var preview = await request(
+          "/duties/" + encodeURIComponent(dutyId) + "/materialize",
+          { method: "POST", body: { dry_run: true } },
+          auth.session
+        );
+        setPreviewDialog({ dutyId: dutyId, data: preview });
+      } catch (err) {
+        setError(err.message || "Preview failed");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -377,15 +540,29 @@ export default function DutiesPage() {
         { method: "POST", body: {} },
         auth.session
       );
+      setPreviewDialog(null);
       setMessage(
-        "Materialized " +
+        "Diary synced: +" +
           (data.created_svc || 0) +
-          " charge(s) and " +
+          "/" +
           (data.created_payout || 0) +
-          " payout row(s)"
+          " created, " +
+          (data.updated_svc || 0) +
+          "/" +
+          (data.updated_payout || 0) +
+          " updated, " +
+          (data.deleted_svc || 0) +
+          "/" +
+          (data.deleted_payout || 0) +
+          " removed"
       );
       await reload();
       await loadOutstanding(form.patient_id || filterPatient);
+      await refreshFormTotals();
+      if (filterPatient || filterEmployee) {
+        var ft = await loadTotals(filterPatient, filterEmployee);
+        setFilterTotals(ft || null);
+      }
     } catch (err) {
       setError(err.message || "Materialize failed");
     } finally {
@@ -407,6 +584,26 @@ export default function DutiesPage() {
       setMessage("Duty cancelled — diary rows removed when safe");
     } catch (err) {
       setError(err.message || "Cancel failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmHardDelete() {
+    if (!deleteDialog) return;
+    setBusy(true);
+    setError("");
+    try {
+      await request(
+        "/duties/" + encodeURIComponent(deleteDialog.id) + "?hard=1",
+        { method: "DELETE" },
+        auth.session
+      );
+      setDeleteDialog(null);
+      await reload();
+      setMessage("Duty deleted — diary rows removed");
+    } catch (err) {
+      setError(err.message || "Delete failed");
     } finally {
       setBusy(false);
     }
@@ -486,6 +683,16 @@ export default function DutiesPage() {
                     })}
                   </select>
                 </div>
+              </div>
+
+              <FinancialBifurcation
+                patientId={form.patient_id}
+                employeeId={form.employee_id}
+                totals={totals}
+                outstanding={outstanding}
+              />
+
+              <div className="grid-2">
                 <div className="field">
                   <label>Service</label>
                   <select
@@ -668,14 +875,6 @@ export default function DutiesPage() {
                 placeholder="Notes"
               />
 
-              {outstanding && outstanding.totals ? (
-                <div className="helper-box">
-                  Active bill {outstanding.billing_id}: billed {formatCurrency(outstanding.totals.services)} ·
-                  received {formatCurrency(outstanding.totals.receipts)} ·{" "}
-                  <strong>outstanding {formatCurrency(outstanding.totals.outstanding)}</strong>
-                </div>
-              ) : null}
-
               {conflictBanner ? <div className="error-text">{conflictBanner}</div> : null}
               {error ? <div className="error-text">{error}</div> : null}
               {message ? <div className="success-text">{message}</div> : null}
@@ -708,7 +907,7 @@ export default function DutiesPage() {
               </div>
             }
           >
-            <div className="toolbar grid-2">
+            <div className="toolbar" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <div className="field">
                 <label>Filter patient ({patients.length})</label>
                 <select
@@ -723,6 +922,24 @@ export default function DutiesPage() {
                     return (
                       <option key={p.id} value={p.id}>
                         {label} ({p.id})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+              <div className="field">
+                <label>Filter caretaker ({employees.length})</label>
+                <select
+                  value={filterEmployee}
+                  onChange={function (event) {
+                    setFilterEmployee(event.target.value);
+                  }}
+                >
+                  <option value="">All staff</option>
+                  {employees.map(function (e) {
+                    return (
+                      <option key={e.id} value={e.id}>
+                        {(e.full_name || e.name) + " (" + e.id + ")"}
                       </option>
                     );
                   })}
@@ -748,67 +965,13 @@ export default function DutiesPage() {
               </div>
             </div>
 
-            {patientSummary ? (
-              <div
-                className="panel detail-card"
-                style={{ marginBottom: 16, background: "#f1f5f9", border: "1px solid #cbd5e1" }}
-              >
-                <div className="button-row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-                  <div>
-                    <strong>Patient ledger till date</strong>
-                    <div className="mini-muted" style={{ marginTop: 4 }}>
-                      Across {patientSummary.billings} bill(s), {patientSummary.active_billings} active
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div>Billed {formatCurrency(patientSummary.billed)}</div>
-                    <div>Received {formatCurrency(patientSummary.received)}</div>
-                    <div style={{ color: patientSummary.outstanding > 0 ? "#b91c1c" : "#15803d", fontWeight: 700 }}>
-                      Net outstanding {formatCurrency(patientSummary.outstanding)}
-                    </div>
-                  </div>
-                </div>
-                {patientSummary.partners && patientSummary.partners.length ? (
-                  <div className="table-wrap" style={{ marginTop: 12 }}>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Attendant</th>
-                          <th style={{ textAlign: "right" }}>Charges</th>
-                          <th style={{ textAlign: "right" }}>Payout earned</th>
-                          <th style={{ textAlign: "right" }}>Paid</th>
-                          <th style={{ textAlign: "right" }}>Due</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {patientSummary.partners.map(function (p, idx) {
-                          return (
-                            <tr key={p.partner_id + "_" + idx}>
-                              <td>{p.name}</td>
-                              <td style={{ textAlign: "right" }}>{formatCurrency(p.charges_total)}</td>
-                              <td style={{ textAlign: "right" }}>{formatCurrency(p.payout_total)}</td>
-                              <td style={{ textAlign: "right" }}>{formatCurrency(p.paid)}</td>
-                              <td
-                                style={{
-                                  textAlign: "right",
-                                  fontWeight: 700,
-                                  color: p.due > 0 ? "#b91c1c" : "#15803d"
-                                }}
-                              >
-                                {formatCurrency(p.due)}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="mini-muted" style={{ marginTop: 12 }}>
-                    No partner charges yet — assign a duty to start tracking.
-                  </div>
-                )}
-              </div>
+            {filterPatient || filterEmployee ? (
+              <FinancialBifurcation
+                patientId={filterPatient}
+                employeeId={filterEmployee}
+                totals={filterTotals}
+                outstanding={null}
+              />
             ) : null}
 
             <div className="calendar-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
@@ -845,8 +1008,42 @@ export default function DutiesPage() {
                   >
                     <div style={{ fontWeight: 600 }}>{isoDay.slice(8)}</div>
                     {dayRows.length ? (
-                      <div className="mini-muted" style={{ marginTop: 4 }}>
-                        {dayRows.length} duty{dayRows.length > 1 ? "ies" : ""}
+                      <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
+                        {dayRows.slice(0, 3).map(function (row) {
+                          var chip = shiftChipStyle(row.shift_type);
+                          return (
+                            <span
+                              key={row.id}
+                              style={{
+                                fontSize: 10,
+                                lineHeight: 1.2,
+                                padding: "2px 4px",
+                                borderRadius: 4,
+                                background: chip.bg,
+                                border: "1px solid " + chip.border,
+                                color: chip.text,
+                                overflow: "hidden",
+                                whiteSpace: "nowrap",
+                                textOverflow: "ellipsis"
+                              }}
+                              title={
+                                (employeeNameById[row.employee_id] || row.employee_id || "—") +
+                                " · " +
+                                (patientNameById[row.patient_id] || row.patient_id) +
+                                " · " +
+                                (row.shift_type || "DAY")
+                              }
+                            >
+                              {shortLabel(employeeNameById[row.employee_id], row.employee_id || "—")}{" "}
+                              <span style={{ opacity: 0.85 }}>{row.shift_type}</span>
+                            </span>
+                          );
+                        })}
+                        {dayRows.length > 3 ? (
+                          <span className="mini-muted" style={{ fontSize: 10 }}>
+                            +{dayRows.length - 3} more
+                          </span>
+                        ) : null}
                       </div>
                     ) : null}
                   </button>
@@ -866,9 +1063,9 @@ export default function DutiesPage() {
                         <div className="record-card" key={row.id}>
                           <div className="button-row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
                             <div>
-                              <h3>{row.patient_id}</h3>
+                              <h3>{patientNameById[row.patient_id] || row.patient_id}</h3>
                               <div className="record-meta">
-                                <span>{row.employee_id || "—"}</span>
+                                <span>{employeeNameById[row.employee_id] || row.employee_id || "—"}</span>
                                 <span>{row.service_name || row.service_type}</span>
                                 <span className={"status " + String(row.status || "").toLowerCase()}>{row.status}</span>
                               </div>
@@ -884,7 +1081,7 @@ export default function DutiesPage() {
                                 className="button secondary"
                                 type="button"
                                 disabled={busy}
-                                onClick={function () { runMaterialize(row.id); }}
+                                onClick={function () { runMaterialize(row.id, false); }}
                               >
                                 Sync diary
                               </button>
@@ -908,6 +1105,23 @@ export default function DutiesPage() {
                                   Check out
                                 </button>
                               ) : null}
+                              <button
+                                className="button danger ghost"
+                                type="button"
+                                disabled={busy}
+                                style={{ background: "transparent", color: "#b91c1c", borderColor: "#fecaca" }}
+                                onClick={function () {
+                                  setDeleteDialog({
+                                    id: row.id,
+                                    patient: patientNameById[row.patient_id] || row.patient_id,
+                                    employee: employeeNameById[row.employee_id] || row.employee_id || "—",
+                                    range: String(row.start_at || "").slice(0, 10) +
+                                      " → " + String(row.end_at || row.start_at || "").slice(0, 10)
+                                  });
+                                }}
+                              >
+                                Delete
+                              </button>
                               {row.status !== "CANCELLED" && row.status !== "COMPLETED" ? (
                                 <button
                                   className="button danger"
@@ -934,6 +1148,87 @@ export default function DutiesPage() {
           </ModuleShell>
         </div>
 
+        {previewDialog && previewDialog.data ? (
+          <div className="modal-backdrop" role="presentation">
+            <div className="modal-card" style={{ maxWidth: 720, width: "95%" }}>
+              <h3>Sync diary preview</h3>
+              <p className="mini-muted">
+                Create {previewDialog.data.would_create_svc || 0} / update{" "}
+                {previewDialog.data.would_update_svc || 0} patient charge(s) · create{" "}
+                {previewDialog.data.would_create_payout || 0} / update{" "}
+                {previewDialog.data.would_update_payout || 0} payout(s) · delete{" "}
+                {(previewDialog.data.would_delete_svc || 0) +
+                  (previewDialog.data.would_delete_payout || 0)}{" "}
+                orphan row(s).
+              </p>
+              <div className="table-wrap" style={{ maxHeight: 320, overflow: "auto", marginTop: 12 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Partner</th>
+                      <th>Charge</th>
+                      <th>Payout</th>
+                      <th>Patient svc</th>
+                      <th>Partner pay</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(previewDialog.data.preview || []).slice(0, 60).map(function (line, idx) {
+                      return (
+                        <tr key={idx}>
+                          <td>{line.date}</td>
+                          <td>{line.employee_name}</td>
+                          <td>{formatCurrency(line.charge)}</td>
+                          <td>{formatCurrency(line.payout)}</td>
+                          <td>{line.svc_action}</td>
+                          <td>{line.payout_action}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {(previewDialog.data.preview || []).length > 60 ? (
+                <p className="mini-muted">Showing first 60 of {(previewDialog.data.preview || []).length} rows.</p>
+              ) : null}
+              <div className="button-row" style={{ marginTop: 16 }}>
+                <button
+                  className="button primary"
+                  type="button"
+                  disabled={busy}
+                  onClick={function () { runMaterialize(previewDialog.dutyId, true); }}
+                >
+                  Confirm sync
+                </button>
+                <button className="button secondary" type="button" onClick={function () { setPreviewDialog(null); }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {overlapDialog ? (
+          <div className="modal-backdrop" role="presentation">
+            <div className="modal-card">
+              <h3>Staff has overlapping duty</h3>
+              <p>{overlapDialog.message}</p>
+              <p className="mini-muted">
+                Legacy CRM allowed the same staff to be on relief / shared shifts. Confirm to save anyway.
+              </p>
+              <div className="button-row">
+                <button className="button primary" type="button" disabled={busy} onClick={confirmOverlapAndSave}>
+                  Save anyway
+                </button>
+                <button className="button secondary" type="button" onClick={function () { setOverlapDialog(null); }}>
+                  Back
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {cancelDialog ? (
           <div className="modal-backdrop" role="presentation">
             <div className="modal-card">
@@ -952,6 +1247,30 @@ export default function DutiesPage() {
                   Confirm cancel
                 </button>
                 <button className="button secondary" type="button" onClick={function () { setCancelDialog(null); }}>
+                  Back
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {deleteDialog ? (
+          <div className="modal-backdrop" role="presentation">
+            <div className="modal-card">
+              <h3>Delete duty permanently?</h3>
+              <p>
+                <strong>{deleteDialog.patient}</strong> · {deleteDialog.employee}
+              </p>
+              <p className="mini-muted">{deleteDialog.range}</p>
+              <p className="mini-muted">
+                This removes the duty row <strong>and all of its diary charges &amp; payouts</strong>.
+                Will fail if receipts already exist on the bill (cancel instead).
+              </p>
+              <div className="button-row">
+                <button className="button danger" type="button" disabled={busy} onClick={confirmHardDelete}>
+                  Delete forever
+                </button>
+                <button className="button secondary" type="button" onClick={function () { setDeleteDialog(null); }}>
                   Back
                 </button>
               </div>

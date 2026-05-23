@@ -47,7 +47,9 @@ export const dutySchema = z
     extra_partners: z.array(dutyPartnerSchema).optional().default([]),
     expected_updated_at: z.string().optional(),
     /** When true, expands date range into hh_svc_entries + hh_payout_charges after save. */
-    materialize: z.boolean().optional().default(false)
+    materialize: z.boolean().optional().default(false),
+    /** Allow saving even if the staff has another overlapping duty (relief / partner share). */
+    confirm_staff_overlap: z.boolean().optional().default(false)
   })
   .superRefine((v, ctx) => {
     if (v.patient_id && v.employee_id && v.patient_id === v.employee_id) {

@@ -3,7 +3,7 @@
     var r = el.getBoundingClientRect();
     var text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
     if (r.left < 130 || r.left > 190) return false;
-    if (r.top < 430 || r.top > 1120) return false;
+    if (r.top < 300 || r.top > 1120) return false;
     if (r.width < 250 || r.width > 420) return false;
     if (r.height < 45 || r.height > 120) return false;
     if (text.indexOf("\u0aa8\u0aae\u0ab8\u0acd\u0aa4\u0ac7") !== -1) return false;

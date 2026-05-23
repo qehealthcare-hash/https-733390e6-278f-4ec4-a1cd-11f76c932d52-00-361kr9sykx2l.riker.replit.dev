@@ -186,6 +186,11 @@ export const patientLegacySyncSchema = z.object({
   created: z.string().max(40).optional().default(""),
   /** Optional JSON blob — present on the "full" save, absent on `__light` refreshes. */
   photo: z.any().optional(),
-  docs: z.any().optional()
+  docs: z.any().optional(),
+  /** Set to true to bypass the "active patient with same name" soft duplicate guard. */
+  confirm_duplicate_name: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((v) => v === true || v === "true" || v === "1")
 });
 export type PatientLegacySyncInput = z.infer<typeof patientLegacySyncSchema>;

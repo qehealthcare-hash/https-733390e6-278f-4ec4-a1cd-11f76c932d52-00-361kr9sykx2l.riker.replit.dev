@@ -25,12 +25,21 @@ export const PUT = PATCH;
 
 /**
  * DELETE soft-cancels a duty (status = CANCELLED) and rolls back its billing
- * service entry when safe. Returns the persisted row so the frontend can
+ * service entry when safe. Pass `?hard=1` (Admin-only) to permanently delete
+ * the duty + diary rows. Returns the persisted row so the frontend can
  * refetch without race conditions.
  */
 export const DELETE = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager"]);
   const url = new URL(req.url);
+  const hard = url.searchParams.get("hard") === "1";
+
+  if (hard) {
+    requireRole(actor, ["Admin"]);
+    const result = await dutyService.hardDelete(params.id, { actor });
+    return respond(result);
+  }
+
+  requireRole(actor, ["Admin", "Manager"]);
   let body: Record<string, unknown> = {};
   try {
     body = (await parseJsonBody(req)) ?? {};

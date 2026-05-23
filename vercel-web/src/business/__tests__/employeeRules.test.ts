@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   employeeStatusFromRow,
   employeeToRow,
+  employeeToApi,
   employeeNameKey,
   findActiveEmployeeByName,
   findActiveEmployeeByAadhar,
@@ -93,5 +94,39 @@ describe("employeeRules — status persistence (column + leave_date)", () => {
     const suspended = statusPatch("Suspended", "a@test.com", "investigation");
     expect(suspended.status).toBe("Suspended");
     expect(String(suspended.leave_date)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe("employeeToApi — identity & address fields", () => {
+  it("returns aadhar and permaddr explicitly (not aliased into presaddr)", () => {
+    const api = employeeToApi({
+      id: "EMP1",
+      fn: "A",
+      ln: "B",
+      phone: "9876543210",
+      aadhar: "123456789012",
+      permaddr: "Permanent line",
+      presaddr: ""
+    });
+    expect(api.aadhar).toBe("123456789012");
+    expect(api.permaddr).toBe("Permanent line");
+    expect(api.presaddr).toBe("");
+  });
+
+  it("round-trips cleared aadhar and permaddr", () => {
+    const row = employeeToRow({
+      fn: "A",
+      ln: "B",
+      phone: "9876543210",
+      aadhar: "",
+      permaddr: "",
+      presaddr: ""
+    } as Parameters<typeof employeeToRow>[0]);
+    expect(row.aadhar).toBe("");
+    expect(row.permaddr).toBe("");
+    const api = employeeToApi({ ...row, id: "EMP2" });
+    expect(api.aadhar).toBe("");
+    expect(api.permaddr).toBe("");
+    expect(api.presaddr).toBe("");
   });
 });

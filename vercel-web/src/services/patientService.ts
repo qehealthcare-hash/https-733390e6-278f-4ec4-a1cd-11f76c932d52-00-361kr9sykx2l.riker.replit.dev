@@ -350,7 +350,7 @@ export const patientService = {
       return failure(existing.error || "Patient not found", existing.code, existing.details);
     }
 
-    const patch = patientClosePatch(ctx.actor.email);
+    const patch = patientClosePatch(ctx.actor.email, reasonInput.reason, reasonInput.reason_other);
     const updated = await patientRepository.update(id, patch, dbAccess(ctx));
     if (!updated.success) return passFailure(updated);
 
@@ -518,16 +518,28 @@ export const patientService = {
     }
 
     const wantsActive = (input.status || "Active") === "Active";
+    const existingId = existing?.id ? String(existing.id) : undefined;
     if (wantsActive && input.phone) {
-      const dup = await ensureNoActiveDuplicate(input.phone, existing?.id ? String(existing.id) : undefined, ctx);
+      const dup = await ensureNoActiveDuplicate(input.phone, existingId, ctx);
       if (!dup.success) return passFailure(dup);
     }
+    // Mirror canonical /patients create: when the legacy SPA tries to write
+    // an active patient with the same normalised name as another active one,
+    // flag it as a duplicate. Use `confirm_duplicate_name=true` to bypass.
+    if (wantsActive && input.name && !input.confirm_duplicate_name) {
+      const nameDup = await ensureNoActiveNameDuplicate(
+        String(input.name),
+        existingId,
+        ctx
+      );
+      if (!nameDup.success) return passFailure(nameDup);
+    }
 
-    // NOTE: `hh_patients` columns are: id, name, email, phone, dob, gender,
-    // blood, addr, area, city, pin, relname/relphone (x3), status, photo,
-    // docs, caretaker_id, shift, created, created_at, updated_at,
-    // created_by, updated_by. `status_reason`, `status_reason_other`, and
-    // `address` are NOT columns — reasons live in `hh_audit_logs`.
+    // hh_patients columns (verified vs prod 2026-05): id, name, email, phone,
+    // dob, gender, blood, addr, area, city, pin, relname/relphone (x3),
+    // status, status_reason, status_reason_other, photo, docs, caretaker_id,
+    // shift, disease_condition, start_date, age, created/created_at,
+    // updated_at, created_by, updated_by.
     const baseRow: JsonRow = {
       name: input.name,
       email: input.email || "",

@@ -361,8 +361,20 @@ export const billingRepository = {
     return updateRow(SVC, id, patch, `${SCOPE}.updateSvc`, opts);
   },
 
+  updatePayoutCharge(
+    id: string | number,
+    patch: JsonRow,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow | null>> {
+    return updateRow(PAYOUT_CHARGES, String(id), patch, `${SCOPE}.updatePayoutCharge`, opts);
+  },
+
   removeSvc(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
     return deleteRow(SVC, id, `${SCOPE}.removeSvc`, opts);
+  },
+
+  removePayoutCharge(id: string | number, opts?: DbAccess): Promise<ApiResult<null>> {
+    return deleteRow(PAYOUT_CHARGES, String(id), `${SCOPE}.removePayoutCharge`, opts);
   },
 
   // --- Invoices (Phase 4 ledger) ---

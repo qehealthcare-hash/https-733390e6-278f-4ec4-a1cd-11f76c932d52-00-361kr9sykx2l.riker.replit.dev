@@ -40,6 +40,19 @@ describe("patientRules — workflow matrix", () => {
   it("close patch sets status to Closed and stamps actor", () => {
     expect(patientClosePatch("admin@hominal.test")).toEqual({
       status: "Closed",
+      status_reason: "",
+      status_reason_other: "",
+      updated_by: "admin@hominal.test"
+    });
+  });
+
+  it("close patch persists close reason and other-note", () => {
+    expect(
+      patientClosePatch("admin@hominal.test", "Other", "Family stopped service")
+    ).toEqual({
+      status: "Closed",
+      status_reason: "Other",
+      status_reason_other: "Family stopped service",
       updated_by: "admin@hominal.test"
     });
   });
@@ -153,9 +166,11 @@ describe("patientRules — name duplicate guard", () => {
 });
 
 describe("patientRules — reopen + hard delete", () => {
-  it("reopen patch flips status back to Active and stamps actor", () => {
+  it("reopen patch flips status back to Active and clears close reason", () => {
     expect(patientReopenPatch("admin@hominal.test")).toEqual({
       status: "Active",
+      status_reason: "",
+      status_reason_other: "",
       updated_by: "admin@hominal.test"
     });
   });

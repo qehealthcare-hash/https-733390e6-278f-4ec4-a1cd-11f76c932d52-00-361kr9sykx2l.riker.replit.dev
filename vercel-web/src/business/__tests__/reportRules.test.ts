@@ -24,7 +24,8 @@ describe("reportRules — test matrix", () => {
         payout_rows: [
           { net_amount: 800, gross_amount: 900, status: "PAID" },
           { net_amount: 200, gross_amount: 250, status: "OPEN" }
-        ]
+        ],
+        payout_charge_rows: [{ amount: 150 }]
       }
     );
 
@@ -33,7 +34,8 @@ describe("reportRules — test matrix", () => {
     expect(kpis.billing_pending_amount).toBe(300);
     expect(kpis.payout_total_amount).toBe(1000);
     expect(kpis.payout_paid_amount).toBe(800);
-    expect(kpis.payout_pending_amount).toBe(200);
+    expect(kpis.payout_pending_amount).toBe(350);
+    expect(kpis.partner_charge_ledger).toBe(150);
     expect(kpis.profit_loss).toBe(400);
   });
 
@@ -46,13 +48,16 @@ describe("reportRules — test matrix", () => {
         payouts: [
           { net_amount: 800, status: "PAID" },
           { net_amount: 200, status: "OPEN" }
-        ]
+        ],
+        payout_charges: [{ amount: 100 }]
       }
     );
 
     expect(pl.revenue).toBe(1200);
     expect(pl.payouts_paid).toBe(800);
+    expect(pl.partner_charge_ledger).toBe(100);
+    expect(pl.payouts_pending).toBe(300);
     expect(pl.net_profit).toBe(400);
-    expect(pl.net_profit_after_pending_payouts).toBe(200);
+    expect(pl.net_profit_after_pending_payouts).toBe(100);
   });
 });

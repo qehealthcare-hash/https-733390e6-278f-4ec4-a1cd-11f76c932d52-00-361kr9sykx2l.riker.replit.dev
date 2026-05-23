@@ -58,6 +58,8 @@ describe("dutyDiaryService.materializeDuty", () => {
     });
     vi.mocked(billingRepository.findSvcByDayPartner).mockResolvedValue({ success: true, data: null });
     vi.mocked(billingRepository.findPayoutByDayPartner).mockResolvedValue({ success: true, data: null });
+    vi.mocked(dutyRepository.findSvcEntriesByDutyId).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(dutyRepository.findPayoutChargesByDutyId).mockResolvedValue({ success: true, data: [] });
     vi.mocked(billingRepository.insertSvc).mockResolvedValue({ success: true, data: { id: 1 } });
     vi.mocked(billingRepository.insertPayoutCharge).mockResolvedValue({ success: true, data: { id: 2 } });
     vi.mocked(dutyRepository.update).mockResolvedValue({ success: true, data: baseDuty });
@@ -69,6 +71,56 @@ describe("dutyDiaryService.materializeDuty", () => {
     expect(result.data?.svc_key).toBe("BILL1_Care Taker Services");
     expect(billingRepository.insertSvc).toHaveBeenCalledTimes(3);
     expect(billingRepository.insertPayoutCharge).toHaveBeenCalledTimes(3);
+  });
+
+  it("updates existing diary rows when rates change", async () => {
+    vi.mocked(billingRepository.findActiveByPatient).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Active" }
+    });
+    vi.mocked(employeeRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "EMP1", full_name: "Alice" }
+    });
+    vi.mocked(dutyRepository.findSvcEntriesByDutyId).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          id: 10,
+          remarks: "duty:DUTY1:2026-05-01:EMP1",
+          amt: 100,
+          total: 100
+        }
+      ]
+    });
+    vi.mocked(dutyRepository.findPayoutChargesByDutyId).mockResolvedValue({
+      success: true,
+      data: [{ id: 20, remarks: "duty:DUTY1:2026-05-01:EMP1", amount: 50 }]
+    });
+    vi.mocked(billingRepository.findSvcByDayPartner).mockResolvedValue({
+      success: true,
+      data: { id: 10, remarks: "duty:DUTY1:2026-05-01:EMP1", amt: 100, total: 100 }
+    });
+    vi.mocked(billingRepository.findPayoutByDayPartner).mockResolvedValue({
+      success: true,
+      data: { id: 20, remarks: "duty:DUTY1:2026-05-01:EMP1", amount: 50 }
+    });
+    vi.mocked(billingRepository.updateSvc).mockResolvedValue({ success: true, data: { id: 10 } });
+    vi.mocked(billingRepository.updatePayoutCharge).mockResolvedValue({ success: true, data: { id: 20 } });
+    vi.mocked(billingRepository.insertSvc).mockResolvedValue({ success: true, data: { id: 1 } });
+    vi.mocked(billingRepository.insertPayoutCharge).mockResolvedValue({ success: true, data: { id: 2 } });
+    vi.mocked(dutyRepository.update).mockResolvedValue({ success: true, data: baseDuty });
+
+    const oneDay = {
+      ...baseDuty,
+      end_at: "2026-05-01T16:00:00Z",
+      charge_per_day: 500,
+      payout_per_day: 300
+    };
+    const result = await dutyDiaryService.materializeDuty(oneDay, ctx);
+    expect(result.success).toBe(true);
+    expect(result.data?.updated_svc).toBeGreaterThanOrEqual(1);
+    expect(result.data?.updated_payout).toBeGreaterThanOrEqual(1);
   });
 });
 

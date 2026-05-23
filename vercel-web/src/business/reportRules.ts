@@ -45,6 +45,8 @@ export interface DashboardRawCounts {
     bonus?: number | string | null;
     status?: string;
   }>;
+  /** Partner charge ledger (`hh_payout_charges`) in the period. */
+  payout_charge_rows?: Array<{ amount?: number | string | null }>;
 }
 
 export interface DashboardKpis {
@@ -84,6 +86,8 @@ export interface DashboardKpis {
   payout_gross_amount: number;
   payout_paid_amount: number;
   payout_pending_amount: number;
+  /** Partner diary charge ledger in the period (complements `hh_payouts`). */
+  partner_charge_ledger: number;
 
   // Profit/Loss — collected minus payout-paid for the period.
   profit_loss: number;
@@ -110,7 +114,8 @@ export function buildDashboardKpis(
   const payoutPaid = raw.payout_rows
     .filter((r) => String(r.status || "").toUpperCase() === "PAID")
     .reduce((s, r) => s + Number(r.net_amount || 0), 0);
-  const payoutPending = payoutOutstanding(payoutNet, payoutPaid);
+  const partnerChargeLedger = sumReceiptAmounts(raw.payout_charge_rows || []);
+  const payoutPending = payoutOutstanding(payoutNet, payoutPaid) + partnerChargeLedger;
 
   // Profit/loss for the window — collected receipts minus payouts already paid.
   // Don't subtract payable-but-unpaid payouts; that hides a liability and
@@ -139,6 +144,7 @@ export function buildDashboardKpis(
     payout_gross_amount: round2(payoutGross),
     payout_paid_amount: round2(payoutPaid),
     payout_pending_amount: round2(payoutPending),
+    partner_charge_ledger: round2(partnerChargeLedger),
     profit_loss: profitLoss
   };
 }
@@ -246,6 +252,8 @@ export interface ProfitLossReport {
   revenue: number;
   payouts_paid: number;
   payouts_pending: number;
+  /** Sum of `hh_payout_charges` in window (duty diary + legacy ledger). */
+  partner_charge_ledger: number;
   net_profit: number;
   net_profit_after_pending_payouts: number;
 }
@@ -256,6 +264,7 @@ export function buildProfitLoss(
   args: {
     receipts: Array<{ amount?: number | string | null }>;
     payouts: Array<{ net_amount?: number | string | null; status?: string }>;
+    payout_charges?: Array<{ amount?: number | string | null }>;
   }
 ): ProfitLossReport {
   const revenue = sumReceiptAmounts(args.receipts);
@@ -266,7 +275,8 @@ export function buildProfitLoss(
     (s, r) => s + Number(r.net_amount || 0),
     0
   );
-  const payoutPending = payoutOutstanding(payoutAll, payoutPaid);
+  const partnerChargeLedger = sumReceiptAmounts(args.payout_charges || []);
+  const payoutPending = payoutOutstanding(payoutAll, payoutPaid) + partnerChargeLedger;
 
   return {
     period,
@@ -274,8 +284,9 @@ export function buildProfitLoss(
     revenue: round2(revenue),
     payouts_paid: round2(payoutPaid),
     payouts_pending: round2(payoutPending),
+    partner_charge_ledger: round2(partnerChargeLedger),
     net_profit: round2(revenue - payoutPaid),
-    net_profit_after_pending_payouts: round2(revenue - payoutAll)
+    net_profit_after_pending_payouts: round2(revenue - payoutAll - partnerChargeLedger)
   };
 }
 

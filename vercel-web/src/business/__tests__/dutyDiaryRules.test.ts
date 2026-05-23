@@ -4,7 +4,10 @@ import {
   eachDutyCalendarDay,
   collectDutyPartners,
   dutyDiaryRemarks,
-  buildSvcEntryRow
+  buildSvcEntryRow,
+  parseDutyDiaryRemarks,
+  expectedDiarySlotKeys,
+  diarySlotKey
 } from "@/business/dutyDiaryRules";
 
 describe("dutyDiaryRules", () => {
@@ -48,5 +51,25 @@ describe("dutyDiaryRules", () => {
     expect(row.svc_key).toBe("B1_Care Taker Services");
     expect(row.remarks).toBe("duty:D1:2026-05-01:EMP1");
     expect(row.total).toBe(600);
+  });
+
+  it("parses duty diary remarks", () => {
+    expect(parseDutyDiaryRemarks("duty:D1:2026-05-01:EMP9")).toEqual({
+      dutyId: "D1",
+      isoDate: "2026-05-01",
+      employeeId: "EMP9"
+    });
+    expect(parseDutyDiaryRemarks("legacy")).toBeNull();
+  });
+
+  it("builds expected slot keys for window", () => {
+    const keys = expectedDiarySlotKeys(
+      "2026-05-01T10:00:00Z",
+      "2026-05-02T10:00:00Z",
+      [{ employee_id: "EMP1" }, { employee_id: "EMP2" }]
+    );
+    expect(keys.has(diarySlotKey("2026-05-01", "EMP1"))).toBe(true);
+    expect(keys.has(diarySlotKey("2026-05-02", "EMP2"))).toBe(true);
+    expect(keys.size).toBe(4);
   });
 });

@@ -134,7 +134,8 @@ export const reportService = {
       billingsClosed,
       services,
       receipts,
-      payouts
+      payouts,
+      payoutCharges
     ] = await Promise.all([
       reportRepository.countAllPatients(access),
       reportRepository.countActivePatients(access),
@@ -192,6 +193,12 @@ export const reportService = {
         w.period,
         { employee_id: query.employee_id, status: query.status },
         access
+      ),
+      reportRepository.listPayoutChargesInRange(
+        w.startYMD,
+        w.endYMD,
+        { partner_id: query.employee_id },
+        access
       )
     ]);
 
@@ -210,7 +217,8 @@ export const reportService = {
       billings_closed: expect(billingsClosed, 0),
       service_rows: castRows(services),
       receipt_rows: castRows(receipts),
-      payout_rows: castRows(payouts)
+      payout_rows: castRows(payouts),
+      payout_charge_rows: castRows(payoutCharges)
     };
 
     return success(
@@ -314,12 +322,14 @@ export const reportService = {
     const w = resolveWindow(query);
     const access = dbAccess(ctx);
 
-    const [receipts, payouts] = await Promise.all([
+    const [receipts, payouts, payoutCharges] = await Promise.all([
       reportRepository.listReceiptsInRange(w.startISO, w.endISO, {}, access),
-      reportRepository.listPayoutsForPeriod(w.period, {}, access)
+      reportRepository.listPayoutsForPeriod(w.period, {}, access),
+      reportRepository.listPayoutChargesInRange(w.startYMD, w.endYMD, {}, access)
     ]);
     if (!receipts.success) return passFailure(receipts);
     if (!payouts.success) return passFailure(payouts);
+    if (!payoutCharges.success) return passFailure(payoutCharges);
 
     return success(
       buildProfitLoss(
@@ -327,7 +337,8 @@ export const reportService = {
         { from: w.startISO, to: w.endISO },
         {
           receipts: castRows(receipts),
-          payouts: castRows(payouts)
+          payouts: castRows(payouts),
+          payout_charges: castRows(payoutCharges)
         }
       )
     );

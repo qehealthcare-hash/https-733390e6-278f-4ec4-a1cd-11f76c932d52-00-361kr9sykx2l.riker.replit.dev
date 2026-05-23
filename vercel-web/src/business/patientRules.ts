@@ -32,6 +32,10 @@ export function patientToRow(input: PatientInput) {
   if (Object.prototype.hasOwnProperty.call(input, "photo")) {
     row.photo = (input as { photo?: unknown }).photo ?? null;
   }
+  const reason = (input as { status_reason?: string }).status_reason;
+  if (reason !== undefined) row.status_reason = reason || "";
+  const reasonOther = (input as { status_reason_other?: string }).status_reason_other;
+  if (reasonOther !== undefined) row.status_reason_other = reasonOther || "";
   return row;
 }
 
@@ -67,6 +71,11 @@ export function patientToApi(row: Record<string, unknown>) {
     disease_condition: row.disease_condition || "",
     start_date: row.start_date || "",
     docs: row.docs || [],
+    patient_documents: row.docs || [],
+    photo: row.photo && typeof row.photo === "object" ? row.photo : null,
+    status_reason: row.status_reason || "",
+    status_reason_other: row.status_reason_other || "",
+    close_reason: row.status_reason || "",
     created_at: row.created_at || row.created || null,
     updated_at: row.updated_at || null
   };
@@ -174,12 +183,26 @@ export function canHardDeletePatient(
   return businessOk();
 }
 
-export function patientClosePatch(actorEmail: string) {
-  return { status: "Closed" as const, updated_by: actorEmail };
+export function patientClosePatch(
+  actorEmail: string,
+  reason?: string,
+  reasonOther?: string
+) {
+  return {
+    status: "Closed" as const,
+    status_reason: reason || "",
+    status_reason_other: reasonOther || "",
+    updated_by: actorEmail
+  };
 }
 
 export function patientReopenPatch(actorEmail: string) {
-  return { status: "Active" as const, updated_by: actorEmail };
+  return {
+    status: "Active" as const,
+    status_reason: "",
+    status_reason_other: "",
+    updated_by: actorEmail
+  };
 }
 
 export function patientAssignPatch(caretakerId: string, shift: string, actorEmail: string) {

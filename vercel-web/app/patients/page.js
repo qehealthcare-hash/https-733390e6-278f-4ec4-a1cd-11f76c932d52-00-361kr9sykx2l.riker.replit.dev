@@ -15,8 +15,10 @@ import {
 } from "@/lib/crm-options";
 import { formatDate, slugToText } from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
-import { uploadDocument } from "@/lib/uploads";
+import { openPrintWindow } from "@/lib/print";
+import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
 import { CameraCaptureModal } from "@/components/ui/camera-capture";
+import { DocumentCard, DocumentList } from "@/components/ui/document-card";
 
 function emptyRelative() {
   return { name: "", phone: "" };
@@ -590,6 +592,130 @@ export default function PatientsPage() {
     setHistoryLoading(false);
   }
 
+  async function resolvePatientDocLinks(docs) {
+    if (!Array.isArray(docs) || !docs.length || !auth.session) return [];
+    var resolved = [];
+    for (var i = 0; i < docs.length; i += 1) {
+      var d = docs[i];
+      try {
+        var data = await getDocumentSignedUrl(d, auth.session, { expiresIn: 1800 });
+        resolved.push({ ...d, signedUrl: data && data.signedUrl ? data.signedUrl : "" });
+      } catch (_e) {
+        resolved.push({ ...d, signedUrl: "" });
+      }
+    }
+    return resolved;
+  }
+
+  async function openPatientPdf(row, hideSensitive) {
+    var name = row.full_name || row.name || row.id;
+    var rels = [
+      { name: row.relname || "", phone: row.relphone || "" },
+      { name: row.relname2 || "", phone: row.relphone2 || "" },
+      { name: row.relname3 || "", phone: row.relphone3 || "" }
+    ].filter(function (r) { return r.name || r.phone; });
+    var rawDocs = row.patient_documents || row.docs || [];
+    var photoDoc = row.photo && typeof row.photo === "object" && row.photo.path ? row.photo : null;
+    var resolvedDocs = await resolvePatientDocLinks(rawDocs);
+    var resolvedPhoto = photoDoc ? (await resolvePatientDocLinks([photoDoc]))[0] : null;
+
+    function escape(value) {
+      return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+      });
+    }
+    function field(label, value) {
+      return (
+        "<tr><th style='width:180px'>" + escape(label) + "</th><td>" + escape(value || "-") + "</td></tr>"
+      );
+    }
+    function mask(value) {
+      var s = String(value || "");
+      if (!s) return "";
+      if (s.length <= 4) return "****";
+      return "****" + s.slice(-4);
+    }
+    function isImg(d) {
+      var m = String(d.mime_type || "").toLowerCase();
+      if (m.indexOf("image/") === 0) return true;
+      var n = String(d.file_name || d.path || "").toLowerCase();
+      return /\.(jpe?g|png|webp|heic|heif|gif)$/.test(n);
+    }
+    function isPdf(d) {
+      if (String(d.mime_type || "").toLowerCase() === "application/pdf") return true;
+      var n = String(d.file_name || d.path || "").toLowerCase();
+      return /\.pdf$/.test(n);
+    }
+    var rows = [
+      field("Patient ID", row.id),
+      field("Name", name),
+      field("Date of birth · age", [row.dob, row.age].filter(Boolean).join(" · ")),
+      field("Gender", row.gender),
+      field("Phone", hideSensitive ? mask(row.mobile || row.phone) : row.mobile || row.phone),
+      field("Address", row.address || row.addr),
+      field("Area · city · PIN",
+        [row.area, row.city, row.pincode || row.pin].filter(Boolean).join(" · ")),
+      field("Shift", slugToText(row.shift_type || row.shift)),
+      field("Assigned caretaker", caretakerLabel(row.caretaker_id || row.assigned_staff_id)),
+      field("Disease / condition", row.disease_condition),
+      field("Status", row.status),
+      field("Status reason", row.status_reason || row.close_reason),
+      field("Start date", formatDate(row.start_date || row.created_at)),
+      rels.length
+        ? field("Relative contacts",
+            rels.map(function (r) { return r.name + (r.phone ? " · " + r.phone : ""); }).join(" | "))
+        : "",
+      field("Documents on file", String(resolvedDocs.length || 0))
+    ].join("");
+
+    var photoHtml = resolvedPhoto && resolvedPhoto.signedUrl
+      ? "<div style='text-align:center;margin:8px 0 16px'><img src='" +
+        escape(resolvedPhoto.signedUrl) +
+        "' alt='Patient photo' style='max-width:160px;max-height:200px;border:1px solid #cbd5e1;border-radius:8px'/></div>"
+      : "";
+
+    var docsHtml = "";
+    if (resolvedDocs.length) {
+      docsHtml = "<h3>Attached documents (" + resolvedDocs.length + ")</h3><ol style='line-height:1.7'>";
+      resolvedDocs.forEach(function (d) {
+        var nm = escape(d.file_name || d.path || "Document");
+        var tag = isPdf(d) ? "PDF" : isImg(d) ? "IMG" : "FILE";
+        var link = d.signedUrl
+          ? "<a href='" + escape(d.signedUrl) + "' target='_blank' rel='noopener'>" + nm + "</a>"
+          : nm;
+        docsHtml += "<li>[" + tag + "] " + link + "</li>";
+      });
+      docsHtml += "</ol>";
+      var imageDocs = resolvedDocs.filter(function (d) { return isImg(d) && d.signedUrl; });
+      if (imageDocs.length) {
+        docsHtml +=
+          "<h3>Document previews</h3>" +
+          "<div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px'>" +
+          imageDocs.map(function (d) {
+            return (
+              "<div style='border:1px solid #e2e8f0;border-radius:8px;padding:8px;text-align:center'>" +
+              "<div style='font-size:12px;color:#475569;margin-bottom:6px'>" +
+              escape(d.file_name || d.path) +
+              "</div>" +
+              "<img src='" + escape(d.signedUrl) + "' alt='" + escape(d.file_name || "doc") +
+              "' style='max-width:100%;max-height:320px;object-fit:contain'/></div>"
+            );
+          }).join("") +
+          "</div>";
+      }
+    }
+
+    var body =
+      "<h2>Patient Profile</h2>" +
+      photoHtml +
+      "<table><tbody>" + rows + "</tbody></table>" +
+      docsHtml;
+    openPrintWindow(
+      hideSensitive ? "Patient Profile (sanitised)" : "Patient Profile - " + name,
+      body
+    );
+  }
+
   return (
     <AuthGuard permission="patients.read">
       <AppShell title="Patients">
@@ -754,12 +880,16 @@ export default function PatientsPage() {
                       Use camera
                     </button>
                   </div>
-                  {form.photo
-                    ? <small>{form.photo.file_name || form.photo.path}</small>
-                    : <small>Optional. On mobile the file picker also opens the camera.</small>}
+                  {form.photo ? (
+                    <div style={{ marginTop: 8 }}>
+                      <DocumentCard doc={form.photo} session={auth.session} />
+                    </div>
+                  ) : (
+                    <small>Optional. On mobile the file picker also opens the camera.</small>
+                  )}
                 </div>
                 <div className="field">
-                  <label>Documents</label>
+                  <label>Documents ({form.documents.length})</label>
                   <input
                     type="file"
                     multiple
@@ -769,31 +899,20 @@ export default function PatientsPage() {
                   <small>Discharge, prescriptions, IDs. JPG/PNG/HEIC/PDF up to 25 MB each.</small>
                 </div>
               </div>
-              <div className="document-list">
-                {form.documents.map(function (doc, index) {
-                  return (
-                    <div className="document-item" key={doc.path || index}>
-                      <div>{doc.file_name || doc.path}</div>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        onClick={function () {
-                          setForm(function (current) {
-                            return {
-                              ...current,
-                              documents: current.documents.filter(function (item) {
-                                return item.path !== doc.path;
-                              })
-                            };
-                          });
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+              <DocumentList
+                docs={form.documents}
+                session={auth.session}
+                onRemove={function (doc) {
+                  setForm(function (current) {
+                    return {
+                      ...current,
+                      documents: current.documents.filter(function (item) {
+                        return item.path !== doc.path;
+                      })
+                    };
+                  });
+                }}
+              />
               {conflictPrompt ? (
                 <div
                   className="error-text"
@@ -1031,6 +1150,15 @@ export default function PatientsPage() {
                                   disabled={busy}
                                 >
                                   History
+                                </button>
+                                <button
+                                  className="button ghost"
+                                  type="button"
+                                  onClick={function () { openPatientPdf(row, false); }}
+                                  disabled={busy}
+                                  title="Print profile with photo + documents"
+                                >
+                                  Print
                                 </button>
                                 {!isRegistryClosed(row.status) ? (
                                   <button

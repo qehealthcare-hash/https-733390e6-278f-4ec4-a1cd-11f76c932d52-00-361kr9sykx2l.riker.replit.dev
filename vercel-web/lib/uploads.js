@@ -103,3 +103,43 @@ export async function uploadDocument(options) {
     uploaded_at: new Date().toISOString()
   };
 }
+
+/**
+ * Mint a short-lived read URL for an uploaded document/photo.
+ * Returns `{ signedUrl, bucket, path }` or null if the doc is incomplete.
+ */
+export async function getDocumentSignedUrl(doc, session, opts) {
+  if (!doc || !doc.bucket || !doc.path) return null;
+  if (!session?.access_token) {
+    throw new Error("Sign in to view this document");
+  }
+  var body = {
+    bucket: doc.bucket,
+    path: doc.path,
+    expires_in: (opts && opts.expiresIn) || 600
+  };
+  if (opts && opts.download && doc.file_name) {
+    body.download_as = doc.file_name;
+  }
+  var data = await request(
+    "/uploads/signed-download",
+    { method: "POST", body: body },
+    session
+  );
+  return data && data.signedUrl ? data : null;
+}
+
+export function isImageDocument(doc) {
+  if (!doc) return false;
+  var mime = String(doc.mime_type || "").toLowerCase();
+  if (mime.indexOf("image/") === 0) return true;
+  var name = String(doc.file_name || doc.path || "").toLowerCase();
+  return /\.(jpe?g|png|webp|heic|heif|gif)$/.test(name);
+}
+
+export function isPdfDocument(doc) {
+  if (!doc) return false;
+  if (String(doc.mime_type || "").toLowerCase() === "application/pdf") return true;
+  var name = String(doc.file_name || doc.path || "").toLowerCase();
+  return /\.pdf$/.test(name);
+}
