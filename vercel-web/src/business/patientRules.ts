@@ -115,8 +115,13 @@ export function findActivePatientByName<
   return null;
 }
 
+/** Only registry-closed rows are read-only; legacy Duty Closed / Deceased etc. remain editable. */
+export function isRegistryClosedPatient(status: string | undefined | null): boolean {
+  return String(status || "") === "Closed";
+}
+
 export function canEditPatient(status: string | undefined | null): ApiResult<null> {
-  if (String(status || "") === "Closed") {
+  if (isRegistryClosedPatient(status)) {
     return businessFailure("Closed patients are read-only — reopen before editing");
   }
   return businessOk();

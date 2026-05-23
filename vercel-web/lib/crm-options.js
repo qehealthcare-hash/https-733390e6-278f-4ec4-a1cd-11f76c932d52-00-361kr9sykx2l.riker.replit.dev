@@ -45,8 +45,14 @@ export const shiftOptions = [
 
 export const patientStatusOptions = [
   { value: "Active", label: "Active" },
-  { value: "On Hold", label: "On Hold" },
-  { value: "Closed", label: "Closed" }
+  { value: "On Hold", label: "On hold" },
+  { value: "Paused", label: "Paused" },
+  { value: "Duty Closed", label: "Duty closed" },
+  { value: "Closed", label: "Closed (registry)" },
+  { value: "Discharged", label: "Discharged" },
+  { value: "Deceased", label: "Deceased" },
+  { value: "Expired", label: "Expired" },
+  { value: "Inactive", label: "Inactive" }
 ];
 
 export const patientCloseReasonOptions = [

@@ -7,24 +7,25 @@ import {
   shiftTypeSchema
 } from "@/validation/commonValidation";
 
-export const PATIENT_STATUSES = ["Active", "Closed", "On Hold"] as const;
-export type PatientStatus = (typeof PATIENT_STATUSES)[number];
-
 /**
- * Statuses the legacy SPA may persist. The DB column is plain text so we
- * accept any of these on the `/patients/sync` upsert path without coercing
- * to the trimmed enum above.
+ * Canonical patient statuses stored in `hh_patients.status`. Matches live
+ * data + legacy SPA values so PATCH never silently coerces to "Active".
  */
-export const PATIENT_LEGACY_STATUSES = [
+export const PATIENT_STATUSES = [
   "Active",
+  "On Hold",
   "Paused",
   "Duty Closed",
-  "Expired",
-  "Deceased",
+  "Closed",
   "Discharged",
-  "On Hold",
-  "Closed"
+  "Deceased",
+  "Expired",
+  "Inactive"
 ] as const;
+export type PatientStatus = (typeof PATIENT_STATUSES)[number];
+
+/** Alias kept for `/patients/sync` — same set as PATIENT_STATUSES. */
+export const PATIENT_LEGACY_STATUSES = PATIENT_STATUSES;
 
 const patientPhoneSchema = z
   .string()
@@ -58,7 +59,9 @@ export const patientSchema = z
     relname3: z.string().max(120).optional().default(""),
     relphone3: z.string().max(20).optional().default(""),
     email: optionalEmail,
-    status: z.enum(PATIENT_STATUSES).optional().default("Active"),
+    /** Omit on PATCH to keep existing status; create path defaults to Active in service. */
+    status: z.enum(PATIENT_STATUSES).optional(),
+    expected_updated_at: z.string().trim().optional(),
     // Reason text is accepted by the API (for audit) but NOT a column on
     // hh_patients; the service layer omits it from the row write.
     status_reason: z.string().max(120).optional().default(""),
@@ -126,6 +129,13 @@ export const patientCloseSchema = z.object({
 });
 
 export type PatientCloseInput = z.infer<typeof patientCloseSchema>;
+
+/** Optional note on POST /patients/:id/reopen (audit stamp only). */
+export const patientReopenSchema = z.object({
+  reason: z.string().trim().max(500).optional().default("")
+});
+
+export type PatientReopenInput = z.infer<typeof patientReopenSchema>;
 
 export const patientListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional().default(50),

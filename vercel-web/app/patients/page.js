@@ -43,7 +43,8 @@ function createInitialForm() {
     status_reason_other: "",
     photo: null,
     documents: [],
-    relative_contacts: [emptyRelative(), emptyRelative(), emptyRelative()]
+    relative_contacts: [emptyRelative(), emptyRelative(), emptyRelative()],
+    expected_updated_at: ""
   };
 }
 
@@ -102,6 +103,7 @@ export default function PatientsPage() {
 
   // Inline modals: close-reason dialog and full patient history viewer.
   var [closeDialog, setCloseDialog] = useState(null); // { id, name, reason, reason_other }
+  var [reopenDialog, setReopenDialog] = useState(null); // { id, name, note }
   var [historyDialog, setHistoryDialog] = useState(null); // { id, name }
   var [cameraOpen, setCameraOpen] = useState(false);
   var [historyData, setHistoryData] = useState(null);
@@ -135,7 +137,7 @@ export default function PatientsPage() {
             .filter(Boolean)
             .join(" ")
             .toLowerCase();
-          var matchesSearch = !search || hay.indexOf(search.toLowerCase()) >= 0;
+          var matchesSearch = !debouncedSearch || hay.indexOf(debouncedSearch.toLowerCase()) >= 0;
           var matchesStatus = !statusFilter || row.status === statusFilter;
           var matchesGender = !genderFilter || row.gender === genderFilter;
           var matchesArea =
@@ -161,8 +163,16 @@ export default function PatientsPage() {
           return sortOrder === "asc" ? leftTime - rightTime : rightTime - leftTime;
         });
     },
-    [resource.data, search, statusFilter, genderFilter, areaFilter, pinFilter, shiftFilter, sortOrder]
+    [resource.data, debouncedSearch, statusFilter, genderFilter, areaFilter, pinFilter, shiftFilter, sortOrder]
   );
+
+  function caretakerLabel(employeeId) {
+    if (!employeeId) return "";
+    var hit = employees.find(function (employee) {
+      return employee.id === employeeId;
+    });
+    return hit ? (hit.full_name || hit.name || employeeId) : employeeId;
+  }
 
   function updateField(name, value) {
     setForm(function (current) {
@@ -201,7 +211,7 @@ export default function PatientsPage() {
           status_reason: row.status_reason || row.close_reason || "",
           shift_type: row.shift_type || row.shift || "",
           disease_condition: row.disease_condition || "",
-          assigned_staff: row.employees?.full_name || row.caretaker_id || row.assigned_staff_id || "",
+          assigned_staff: caretakerLabel(row.caretaker_id || row.assigned_staff_id),
           relname1: row.relname || "",
           relphone1: row.relphone || "",
           relname2: row.relname2 || "",
@@ -309,7 +319,8 @@ export default function PatientsPage() {
       status_reason_other: row.status_reason_other || row.close_reason_other || "",
       photo: row.photo && typeof row.photo === "object" ? row.photo : null,
       documents: row.patient_documents || row.docs || [],
-      relative_contacts: rels
+      relative_contacts: rels,
+      expected_updated_at: row.updated_at || ""
     });
   }
 
@@ -366,6 +377,9 @@ export default function PatientsPage() {
         docs: form.documents,
         documents: form.documents
       };
+      if (form.id && form.expected_updated_at) {
+        payload.expected_updated_at = form.expected_updated_at;
+      }
       await requestWithOfflineFallback(
         form.id ? "/patients/" + form.id : "/patients",
         { method: form.id ? "PUT" : "POST", body: payload },
@@ -381,9 +395,12 @@ export default function PatientsPage() {
     }
   }
 
-  function isClosedStatus(status) {
-    var normalized = String(status || "Active");
-    return normalized !== "Active";
+  function isActiveStatus(status) {
+    return String(status || "Active") === "Active";
+  }
+
+  function isRegistryClosed(status) {
+    return String(status || "") === "Closed";
   }
 
   function openCloseDialog(row) {
@@ -430,19 +447,36 @@ export default function PatientsPage() {
     }
   }
 
-  async function reopenPatient(id) {
-    if (!window.confirm("Reopen this patient? They will become Active again.")) return;
+  function openReopenDialog(row) {
+    setError("");
+    setMessage("");
+    setReopenDialog({
+      id: row.id,
+      name: row.full_name || row.name || row.id,
+      note: ""
+    });
+  }
+
+  async function submitReopenDialog() {
+    if (!reopenDialog) return;
     setBusy(true);
     setError("");
     setMessage("");
     try {
       await requestWithOfflineFallback(
-        "/patients/" + id + "/reopen",
-        { method: "POST" },
+        "/patients/" + reopenDialog.id + "/reopen",
+        {
+          method: "POST",
+          body: reopenDialog.note.trim()
+            ? { reason: reopenDialog.note.trim() }
+            : undefined
+        },
         auth.session
       );
       await resource.reload();
+      if (form.id === reopenDialog.id) resetForm();
       setMessage("Patient reopened");
+      setReopenDialog(null);
     } catch (reopenError) {
       setError(reopenError.message || "Unable to reopen patient");
     } finally {
@@ -873,17 +907,27 @@ export default function PatientsPage() {
                                 >
                                   History
                                 </button>
-                                {isClosedStatus(row.status) ? (
+                                {!isRegistryClosed(row.status) ? (
+                                  <button
+                                    className="button secondary"
+                                    type="button"
+                                    onClick={function () { editPatient(row); }}
+                                    disabled={busy}
+                                  >
+                                    Edit
+                                  </button>
+                                ) : null}
+                                {!isActiveStatus(row.status) ? (
                                   <>
                                     <button
                                       className="button secondary"
                                       type="button"
-                                      onClick={function () { reopenPatient(row.id); }}
+                                      onClick={function () { openReopenDialog(row); }}
                                       disabled={busy}
                                     >
                                       Reopen
                                     </button>
-                                    {isAdmin ? (
+                                    {isAdmin && isRegistryClosed(row.status) ? (
                                       <button
                                         className="button danger"
                                         type="button"
@@ -896,24 +940,14 @@ export default function PatientsPage() {
                                     ) : null}
                                   </>
                                 ) : (
-                                  <>
-                                    <button
-                                      className="button secondary"
-                                      type="button"
-                                      onClick={function () { editPatient(row); }}
-                                      disabled={busy}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      className="button danger"
-                                      type="button"
-                                      onClick={function () { openCloseDialog(row); }}
-                                      disabled={busy}
-                                    >
-                                      Close
-                                    </button>
-                                  </>
+                                  <button
+                                    className="button danger"
+                                    type="button"
+                                    onClick={function () { openCloseDialog(row); }}
+                                    disabled={busy}
+                                  >
+                                    Close
+                                  </button>
                                 )}
                               </div>
                             </td>
@@ -986,6 +1020,53 @@ export default function PatientsPage() {
                     disabled={busy}
                   >
                     {busy ? "Closing..." : "Close patient"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {reopenDialog ? (
+            <div className="modal-backdrop" onClick={function (event) {
+              if (event.target === event.currentTarget && !busy) setReopenDialog(null);
+            }}>
+              <div className="panel modal-card" role="dialog" aria-modal="true">
+                <h3>Reopen patient: {reopenDialog.name}</h3>
+                <p className="mini-muted">
+                  Status will return to Active. If another active patient already uses this
+                  mobile number, reopen will be refused.
+                </p>
+                <div className="field">
+                  <label>Note (optional, for your records)</label>
+                  <textarea
+                    rows="2"
+                    value={reopenDialog.note}
+                    onChange={function (event) {
+                      var value = event.target.value;
+                      setReopenDialog(function (d) {
+                        return d ? { ...d, note: value } : d;
+                      });
+                    }}
+                    maxLength={500}
+                    placeholder="e.g. Returned from hospital"
+                  />
+                </div>
+                {error ? <div className="error-text">{error}</div> : null}
+                <div className="button-row">
+                  <button
+                    className="button ghost"
+                    type="button"
+                    onClick={function () { setReopenDialog(null); }}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={submitReopenDialog}
+                    disabled={busy}
+                  >
+                    {busy ? "Reopening..." : "Reopen as Active"}
                   </button>
                 </div>
               </div>

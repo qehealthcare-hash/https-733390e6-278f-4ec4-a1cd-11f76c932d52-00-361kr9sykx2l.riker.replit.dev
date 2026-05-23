@@ -21,6 +21,8 @@ import {
   patientSchema,
   patientAssignSchema,
   patientCloseSchema,
+  patientReopenSchema,
+  type PatientReopenInput,
   patientListQuerySchema,
   patientLegacySyncSchema,
   type PatientCloseInput,
@@ -44,6 +46,8 @@ import {
   patientToRow
 } from "@/business/patientRules";
 import { phoneSuffix } from "@/business/phoneRules";
+import { assertNotStale } from "@/business/concurrencyRules";
+import { patientNameKey } from "@/business/patientRules";
 import { newId } from "@/business/idRules";
 import { patientRepository } from "@/database/patientRepository";
 import { employeeRepository } from "@/database/employeeRepository";
@@ -234,7 +238,7 @@ export const patientService = {
 
     const id = input.id || newId.patient();
     const row = {
-      ...patientToRow(input),
+      ...patientToRow({ ...input, status: input.status || "Active" }),
       id,
       created: new Date().toISOString(),
       created_by: ctx.actor.email,
@@ -277,13 +281,32 @@ export const patientService = {
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as PatientInput;
 
+    const stale = assertNotStale(
+      "Patient",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
+
     const prevPhone = String(existing.data.phone || "");
     if (input.phone && input.phone !== prevPhone) {
       const dupCheck = await ensureNoActiveDuplicate(input.phone, id, ctx);
       if (!dupCheck.success) return passFailure(dupCheck);
     }
 
-    const patch = { ...patientToRow(input), updated_by: ctx.actor.email };
+    const merged: PatientInput = {
+      ...input,
+      status: (input.status ?? String(existing.data.status || "Active")) as PatientInput["status"]
+    };
+
+    const prevNameKey = patientNameKey(String(existing.data.name || ""));
+    const nextNameKey = patientNameKey(merged.name);
+    if (nextNameKey && nextNameKey !== prevNameKey && !merged.confirm_duplicate_name) {
+      const nameCheck = await ensureNoActiveNameDuplicate(merged.name, id, ctx);
+      if (!nameCheck.success) return passFailure(nameCheck);
+    }
+
+    const patch = { ...patientToRow(merged), updated_by: ctx.actor.email };
     const updated = await patientRepository.update(id, patch, dbAccess(ctx));
     if (!updated.success) return passFailure(updated);
 
@@ -363,8 +386,16 @@ export const patientService = {
    */
   async reopen(
     id: string,
-    ctx: PatientServiceContext
+    ctx: PatientServiceContext,
+    rawReopenInput?: unknown
   ): Promise<ApiResult<ReturnType<typeof patientToApi>>> {
+    let reopenNote = "";
+    if (rawReopenInput && Object.keys(rawReopenInput as Record<string, unknown>).length > 0) {
+      const parsed = parseInput(patientReopenSchema, rawReopenInput);
+      if (!parsed.success) return passFailure(parsed);
+      reopenNote = (parsed.data as PatientReopenInput).reason || "";
+    }
+
     const existing = await loadPatient(id, ctx);
     if (!existing.success) {
       return failure(existing.error || "Patient not found", existing.code, existing.details);
@@ -395,7 +426,9 @@ export const patientService = {
         action: "restore",
         before: existing.data,
         after: fresh.data,
-        stamp: `Reopened patient ${id}`
+        stamp: reopenNote
+          ? `Reopened patient ${id} — ${reopenNote}`
+          : `Reopened patient ${id}`
       }),
       patientToApi(fresh.data)
     );

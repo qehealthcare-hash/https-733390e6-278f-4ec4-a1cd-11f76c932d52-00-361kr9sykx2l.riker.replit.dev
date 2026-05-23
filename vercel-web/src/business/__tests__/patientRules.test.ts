@@ -28,6 +28,8 @@ describe("patientRules — workflow matrix", () => {
   it("blocks edits on Closed patients", () => {
     expectFail(canEditPatient("Closed"), ErrorCodes.business);
     expectOk(canEditPatient("Active"));
+    expectOk(canEditPatient("Duty Closed"));
+    expectOk(canEditPatient("Deceased"));
   });
 
   it("blocks caretaker assignment when patient is inactive", () => {
