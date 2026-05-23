@@ -9,7 +9,6 @@ import { useRealtimeResource } from "@/hooks/use-realtime-resource";
 import { useAuth } from "@/components/providers/auth-provider";
 import { requestWithOfflineFallback } from "@/lib/api-client";
 import {
-  bloodGroupOptions,
   departmentOptions,
   educationOptions,
   employeeRoleOptions,
@@ -27,12 +26,10 @@ function createInitialForm() {
     fn: "",
     mn: "",
     ln: "",
-    email: "",
     mobile: "",
     phone2: "",
     gender: "Female",
     dob: "",
-    blood: "Unknown",
     dept: "NURSING",
     role: "NURSE",
     emp_type: "FULL_TIME",
@@ -172,12 +169,10 @@ export default function EmployeesPage() {
       fn: row.fn || parts[0] || "",
       mn: row.mn || (parts.length > 2 ? parts.slice(1, -1).join(" ") : ""),
       ln: row.ln || (parts.length > 1 ? parts[parts.length - 1] : ""),
-      email: row.email || "",
       mobile: row.mobile || row.phone || "",
       phone2: row.phone2 || "",
       gender: row.gender || "Female",
       dob: row.dob || "",
-      blood: row.blood || "Unknown",
       dept: row.dept || "NURSING",
       role: row.role || row.desig || "NURSE",
       emp_type: row.emp_type || row.etype || "FULL_TIME",
@@ -280,13 +275,11 @@ export default function EmployeesPage() {
         ln: form.ln,
         name: fullName,
         full_name: fullName,
-        email: form.email || "",
         phone: form.mobile,
         mobile: form.mobile,
         phone2: form.phone2 || "",
         gender: form.gender || "",
         dob: form.dob || "",
-        blood: form.blood || "",
         dept: form.dept || "",
         desig: form.role,
         role: form.role,
@@ -406,7 +399,6 @@ export default function EmployeesPage() {
       field("Area", row.area),
       field("Phone", hideSensitive ? "" : row.mobile || row.phone),
       field("Alt phone", hideSensitive ? "" : row.phone2),
-      field("Email", row.email),
       field("Aadhar", hideSensitive ? mask(row.aadhar) : row.aadhar),
       field("PAN", hideSensitive ? mask(row.pan) : row.pan),
       field("Permanent address", row.permaddr || row.addr || row.address),
@@ -543,10 +535,6 @@ export default function EmployeesPage() {
                   <input value={form.phone2} onChange={function (event) { updateField("phone2", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Email</label>
-                  <input type="email" value={form.email} onChange={function (event) { updateField("email", event.target.value); }} />
-                </div>
-                <div className="field">
                   <label>Date of birth</label>
                   <input type="date" value={form.dob} onChange={function (event) { updateField("dob", event.target.value); }} />
                 </div>
@@ -556,14 +544,6 @@ export default function EmployeesPage() {
                     <option>Female</option>
                     <option>Male</option>
                     <option>Other</option>
-                  </select>
-                </div>
-                <div className="field">
-                  <label>Blood group</label>
-                  <select value={form.blood} onChange={function (event) { updateField("blood", event.target.value); }}>
-                    {bloodGroupOptions.map(function (b) {
-                      return <option key={b} value={b}>{b}</option>;
-                    })}
                   </select>
                 </div>
               </div>

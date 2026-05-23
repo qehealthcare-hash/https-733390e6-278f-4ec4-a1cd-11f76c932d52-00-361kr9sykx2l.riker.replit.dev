@@ -9,7 +9,6 @@ import { useRealtimeResource } from "@/hooks/use-realtime-resource";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import {
-  bloodGroupOptions,
   patientCloseReasonOptions,
   patientStatusOptions,
   shiftOptions
@@ -29,8 +28,6 @@ function createInitialForm() {
     dob: "",
     age: 0,
     gender: "Female",
-    blood: "Unknown",
-    email: "",
     address: "",
     area: "",
     city: "Ahmedabad",
@@ -156,9 +153,7 @@ export default function PatientsPage() {
           name: row.full_name || row.name,
           dob: row.dob || "",
           age_gender: String(row.age || "") + " / " + String(row.gender || ""),
-          blood: row.blood || "",
           phone: row.mobile || row.phone || "",
-          email: row.email || "",
           address: row.address || row.addr || "",
           area: row.area || "",
           city: row.city || "",
@@ -255,8 +250,6 @@ export default function PatientsPage() {
       dob: row.dob || "",
       age: row.age || deriveAgeFromDob(row.dob) || 0,
       gender: row.gender || "Female",
-      blood: row.blood || "Unknown",
-      email: row.email || "",
       address: row.address || row.addr || "",
       area: row.area || "",
       city: row.city || "Ahmedabad",
@@ -299,8 +292,6 @@ export default function PatientsPage() {
         dob: form.dob || "",
         age: String(form.age || ""),
         gender: form.gender,
-        blood: form.blood || "",
-        email: form.email || undefined,
         address: form.address || "",
         addr: form.address || "",
         area: form.area,
@@ -403,22 +394,6 @@ export default function PatientsPage() {
                     <option>Male</option>
                     <option>Other</option>
                   </select>
-                </div>
-                <div className="field">
-                  <label>Blood group</label>
-                  <select value={form.blood} onChange={function (event) { updateField("blood", event.target.value); }}>
-                    {bloodGroupOptions.map(function (b) {
-                      return <option key={b} value={b}>{b}</option>;
-                    })}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>Email</label>
-                  <input
-                    type="email"
-                    value={form.email}
-                    onChange={function (event) { updateField("email", event.target.value); }}
-                  />
                 </div>
                 <div className="field">
                   <label>Shift</label>
@@ -659,7 +634,6 @@ export default function PatientsPage() {
                         <th>ID</th>
                         <th>Name</th>
                         <th>Age/Sex</th>
-                        <th>Blood</th>
                         <th>Phone</th>
                         <th>Area</th>
                         <th>Status</th>
@@ -675,12 +649,8 @@ export default function PatientsPage() {
                             <td>{row.id}</td>
                             <td>
                               <div className="table-primary">{row.full_name || row.name}</div>
-                              <div className="record-meta mini-muted">
-                                <span>{row.email || ""}</span>
-                              </div>
                             </td>
                             <td>{String(row.age || "-") + " / " + String(row.gender || "-")}</td>
-                            <td>{row.blood || "-"}</td>
                             <td>{row.mobile || row.phone || "-"}</td>
                             <td>{(row.area || "-") + ", " + (row.city || "")}</td>
                             <td>
