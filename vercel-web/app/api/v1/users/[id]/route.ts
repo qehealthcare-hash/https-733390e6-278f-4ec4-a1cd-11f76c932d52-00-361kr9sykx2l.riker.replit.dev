@@ -11,14 +11,14 @@ type Params = { id: string };
 
 export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin", "Manager"]);
-  const data = await userService.getUser(params.id);
+  const data = await userService.getUser(params.id, actor.accessToken);
   return jsonOk(data);
 });
 
 export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin"]);
   const body = await parseJsonBody(req);
-  const data = await userService.updateUser(params.id, body);
+  const data = await userService.updateUser(params.id, body, actor.accessToken);
   return jsonOk(data);
 });
 
@@ -26,6 +26,6 @@ export const PUT = PATCH;
 
 export const DELETE = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin"]);
-  const data = await userService.deleteUser(params.id);
+  const data = await userService.deleteUser(params.id, actor.accessToken);
   return jsonOk(data);
 });

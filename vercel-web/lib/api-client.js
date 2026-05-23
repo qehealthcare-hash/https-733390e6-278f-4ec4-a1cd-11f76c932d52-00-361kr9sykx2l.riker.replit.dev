@@ -24,12 +24,15 @@ function unwrapResponse(json, response) {
       var err = new Error(json.error || "Request failed");
       if (json.code) err.code = json.code;
       if (json.details !== undefined) err.details = json.details;
+      err.status = response.status;
       throw err;
     }
     return json.data;
   }
   if (!response.ok) {
-    throw new Error(json.message || json.error || "Request failed");
+    var hardErr = new Error(json.message || json.error || "Request failed");
+    hardErr.status = response.status;
+    throw hardErr;
   }
   return json.data !== undefined ? json.data : json;
 }

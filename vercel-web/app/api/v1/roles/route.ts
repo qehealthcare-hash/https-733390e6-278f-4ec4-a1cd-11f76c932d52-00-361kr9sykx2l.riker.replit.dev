@@ -7,8 +7,8 @@ import { userService } from "@/lib/api/services/user.service";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export const GET = withAuth(async () => {
-  const data = await userService.listRoles();
+export const GET = withAuth(async (_req, { actor }) => {
+  const data = await userService.listRoles(actor.accessToken);
   return jsonOk(data);
 });
 

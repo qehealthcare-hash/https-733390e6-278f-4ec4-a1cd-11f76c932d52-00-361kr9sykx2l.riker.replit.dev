@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 
 type Params = { id: string };
 
-export const GET = withAuth<Params>(async (_req: NextRequest, { params }) => {
-  const data = await userService.getRole(params.id);
+export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
+  const data = await userService.getRole(params.id, actor.accessToken);
   return jsonOk(data);
 });
 

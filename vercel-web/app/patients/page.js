@@ -44,7 +44,8 @@ function createInitialForm() {
     photo: null,
     documents: [],
     relative_contacts: [emptyRelative(), emptyRelative(), emptyRelative()],
-    expected_updated_at: ""
+    expected_updated_at: "",
+    confirm_duplicate_name: false
   };
 }
 
@@ -94,6 +95,8 @@ export default function PatientsPage() {
   var [busy, setBusy] = useState(false);
   var [message, setMessage] = useState("");
   var [error, setError] = useState("");
+  var [conflictPrompt, setConflictPrompt] = useState(null); // { actual, action }
+  var [duplicatePrompt, setDuplicatePrompt] = useState(null); // { message }
   var [statusFilter, setStatusFilter] = useState("");
   var [genderFilter, setGenderFilter] = useState("");
   var [areaFilter, setAreaFilter] = useState("");
@@ -335,6 +338,8 @@ export default function PatientsPage() {
     setBusy(true);
     setError("");
     setMessage("");
+    setConflictPrompt(null);
+    setDuplicatePrompt(null);
     try {
       if (form.status !== "Active" && !form.status_reason.trim()) {
         throw new Error("Reason is required when patient is not Active");
@@ -380,6 +385,9 @@ export default function PatientsPage() {
       if (form.id && form.expected_updated_at) {
         payload.expected_updated_at = form.expected_updated_at;
       }
+      if (form.confirm_duplicate_name) {
+        payload.confirm_duplicate_name = true;
+      }
       await requestWithOfflineFallback(
         form.id ? "/patients/" + form.id : "/patients",
         { method: form.id ? "PUT" : "POST", body: payload },
@@ -389,10 +397,54 @@ export default function PatientsPage() {
       resetForm();
       setMessage(form.id ? "Patient updated successfully" : "Patient created successfully");
     } catch (submitError) {
-      setError(submitError.message || "Unable to save patient");
+      var code = submitError?.code;
+      if (code === "conflict") {
+        var actual = submitError?.details?.actual_updated_at;
+        setConflictPrompt({
+          actual: actual,
+          message:
+            submitError.message ||
+            "Patient was modified by another user — reload to see their changes."
+        });
+      } else if (
+        code === "duplicate" &&
+        submitError?.details?.field === "name" &&
+        !form.id
+      ) {
+        setDuplicatePrompt({
+          message: submitError.message || "An active patient with this name already exists."
+        });
+      } else {
+        setError(submitError.message || "Unable to save patient");
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  async function reloadPatientFromConflict() {
+    if (!form.id) {
+      setConflictPrompt(null);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      var fresh = await request("/patients/" + form.id, null, auth.session);
+      editPatient(fresh);
+      setConflictPrompt(null);
+      setMessage("Patient reloaded — your previous edits were discarded.");
+    } catch (reloadError) {
+      setError(reloadError.message || "Could not reload patient.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmDuplicateAndResubmit() {
+    setDuplicatePrompt(null);
+    setForm(function (current) { return { ...current, confirm_duplicate_name: true }; });
+    setMessage("Will create as a separate patient on the next save — press Save.");
   }
 
   function isActiveStatus(status) {
@@ -742,7 +794,80 @@ export default function PatientsPage() {
                   );
                 })}
               </div>
-              {error ? <div className="error-text">{error}</div> : null}
+              {conflictPrompt ? (
+                <div
+                  className="error-text"
+                  style={{
+                    border: "1px solid var(--warn, #d97706)",
+                    background: "rgba(217,119,6,0.08)",
+                    padding: "10px 12px",
+                    borderRadius: 6
+                  }}
+                >
+                  <div style={{ marginBottom: 6 }}>
+                    <strong>Concurrent edit detected.</strong> {conflictPrompt.message}
+                    {conflictPrompt.actual ? (
+                      <span className="mini-muted">
+                        {" "}(server updated_at: {String(conflictPrompt.actual)})
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="button-row" style={{ gap: 8 }}>
+                    <button
+                      className="button primary"
+                      type="button"
+                      onClick={reloadPatientFromConflict}
+                      disabled={busy}
+                    >
+                      Reload latest
+                    </button>
+                    <button
+                      className="button ghost"
+                      type="button"
+                      onClick={function () { setConflictPrompt(null); }}
+                      disabled={busy}
+                    >
+                      Keep my changes
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {duplicatePrompt ? (
+                <div
+                  className="error-text"
+                  style={{
+                    border: "1px solid var(--warn, #d97706)",
+                    background: "rgba(217,119,6,0.08)",
+                    padding: "10px 12px",
+                    borderRadius: 6
+                  }}
+                >
+                  <div style={{ marginBottom: 6 }}>
+                    <strong>Possible duplicate.</strong> {duplicatePrompt.message}
+                  </div>
+                  <div className="button-row" style={{ gap: 8 }}>
+                    <button
+                      className="button primary"
+                      type="button"
+                      onClick={confirmDuplicateAndResubmit}
+                      disabled={busy}
+                    >
+                      Create as new patient anyway
+                    </button>
+                    <button
+                      className="button ghost"
+                      type="button"
+                      onClick={function () { setDuplicatePrompt(null); }}
+                      disabled={busy}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {error && !conflictPrompt && !duplicatePrompt ? (
+                <div className="error-text">{error}</div>
+              ) : null}
               {!error && resource.error ? (
                 <div className="error-text">Live patient list error — {resource.error}</div>
               ) : null}

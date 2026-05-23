@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "../supabase";
+import { dbFor, supabaseAdmin } from "../supabase";
 import { badRequest, notFound, conflict } from "../errors";
 
 const USERS = "hh_users";
@@ -47,8 +47,11 @@ function buildPayload(input: Record<string, unknown>): Partial<UserRow> {
 }
 
 export const userService = {
-  async listUsers(q: { q?: string; role?: string; active?: string; limit?: number; offset?: number }) {
-    const db = supabaseAdmin();
+  async listUsers(
+    q: { q?: string; role?: string; active?: string; limit?: number; offset?: number },
+    accessToken?: string
+  ) {
+    const db = dbFor(accessToken);
     const limit = Math.min(Math.max(q.limit || 200, 1), 500);
     const offset = Math.max(q.offset || 0, 0);
     let query = db.from(USERS).select("*", { count: "exact" }).order("username").range(offset, offset + limit - 1);
@@ -61,21 +64,23 @@ export const userService = {
     return { rows: data || [], total: count ?? (data || []).length };
   },
 
-  async getUser(id: string) {
-    const db = supabaseAdmin();
+  async getUser(id: string, accessToken?: string) {
+    const db = dbFor(accessToken);
     const { data, error } = await db.from(USERS).select("*").eq("id", id).maybeSingle();
     if (error) throw error;
     if (!data) throw notFound("User");
     return data;
   },
 
-  async createUser(input: Record<string, unknown>) {
+  async createUser(input: Record<string, unknown>, accessToken?: string) {
     if (!input.username || String(input.username).trim() === "") {
       throw badRequest("username is required");
     }
     const payload = buildPayload(input);
     if (payload.is_active === undefined) payload.is_active = true;
+    // Writes need elevated privileges (admin creating accounts) — admin client.
     const db = supabaseAdmin();
+    void accessToken;
 
     const existingUsername = await db.from(USERS).select("id").ilike("username", String(input.username)).limit(1);
     if (existingUsername.error) throw existingUsername.error;
@@ -102,7 +107,7 @@ export const userService = {
     return data;
   },
 
-  async updateUser(id: string, input: Record<string, unknown>) {
+  async updateUser(id: string, input: Record<string, unknown>, _accessToken?: string) {
     const payload = buildPayload(input);
     if (Object.keys(payload).length === 0) {
       throw badRequest("No editable fields supplied");
@@ -114,7 +119,7 @@ export const userService = {
     return data;
   },
 
-  async deleteUser(id: string) {
+  async deleteUser(id: string, _accessToken?: string) {
     const db = supabaseAdmin();
     const { error } = await db.from(USERS).update({ is_active: false }).eq("id", id);
     if (error) throw error;
@@ -125,15 +130,15 @@ export const userService = {
   // Roles
   // ─────────────────────────────────────────────────────────────────────
 
-  async listRoles() {
-    const db = supabaseAdmin();
+  async listRoles(accessToken?: string) {
+    const db = dbFor(accessToken);
     const { data, error } = await db.from(ROLES).select("*").order("name");
     if (error) throw error;
     return { rows: data || [], total: (data || []).length };
   },
 
-  async getRole(id: string) {
-    const db = supabaseAdmin();
+  async getRole(id: string, accessToken?: string) {
+    const db = dbFor(accessToken);
     const { data, error } = await db.from(ROLES).select("*").eq("id", id).maybeSingle();
     if (error) throw error;
     if (!data) throw notFound("Role");
