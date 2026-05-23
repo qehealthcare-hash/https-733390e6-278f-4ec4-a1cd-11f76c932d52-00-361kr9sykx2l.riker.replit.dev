@@ -18,6 +18,7 @@ import {
 } from "@/lib/crm-options";
 import { formatCurrency, formatDate, slugToText } from "@/lib/formatters";
 import { uploadDocument } from "@/lib/uploads";
+import { CameraCaptureModal } from "@/components/ui/camera-capture";
 import { openPrintWindow } from "@/lib/print";
 
 function createInitialForm() {
@@ -139,6 +140,7 @@ export default function EmployeesPage() {
 
   var [statusDialog, setStatusDialog] = useState(null);
   var [historyDialog, setHistoryDialog] = useState(null);
+  var [cameraOpen, setCameraOpen] = useState(false);
   var [historyData, setHistoryData] = useState(null);
   var [historyLoading, setHistoryLoading] = useState(false);
   var [historyError, setHistoryError] = useState("");
@@ -308,8 +310,7 @@ export default function EmployeesPage() {
     }
   }
 
-  async function handlePhotoUpload(event) {
-    var file = (event.target.files || [])[0];
+  async function uploadEmployeePhotoFile(file) {
     if (!file) return;
     setBusy(true);
     setError("");
@@ -320,16 +321,24 @@ export default function EmployeesPage() {
         session: auth.session,
         supabase: auth.supabase
       });
-      setForm(function (current) {
-        return { ...current, photo: uploaded };
-      });
+      setForm(function (current) { return { ...current, photo: uploaded }; });
       setMessage("Photo uploaded");
     } catch (uploadError) {
       setError(uploadError.message || "Unable to upload photo");
     } finally {
       setBusy(false);
-      event.target.value = "";
     }
+  }
+
+  async function handlePhotoUpload(event) {
+    var file = (event.target.files || [])[0];
+    event.target.value = "";
+    await uploadEmployeePhotoFile(file);
+  }
+
+  async function handleEmployeeCameraCapture(file) {
+    setCameraOpen(false);
+    await uploadEmployeePhotoFile(file);
   }
 
   async function handleSubmit(event) {
@@ -836,14 +845,35 @@ export default function EmployeesPage() {
                 </div>
                 <div className="field">
                   <label>Photo</label>
-                  <input type="file" accept="image/*" onChange={handlePhotoUpload} />
-                  {form.photo ? <small>{form.photo.file_name || form.photo.path}</small> : null}
+                  <div className="button-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="user"
+                      onChange={handlePhotoUpload}
+                    />
+                    <button
+                      type="button"
+                      className="button ghost"
+                      onClick={function () { setCameraOpen(true); }}
+                    >
+                      Use camera
+                    </button>
+                  </div>
+                  {form.photo
+                    ? <small>{form.photo.file_name || form.photo.path}</small>
+                    : <small>Mobile camera works from the file picker too.</small>}
                 </div>
               </div>
               <div className="field">
                 <label>Documents</label>
-                <input type="file" multiple onChange={handleUpload} />
-                <small>Aadhar, PAN, certificates, contract, photos.</small>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,application/pdf"
+                  onChange={handleUpload}
+                />
+                <small>Aadhar, PAN, certificates, contract, photos. JPG/PNG/HEIC/PDF up to 25 MB each.</small>
               </div>
               <div className="document-list">
                 {form.documents.map(function (doc, index) {
@@ -1099,6 +1129,13 @@ export default function EmployeesPage() {
           </div>
         </div>
       </AppShell>
+
+      <CameraCaptureModal
+        open={cameraOpen}
+        onClose={function () { setCameraOpen(false); }}
+        onCapture={handleEmployeeCameraCapture}
+        facingMode="user"
+      />
 
       {statusDialog ? (
         <div className="modal-backdrop" onClick={function () { if (!busy) setStatusDialog(null); }}>

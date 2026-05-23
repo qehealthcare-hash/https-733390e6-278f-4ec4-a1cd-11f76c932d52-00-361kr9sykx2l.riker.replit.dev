@@ -16,6 +16,7 @@ import {
 import { formatDate, slugToText } from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
 import { uploadDocument } from "@/lib/uploads";
+import { CameraCaptureModal } from "@/components/ui/camera-capture";
 
 function emptyRelative() {
   return { name: "", phone: "" };
@@ -102,6 +103,7 @@ export default function PatientsPage() {
   // Inline modals: close-reason dialog and full patient history viewer.
   var [closeDialog, setCloseDialog] = useState(null); // { id, name, reason, reason_other }
   var [historyDialog, setHistoryDialog] = useState(null); // { id, name }
+  var [cameraOpen, setCameraOpen] = useState(false);
   var [historyData, setHistoryData] = useState(null);
   var [historyLoading, setHistoryLoading] = useState(false);
   var [historyError, setHistoryError] = useState("");
@@ -240,8 +242,7 @@ export default function PatientsPage() {
     }
   }
 
-  async function handlePhotoUpload(event) {
-    var file = (event.target.files || [])[0];
+  async function uploadPhotoFile(file) {
     if (!file) return;
     setBusy(true);
     setError("");
@@ -252,16 +253,24 @@ export default function PatientsPage() {
         session: auth.session,
         supabase: auth.supabase
       });
-      setForm(function (current) {
-        return { ...current, photo: uploaded };
-      });
+      setForm(function (current) { return { ...current, photo: uploaded }; });
       setMessage("Patient photo uploaded");
     } catch (uploadError) {
       setError(uploadError.message || "Unable to upload photo");
     } finally {
       setBusy(false);
-      event.target.value = "";
     }
+  }
+
+  async function handlePhotoUpload(event) {
+    var file = (event.target.files || [])[0];
+    event.target.value = "";
+    await uploadPhotoFile(file);
+  }
+
+  async function handleCameraCapture(file) {
+    setCameraOpen(false);
+    await uploadPhotoFile(file);
   }
 
   function editPatient(row) {
@@ -644,13 +653,34 @@ export default function PatientsPage() {
               <div className="grid-2">
                 <div className="field">
                   <label>Patient photo</label>
-                  <input type="file" accept="image/*" onChange={handlePhotoUpload} />
-                  {form.photo ? <small>{form.photo.file_name || form.photo.path}</small> : <small>Optional.</small>}
+                  <div className="button-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handlePhotoUpload}
+                    />
+                    <button
+                      type="button"
+                      className="button ghost"
+                      onClick={function () { setCameraOpen(true); }}
+                    >
+                      Use camera
+                    </button>
+                  </div>
+                  {form.photo
+                    ? <small>{form.photo.file_name || form.photo.path}</small>
+                    : <small>Optional. On mobile the file picker also opens the camera.</small>}
                 </div>
                 <div className="field">
                   <label>Documents</label>
-                  <input type="file" multiple onChange={handleUpload} />
-                  <small>Discharge, prescriptions, IDs.</small>
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*,application/pdf"
+                    onChange={handleUpload}
+                  />
+                  <small>Discharge, prescriptions, IDs. JPG/PNG/HEIC/PDF up to 25 MB each.</small>
                 </div>
               </div>
               <div className="document-list">
@@ -1085,6 +1115,13 @@ export default function PatientsPage() {
           ) : null}
         </div>
       </AppShell>
+
+      <CameraCaptureModal
+        open={cameraOpen}
+        onClose={function () { setCameraOpen(false); }}
+        onCapture={handleCameraCapture}
+        facingMode="environment"
+      />
     </AuthGuard>
   );
 }
