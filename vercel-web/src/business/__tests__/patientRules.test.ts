@@ -55,18 +55,21 @@ describe("patientRules — workflow matrix", () => {
     expect(findActivePatientDuplicate(list, "9876500000")).toBeNull();
   });
 
-  // Regression: the React form persists `disease_condition` and `start_date`
-  // and those must survive the full PATCH → DB → GET round-trip. Migration
-  // 017 added the columns; before that, both fields were silently dropped.
-  it("round-trips disease_condition and start_date through schema → row → api", () => {
+  // Regression: the React form persists `age`, `disease_condition` and
+  // `start_date`, and they must survive the full PATCH → DB → GET round-trip.
+  // Migrations 017 + 018 added the columns; before that, every field was
+  // silently dropped because patientToRow did not write them.
+  it("round-trips age, disease_condition and start_date through schema → row → api", () => {
     const parsed = patientSchema.parse({
       name: "QA Patient",
       phone: "+919999000111",
+      age: "62",
       disease_condition: "Post-op care, knee replacement",
       start_date: "2026-05-23",
       relname: "Spouse"
     });
     const row = patientToRow(parsed);
+    expect(row.age).toBe("62");
     expect(row.disease_condition).toBe("Post-op care, knee replacement");
     expect(row.start_date).toBe("2026-05-23");
 
@@ -74,20 +77,23 @@ describe("patientRules — workflow matrix", () => {
       id: "PID1",
       name: row.name,
       phone: row.phone,
+      age: row.age,
       disease_condition: row.disease_condition,
       start_date: row.start_date
     });
+    expect(api.age).toBe("62");
     expect(api.disease_condition).toBe("Post-op care, knee replacement");
     expect(api.start_date).toBe("2026-05-23");
   });
 
-  it("clears disease_condition / start_date to empty string (never null) when missing", () => {
+  it("clears age / disease_condition / start_date to empty string (never null) when missing", () => {
     const parsed = patientSchema.parse({
       name: "QA Patient",
       phone: "+919999000222",
       relname: "Spouse"
     });
     const row = patientToRow(parsed);
+    expect(row.age).toBe("");
     expect(row.disease_condition).toBe("");
     expect(row.start_date).toBe("");
   });

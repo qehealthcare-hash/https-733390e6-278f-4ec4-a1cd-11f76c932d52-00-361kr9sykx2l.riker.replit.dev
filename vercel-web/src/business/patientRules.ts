@@ -24,6 +24,7 @@ export function patientToRow(input: PatientInput) {
     status: input.status,
     shift: input.shift,
     caretaker_id: input.caretaker_id || null,
+    age: input.age ?? "",
     disease_condition: input.disease_condition ?? "",
     start_date: input.start_date ?? "",
     docs: input.docs ?? undefined
