@@ -31,6 +31,7 @@ import { parseInput } from "@/validation/parseValidation";
 import {
   canAssignCaretaker,
   canEditPatient,
+  findActivePatientByName,
   findActivePatientDuplicate,
   patientAssignPatch,
   patientClosePatch,
@@ -138,6 +139,38 @@ async function ensureNoActiveDuplicate(
   return success(null);
 }
 
+/**
+ * Soft duplicate-name guard. The phone-only check above misses the case
+ * "same patient re-registered with a different phone" — exactly what
+ * created the kundanben shah duplicate. This returns a `duplicate` failure
+ * with `{ field: "name", existing: {...} }` so the form can ask the admin
+ * to confirm and retry with `confirm_duplicate_name: true`.
+ */
+async function ensureNoActiveNameDuplicate(
+  name: string,
+  excludeId: string | undefined,
+  ctx: PatientServiceContext
+): Promise<ApiResult<null>> {
+  if (!name) return success(null);
+  const candidates = await patientRepository.findActiveByName(name, excludeId, dbAccess(ctx));
+  if (!candidates.success) return passFailure(candidates);
+  const mapped = (candidates.data || []).map((r) => ({
+    id: String(r.id),
+    name: (r.name as string | null) ?? null,
+    phone: (r.phone as string | null) ?? null,
+    status: (r.status as string | null) ?? null
+  }));
+  const hit = findActivePatientByName(mapped, name, excludeId);
+  if (!hit) return success(null);
+  return duplicateFailure(
+    "name",
+    name,
+    `An active patient named "${hit.name}" already exists (id ${hit.id}, phone ${
+      hit.phone || "—"
+    }). Confirm and retry to create anyway.`
+  );
+}
+
 export const patientService = {
   async list(
     rawQuery: unknown,
@@ -186,6 +219,12 @@ export const patientService = {
     if (input.phone) {
       const dupCheck = await ensureNoActiveDuplicate(input.phone, undefined, ctx);
       if (!dupCheck.success) return passFailure(dupCheck);
+    }
+
+    // Soft name guard — caller can override with `confirm_duplicate_name: true`.
+    if (input.name && !input.confirm_duplicate_name) {
+      const nameCheck = await ensureNoActiveNameDuplicate(input.name, undefined, ctx);
+      if (!nameCheck.success) return passFailure(nameCheck);
     }
 
     const id = input.id || newId.patient();

@@ -85,6 +85,36 @@ export function findActivePatientDuplicate<
   });
 }
 
+/**
+ * Normalised, case- and whitespace-insensitive comparison key for patient
+ * names. Used by the name-similarity duplicate guard to catch the case where
+ * the same person is re-registered with a different phone number.
+ */
+export function patientNameKey(name: string | null | undefined): string {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Locate an existing Active patient whose name matches `name` (case- and
+ * whitespace-insensitive). Returns null when no match — including the
+ * `excludeId` row (so updates don't false-positive against themselves).
+ */
+export function findActivePatientByName<
+  T extends { id: string; name?: string | null; status?: string | null }
+>(candidates: T[], name: string, excludeId?: string): T | null {
+  const key = patientNameKey(name);
+  if (!key) return null;
+  for (const c of candidates) {
+    if (excludeId && String(c.id) === excludeId) continue;
+    if (!isActivePatient(c.status)) continue;
+    if (patientNameKey(c.name) === key) return c;
+  }
+  return null;
+}
+
 export function canEditPatient(status: string | undefined | null): ApiResult<null> {
   if (String(status || "") === "Closed") {
     return businessFailure("Closed patients are read-only — reopen before editing");

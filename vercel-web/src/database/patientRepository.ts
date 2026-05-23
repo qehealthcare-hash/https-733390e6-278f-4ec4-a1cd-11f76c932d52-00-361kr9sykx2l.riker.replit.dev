@@ -81,6 +81,33 @@ export const patientRepository = {
     return { success: true, data: rows };
   },
 
+  /**
+   * Active patients with a name matching `name` (case-insensitive). Used by
+   * the soft-duplicate guard to catch the same-person-different-phone case
+   * that the phone-only check misses.
+   */
+  async findActiveByName(
+    name: string,
+    excludeId?: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(TABLE)
+          .select("id, name, phone, status")
+          .eq("status", "Active")
+          .ilike("name", trimmed),
+      `${SCOPE}.findActiveByName`
+    );
+    if (!result.success) return result;
+    const rows = (result.data || []).filter((r) => !excludeId || String(r.id) !== excludeId);
+    return { success: true, data: rows };
+  },
+
   insert(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return insertRow(TABLE, row, SCOPE, opts);
   },

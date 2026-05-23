@@ -80,7 +80,16 @@ export const patientSchema = z
      */
     start_date: z.string().max(20).optional().default(""),
     photo: z.any().optional(),
-    docs: z.any().optional()
+    docs: z.any().optional(),
+    /**
+     * Set to true to acknowledge a "patient with the same name already exists"
+     * warning and force the create through. Used to bypass the soft duplicate
+     * guard when an admin has confirmed it really is a different person.
+     */
+    confirm_duplicate_name: z
+      .union([z.boolean(), z.string()])
+      .optional()
+      .transform((v) => v === true || v === "true" || v === "1")
   })
   .superRefine((v, ctx) => {
     if (!v.name && !v.full_name) {

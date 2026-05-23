@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   canAssignCaretaker,
   canEditPatient,
+  findActivePatientByName,
   findActivePatientDuplicate,
   isActivePatient,
   patientAssignPatch,
   patientClosePatch,
+  patientNameKey,
   patientToApi,
   patientToRow
 } from "@/business/patientRules";
@@ -96,5 +98,51 @@ describe("patientRules — workflow matrix", () => {
     expect(row.age).toBe("");
     expect(row.disease_condition).toBe("");
     expect(row.start_date).toBe("");
+  });
+});
+
+describe("patientRules — name duplicate guard", () => {
+  it("normalises case + whitespace into a stable key", () => {
+    expect(patientNameKey("  Kundanben  Shah ")).toBe("kundanben shah");
+    expect(patientNameKey("kundanben shah")).toBe("kundanben shah");
+    expect(patientNameKey("KUNDANBEN SHAH")).toBe("kundanben shah");
+    expect(patientNameKey("")).toBe("");
+    expect(patientNameKey(null)).toBe("");
+  });
+
+  it("flags an active patient with the same name (different phone)", () => {
+    const hit = findActivePatientByName(
+      [
+        { id: "PID1002", name: "kundanben shah", phone: "9898044407", status: "Active" },
+        { id: "PID1003", name: "Other Person", phone: "9000000000", status: "Active" }
+      ],
+      "Kundanben SHAH"
+    );
+    expect(hit?.id).toBe("PID1002");
+  });
+
+  it("ignores Closed patients and excludeId", () => {
+    expect(
+      findActivePatientByName(
+        [{ id: "PID1002", name: "kundanben shah", phone: "x", status: "Closed" }],
+        "kundanben shah"
+      )
+    ).toBeNull();
+    expect(
+      findActivePatientByName(
+        [{ id: "PID1002", name: "kundanben shah", phone: "x", status: "Active" }],
+        "kundanben shah",
+        "PID1002"
+      )
+    ).toBeNull();
+  });
+
+  it("returns null when name is empty", () => {
+    expect(
+      findActivePatientByName(
+        [{ id: "PID1002", name: "kundanben shah", phone: "x", status: "Active" }],
+        ""
+      )
+    ).toBeNull();
   });
 });
