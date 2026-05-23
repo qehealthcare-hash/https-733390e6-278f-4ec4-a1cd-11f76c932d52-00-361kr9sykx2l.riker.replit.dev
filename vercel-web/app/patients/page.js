@@ -363,15 +363,69 @@ export default function PatientsPage() {
     }
   }
 
-  async function deletePatient(id) {
-    if (!window.confirm("Delete this patient?")) return;
+  function isClosedStatus(status) {
+    var normalized = String(status || "Active");
+    return normalized !== "Active";
+  }
+
+  async function closePatient(id) {
+    if (!window.confirm("Close this patient? Their billing and duty history will be kept.")) return;
     setBusy(true);
     setError("");
+    setMessage("");
     try {
       await requestWithOfflineFallback("/patients/" + id, { method: "DELETE" }, auth.session);
       await resource.reload();
       if (form.id === id) resetForm();
-      setMessage("Patient deleted");
+      setMessage("Patient closed");
+    } catch (closeError) {
+      setError(closeError.message || "Unable to close patient");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reopenPatient(id) {
+    if (!window.confirm("Reopen this patient? They will become Active again.")) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await requestWithOfflineFallback(
+        "/patients/" + id + "/reopen",
+        { method: "POST" },
+        auth.session
+      );
+      await resource.reload();
+      setMessage("Patient reopened");
+    } catch (reopenError) {
+      setError(reopenError.message || "Unable to reopen patient");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deletePatientPermanently(id) {
+    if (
+      !window.confirm(
+        "Permanently delete this patient? This cannot be undone. " +
+          "If the patient has any billings, duties, or receipts, the delete will be refused."
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await requestWithOfflineFallback(
+        "/patients/" + id + "?hard=1",
+        { method: "DELETE" },
+        auth.session
+      );
+      await resource.reload();
+      if (form.id === id) resetForm();
+      setMessage("Patient permanently deleted");
     } catch (deleteError) {
       setError(deleteError.message || "Unable to delete patient");
     } finally {
@@ -719,12 +773,45 @@ export default function PatientsPage() {
                             <td>{formatDate(row.registered_at || row.created_at || row.created)}</td>
                             <td>
                               <div className="button-row">
-                                <button className="button secondary" type="button" onClick={function () { editPatient(row); }}>
-                                  Edit
-                                </button>
-                                <button className="button danger" type="button" onClick={function () { deletePatient(row.id); }}>
-                                  Delete
-                                </button>
+                                {isClosedStatus(row.status) ? (
+                                  <>
+                                    <button
+                                      className="button secondary"
+                                      type="button"
+                                      onClick={function () { reopenPatient(row.id); }}
+                                      disabled={busy}
+                                    >
+                                      Reopen
+                                    </button>
+                                    <button
+                                      className="button danger"
+                                      type="button"
+                                      onClick={function () { deletePatientPermanently(row.id); }}
+                                      disabled={busy}
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button
+                                      className="button secondary"
+                                      type="button"
+                                      onClick={function () { editPatient(row); }}
+                                      disabled={busy}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      className="button danger"
+                                      type="button"
+                                      onClick={function () { closePatient(row.id); }}
+                                      disabled={busy}
+                                    >
+                                      Close
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             </td>
                           </tr>

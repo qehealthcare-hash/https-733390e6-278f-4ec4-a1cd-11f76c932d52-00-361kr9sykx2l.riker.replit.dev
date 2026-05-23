@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   canAssignCaretaker,
   canEditPatient,
+  canHardDeletePatient,
+  canReopenPatient,
   findActivePatientByName,
   findActivePatientDuplicate,
   isActivePatient,
   patientAssignPatch,
   patientClosePatch,
   patientNameKey,
+  patientReopenPatch,
   patientToApi,
   patientToRow
 } from "@/business/patientRules";
@@ -144,5 +147,54 @@ describe("patientRules — name duplicate guard", () => {
         ""
       )
     ).toBeNull();
+  });
+});
+
+describe("patientRules — reopen + hard delete", () => {
+  it("reopen patch flips status back to Active and stamps actor", () => {
+    expect(patientReopenPatch("admin@hominal.test")).toEqual({
+      status: "Active",
+      updated_by: "admin@hominal.test"
+    });
+  });
+
+  it("canReopen blocks already-Active patients", () => {
+    expectFail(canReopenPatient("Active"), ErrorCodes.business);
+    expectFail(canReopenPatient(undefined), ErrorCodes.business);
+    expectFail(canReopenPatient(null), ErrorCodes.business);
+  });
+
+  it("canReopen allows Closed / On Hold / legacy inactive statuses", () => {
+    expectOk(canReopenPatient("Closed"));
+    expectOk(canReopenPatient("On Hold"));
+    expectOk(canReopenPatient("Duty Closed"));
+    expectOk(canReopenPatient("Deceased"));
+  });
+
+  it("canHardDelete refuses Active patients", () => {
+    expectFail(
+      canHardDeletePatient("Active", { billings: 0, duties: 0, receipts: 0 }),
+      ErrorCodes.business
+    );
+  });
+
+  it("canHardDelete refuses Closed patients with linked rows", () => {
+    expectFail(
+      canHardDeletePatient("Closed", { billings: 2, duties: 0, receipts: 0 }),
+      ErrorCodes.business
+    );
+    expectFail(
+      canHardDeletePatient("Closed", { billings: 0, duties: 1, receipts: 0 }),
+      ErrorCodes.business
+    );
+    expectFail(
+      canHardDeletePatient("Closed", { billings: 0, duties: 0, receipts: 3 }),
+      ErrorCodes.business
+    );
+  });
+
+  it("canHardDelete permits Closed patient with no linked rows", () => {
+    expectOk(canHardDeletePatient("Closed", { billings: 0, duties: 0, receipts: 0 }));
+    expectOk(canHardDeletePatient("Deceased", { billings: 0, duties: 0, receipts: 0 }));
   });
 });

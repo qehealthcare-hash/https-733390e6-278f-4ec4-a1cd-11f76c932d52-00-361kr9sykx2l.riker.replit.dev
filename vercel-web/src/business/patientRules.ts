@@ -129,8 +129,52 @@ export function canAssignCaretaker(status: string | undefined | null): ApiResult
   return businessOk();
 }
 
+/**
+ * Reopen is only meaningful for non-Active patients. Allows Closed / On Hold /
+ * legacy statuses (Duty Closed, Deceased, etc.) to be flipped back to Active.
+ */
+export function canReopenPatient(status: string | undefined | null): ApiResult<null> {
+  if (isActivePatient(status)) {
+    return businessFailure("Patient is already active");
+  }
+  return businessOk();
+}
+
+/**
+ * Hard-delete safety net. Patient must be soft-closed AND have no linked
+ * billings / duties / receipts; otherwise the operator must clean those up
+ * first or keep the soft-close (which preserves history).
+ */
+export function canHardDeletePatient(
+  status: string | undefined | null,
+  counts: { billings: number; duties: number; receipts: number }
+): ApiResult<null> {
+  if (isActivePatient(status)) {
+    return businessFailure(
+      "Active patients cannot be permanently deleted — close the patient first"
+    );
+  }
+  const linked = [
+    counts.billings > 0 ? `${counts.billings} billing(s)` : null,
+    counts.duties > 0 ? `${counts.duties} duty record(s)` : null,
+    counts.receipts > 0 ? `${counts.receipts} receipt(s)` : null
+  ].filter(Boolean);
+  if (linked.length) {
+    return businessFailure(
+      `Cannot permanently delete: patient still has ${linked.join(", ")}. ` +
+        "Delete those first or keep the patient soft-closed to preserve history.",
+      counts
+    );
+  }
+  return businessOk();
+}
+
 export function patientClosePatch(actorEmail: string) {
   return { status: "Closed" as const, updated_by: actorEmail };
+}
+
+export function patientReopenPatch(actorEmail: string) {
+  return { status: "Active" as const, updated_by: actorEmail };
 }
 
 export function patientAssignPatch(caretakerId: string, shift: string, actorEmail: string) {

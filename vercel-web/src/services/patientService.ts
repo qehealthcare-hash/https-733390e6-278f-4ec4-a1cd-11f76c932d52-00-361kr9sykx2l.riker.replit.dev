@@ -31,10 +31,13 @@ import { parseInput } from "@/validation/parseValidation";
 import {
   canAssignCaretaker,
   canEditPatient,
+  canHardDeletePatient,
+  canReopenPatient,
   findActivePatientByName,
   findActivePatientDuplicate,
   patientAssignPatch,
   patientClosePatch,
+  patientReopenPatch,
   patientToApi,
   patientToRow
 } from "@/business/patientRules";
@@ -298,7 +301,11 @@ export const patientService = {
     );
   },
 
-  /** Soft-close: sets `status = Closed` (preserves duties / billings / receipts). */
+  /**
+   * Soft-close: sets `status = Closed` (preserves duties / billings / receipts).
+   * Idempotent on already-Closed rows — re-stamps `updated_by` so the audit
+   * trail is honest about who touched it.
+   */
   async remove(
     id: string,
     ctx: PatientServiceContext
@@ -326,6 +333,109 @@ export const patientService = {
       }),
       patientToApi(fresh.data)
     );
+  },
+
+  /**
+   * Reopen a soft-closed (or otherwise inactive) patient back to Active.
+   * Refuses if the patient is already Active, or if an Active duplicate on
+   * the same phone would be created by reopening.
+   */
+  async reopen(
+    id: string,
+    ctx: PatientServiceContext
+  ): Promise<ApiResult<ReturnType<typeof patientToApi>>> {
+    const existing = await loadPatient(id, ctx);
+    if (!existing.success) {
+      return failure(existing.error || "Patient not found", existing.code, existing.details);
+    }
+
+    const guard = canReopenPatient(String(existing.data.status || ""));
+    if (!guard.success) {
+      return failure(guard.error || "Cannot reopen patient", guard.code, guard.details);
+    }
+
+    const phone = String(existing.data.phone || "");
+    if (phone) {
+      const dupCheck = await ensureNoActiveDuplicate(phone, id, ctx);
+      if (!dupCheck.success) return passFailure(dupCheck);
+    }
+
+    const patch = patientReopenPatch(ctx.actor.email);
+    const updated = await patientRepository.update(id, patch, dbAccess(ctx));
+    if (!updated.success) return passFailure(updated);
+
+    const fresh = await loadFreshPatient(id, ctx, updated.data ?? null);
+    if (!fresh.success) {
+      return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
+    }
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: id,
+        action: "restore",
+        before: existing.data,
+        after: fresh.data,
+        stamp: `Reopened patient ${id}`
+      }),
+      patientToApi(fresh.data)
+    );
+  },
+
+  /**
+   * Permanently delete a soft-closed patient row. Refuses if the patient is
+   * still Active or if any billings / duties / receipts still reference it
+   * (which would either orphan the rows or violate FK integrity). Use the
+   * soft-close path instead to preserve history.
+   */
+  async removePermanent(
+    id: string,
+    ctx: PatientServiceContext
+  ): Promise<ApiResult<{ id: string; deleted: true }>> {
+    const existing = await loadPatient(id, ctx);
+    if (!existing.success) {
+      return failure(existing.error || "Patient not found", existing.code, existing.details);
+    }
+
+    const access = dbAccess(ctx);
+    const [billings, duties, receipts] = await Promise.all([
+      patientRepository.countBillings(id, access),
+      patientRepository.countDuties(id, access),
+      (async () => {
+        const billingsList = await patientRepository.listHistoryBillings(id, access);
+        if (!billingsList.success) return billingsList;
+        const ids = (billingsList.data || []).map((b) => String(b.id));
+        if (!ids.length) return success(0);
+        const receiptsList = await patientRepository.listReceiptsForBillings(ids, access);
+        if (!receiptsList.success) return receiptsList;
+        return success((receiptsList.data || []).length);
+      })()
+    ]);
+    if (!billings.success) return passFailure(billings);
+    if (!duties.success) return passFailure(duties);
+    if (!receipts.success) return passFailure(receipts);
+
+    const guard = canHardDeletePatient(String(existing.data.status || ""), {
+      billings: billings.data ?? 0,
+      duties: duties.data ?? 0,
+      receipts: (receipts.data as number) ?? 0
+    });
+    if (!guard.success) {
+      return failure(guard.error || "Cannot delete patient", guard.code, guard.details);
+    }
+
+    const removed = await patientRepository.remove(id, access);
+    if (!removed.success) return passFailure(removed);
+
+    // Audit the permanent removal after the row is gone — we still have
+    // `existing.data` snapshot to record in `before`.
+    await fireAudit(ctx, {
+      entity_id: id,
+      action: "delete",
+      before: existing.data,
+      after: null,
+      stamp: `Permanently deleted patient ${id}`
+    });
+
+    return success({ id, deleted: true as const });
   },
 
   /**

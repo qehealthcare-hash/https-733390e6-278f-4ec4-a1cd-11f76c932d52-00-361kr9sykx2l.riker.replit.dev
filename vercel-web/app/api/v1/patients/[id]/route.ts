@@ -23,8 +23,16 @@ export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }
 
 export const PUT = PATCH;
 
-export const DELETE = withAuth<Params>(async (_req, { params, actor }) => {
+export const DELETE = withAuth<Params>(async (req, { params, actor }) => {
   requireRole(actor, ["Admin", "Manager"]);
+  // ?hard=1 → permanent delete (Admin-only, refuses if linked rows exist).
+  // Otherwise we soft-close, which is idempotent on already-Closed rows.
+  const hard = new URL(req.url).searchParams.get("hard");
+  if (hard === "1" || hard === "true") {
+    requireRole(actor, ["Admin"]);
+    const result = await patientService.removePermanent(params.id, { actor });
+    return respond(result);
+  }
   const result = await patientService.remove(params.id, { actor });
   return respond(result);
 });
