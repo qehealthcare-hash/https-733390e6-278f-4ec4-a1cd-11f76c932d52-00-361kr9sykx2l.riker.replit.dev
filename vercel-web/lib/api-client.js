@@ -49,16 +49,46 @@ export async function flushOfflineQueue(session) {
 }
 
 export async function request(path, options, session) {
-  var response = await fetch(appConfig.apiUrl + path, {
-    method: options?.method || "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: session?.access_token ? "Bearer " + session.access_token : ""
-    },
-    body: options?.body ? JSON.stringify(options.body) : undefined
-  });
+  var response;
+  try {
+    response = await fetch(appConfig.apiUrl + path, {
+      method: options?.method || "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: session?.access_token ? "Bearer " + session.access_token : ""
+      },
+      body: options?.body ? JSON.stringify(options.body) : undefined
+    });
+  } catch (networkError) {
+    var nerr = new Error(
+      "Network error — could not reach " + appConfig.apiUrl + path + " (" + (networkError?.message || "offline") + ")"
+    );
+    nerr.code = "network_error";
+    throw nerr;
+  }
 
-  var json = await response.json();
+  // Read the body as text first so we can give a useful message when the
+  // server returns HTML (e.g. a Vercel error page) instead of JSON. This
+  // turns the user-facing "Unexpected token < in JSON at position 0" into
+  // a clear "API ... returned HTTP 500" message.
+  var raw = await response.text();
+  var json;
+  if (raw === "" || raw == null) {
+    json = {};
+  } else {
+    try {
+      json = JSON.parse(raw);
+    } catch (parseError) {
+      var preview = raw.length > 160 ? raw.slice(0, 160) + "…" : raw;
+      var perr = new Error(
+        "API " + path + " returned HTTP " + response.status +
+          " with non-JSON body: " + preview
+      );
+      perr.code = "bad_response";
+      perr.status = response.status;
+      throw perr;
+    }
+  }
   return unwrapResponse(json, response);
 }
 

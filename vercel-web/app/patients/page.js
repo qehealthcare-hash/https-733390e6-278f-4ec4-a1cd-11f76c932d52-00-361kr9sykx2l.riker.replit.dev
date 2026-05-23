@@ -59,8 +59,31 @@ function deriveAgeFromDob(dob) {
 
 export default function PatientsPage() {
   var auth = useAuth();
+  var [search, setSearch] = useState("");
+  var [debouncedSearch, setDebouncedSearch] = useState("");
+  var [pageSize, setPageSize] = useState(500);
+
+  useEffect(
+    function () {
+      var handle = setTimeout(function () {
+        setDebouncedSearch(search.trim());
+      }, 300);
+      return function () { clearTimeout(handle); };
+    },
+    [search]
+  );
+
+  var apiPath = useMemo(
+    function () {
+      var params = ["limit=" + pageSize];
+      if (debouncedSearch) params.push("q=" + encodeURIComponent(debouncedSearch));
+      return "/patients?" + params.join("&");
+    },
+    [debouncedSearch, pageSize]
+  );
+
   var resource = useRealtimeResource({
-    apiPath: "/patients",
+    apiPath: apiPath,
     table: "hh_patients",
     channel: "hh_patients"
   });
@@ -69,7 +92,6 @@ export default function PatientsPage() {
   var [busy, setBusy] = useState(false);
   var [message, setMessage] = useState("");
   var [error, setError] = useState("");
-  var [search, setSearch] = useState("");
   var [statusFilter, setStatusFilter] = useState("");
   var [genderFilter, setGenderFilter] = useState("");
   var [areaFilter, setAreaFilter] = useState("");
@@ -574,7 +596,23 @@ export default function PatientsPage() {
               <div className="toolbar">
                 <div className="field">
                   <label>Search</label>
-                  <input value={search} onChange={function (event) { setSearch(event.target.value); }} placeholder="Name, mobile, address, area or pincode" />
+                  <input
+                    value={search}
+                    onChange={function (event) { setSearch(event.target.value); }}
+                    placeholder="Name, mobile, address, area or pincode"
+                  />
+                </div>
+                <div className="field">
+                  <label>Rows per page</label>
+                  <select
+                    value={String(pageSize)}
+                    onChange={function (event) { setPageSize(parseInt(event.target.value, 10) || 500); }}
+                  >
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                    <option value="500">All (up to 500)</option>
+                  </select>
                 </div>
                 <div className="field">
                   <label>Status</label>
@@ -628,10 +666,21 @@ export default function PatientsPage() {
                   </select>
                 </div>
               </div>
+              <div className="mini-muted" style={{ margin: "0.25rem 0 0.75rem" }}>
+                {debouncedSearch
+                  ? "Server search: \"" + debouncedSearch + "\" — "
+                  : ""}
+                Showing {filtered.length} of {resource.data.length} loaded
+                {resource.loading ? " (loading...)" : ""}
+              </div>
               {!filtered.length ? (
                 <EmptyState
                   title={resource.loading ? "Loading patients..." : "No matching patients"}
-                  description="Patients appear here as soon as they are created on any device."
+                  description={
+                    debouncedSearch
+                      ? "No patient matches \"" + debouncedSearch + "\". Try fewer characters or a phone suffix."
+                      : "Patients appear here as soon as they are created on any device."
+                  }
                 />
               ) : (
                 <div className="table-wrap">

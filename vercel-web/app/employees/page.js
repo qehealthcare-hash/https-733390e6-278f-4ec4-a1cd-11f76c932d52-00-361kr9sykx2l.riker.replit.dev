@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -90,14 +90,36 @@ function rowScoreTotal(row) {
 
 export default function EmployeesPage() {
   var auth = useAuth();
+  var [search, setSearch] = useState("");
+  var [debouncedSearch, setDebouncedSearch] = useState("");
+  var [pageSize, setPageSize] = useState(500);
+
+  useEffect(
+    function () {
+      var handle = setTimeout(function () {
+        setDebouncedSearch(search.trim());
+      }, 300);
+      return function () { clearTimeout(handle); };
+    },
+    [search]
+  );
+
+  var apiPath = useMemo(
+    function () {
+      var params = ["limit=" + pageSize];
+      if (debouncedSearch) params.push("q=" + encodeURIComponent(debouncedSearch));
+      return "/employees?" + params.join("&");
+    },
+    [debouncedSearch, pageSize]
+  );
+
   var resource = useRealtimeResource({
-    apiPath: "/employees",
+    apiPath: apiPath,
     table: "hh_employees",
     channel: "employees"
   });
   var [form, setForm] = useState(createInitialForm());
   var [busy, setBusy] = useState(false);
-  var [search, setSearch] = useState("");
   var [roleFilter, setRoleFilter] = useState("");
   var [statusFilter, setStatusFilter] = useState("");
   var [deptFilter, setDeptFilter] = useState("");
@@ -802,6 +824,18 @@ export default function EmployeesPage() {
                   />
                 </div>
                 <div className="field">
+                  <label>Rows per page</label>
+                  <select
+                    value={String(pageSize)}
+                    onChange={function (event) { setPageSize(parseInt(event.target.value, 10) || 500); }}
+                  >
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                    <option value="500">All (up to 500)</option>
+                  </select>
+                </div>
+                <div className="field">
                   <label>Role</label>
                   <select value={roleFilter} onChange={function (event) { setRoleFilter(event.target.value); }}>
                     <option value="">All</option>
@@ -875,10 +909,21 @@ export default function EmployeesPage() {
                   </select>
                 </div>
               </div>
+              <div className="mini-muted" style={{ margin: "0.25rem 0 0.75rem" }}>
+                {debouncedSearch
+                  ? "Server search: \"" + debouncedSearch + "\" — "
+                  : ""}
+                Showing {filtered.length} of {resource.data.length} loaded
+                {resource.loading ? " (loading...)" : ""}
+              </div>
               {!filtered.length ? (
                 <EmptyState
                   title={resource.loading ? "Loading employees..." : "No matching staff"}
-                  description="Your field workforce will appear here with their HR profile and payout readiness."
+                  description={
+                    debouncedSearch
+                      ? "No employee matches \"" + debouncedSearch + "\". Try fewer characters or a phone suffix."
+                      : "Your field workforce will appear here with their HR profile and payout readiness."
+                  }
                 />
               ) : (
                 <div className="record-list">

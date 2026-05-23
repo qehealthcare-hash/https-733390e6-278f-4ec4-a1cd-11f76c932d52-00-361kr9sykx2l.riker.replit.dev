@@ -76,7 +76,11 @@ export async function listRows(
 
   let query: DbFilterQuery = db.from(table).select(select, { count: "exact" });
   query = build(query);
-  query = query.order(orderBy, { ascending }).range(offset, offset + limit - 1);
+  query = query.order(orderBy, { ascending });
+  if (orderBy !== "id") {
+    query = query.order("id", { ascending });
+  }
+  query = query.range(offset, offset + limit - 1);
 
   const { data, error, count } = await query;
   if (error) {

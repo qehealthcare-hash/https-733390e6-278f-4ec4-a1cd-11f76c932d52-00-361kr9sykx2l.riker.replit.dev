@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -40,14 +40,36 @@ function createInitialForm() {
 
 export default function InquiriesPage() {
   var auth = useAuth();
+  var [search, setSearch] = useState("");
+  var [debouncedSearch, setDebouncedSearch] = useState("");
+  var [pageSize, setPageSize] = useState(500);
+
+  useEffect(
+    function () {
+      var handle = setTimeout(function () {
+        setDebouncedSearch(search.trim());
+      }, 300);
+      return function () { clearTimeout(handle); };
+    },
+    [search]
+  );
+
+  var apiPath = useMemo(
+    function () {
+      var params = ["limit=" + pageSize];
+      if (debouncedSearch) params.push("q=" + encodeURIComponent(debouncedSearch));
+      return "/inquiries?" + params.join("&");
+    },
+    [debouncedSearch, pageSize]
+  );
+
   var resource = useRealtimeResource({
-    apiPath: "/inquiries",
+    apiPath: apiPath,
     table: "hh_inquiries",
     channel: "inquiries"
   });
   var [form, setForm] = useState(createInitialForm());
   var [busy, setBusy] = useState(false);
-  var [search, setSearch] = useState("");
   var [potentialFilter, setPotentialFilter] = useState("");
   var [statusFilter, setStatusFilter] = useState("");
   var [sourceFilter, setSourceFilter] = useState("");
@@ -352,6 +374,18 @@ export default function InquiriesPage() {
                 <input value={search} onChange={function (event) { setSearch(event.target.value); }} placeholder="Name, mobile, service or source" />
               </div>
               <div className="field">
+                <label>Rows per page</label>
+                <select
+                  value={String(pageSize)}
+                  onChange={function (event) { setPageSize(parseInt(event.target.value, 10) || 500); }}
+                >
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                  <option value="200">200</option>
+                  <option value="500">All (up to 500)</option>
+                </select>
+              </div>
+              <div className="field">
                 <label>Status</label>
                 <select value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
                   <option value="">All</option>
@@ -391,10 +425,21 @@ export default function InquiriesPage() {
                 </label>
               </div>
             </div>
+            <div className="mini-muted" style={{ margin: "0.25rem 0 0.75rem" }}>
+              {debouncedSearch
+                ? "Server search: \"" + debouncedSearch + "\" — "
+                : ""}
+              Showing {filtered.length} of {resource.data.length} loaded
+              {resource.loading ? " (loading...)" : ""}
+            </div>
             {!filtered.length ? (
               <EmptyState
                 title={resource.loading ? "Loading inquiries..." : "No matching inquiries"}
-                description="All new leads, telecalling callbacks, and hot admissions will appear here."
+                description={
+                  debouncedSearch
+                    ? "No inquiry matches \"" + debouncedSearch + "\". Try fewer characters or a phone suffix."
+                    : "All new leads, telecalling callbacks, and hot admissions will appear here."
+                }
               />
             ) : (
               <div className="record-list">
