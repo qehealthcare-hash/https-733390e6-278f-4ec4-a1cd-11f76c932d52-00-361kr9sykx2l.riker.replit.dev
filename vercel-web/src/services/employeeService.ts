@@ -28,13 +28,18 @@ import { parseInput } from "@/validation/parseValidation";
 import {
   employeeToRow,
   employeeToApi,
+  employeeNameKey,
   findActiveEmployeeDuplicate,
+  findActiveEmployeeByName,
+  findActiveEmployeeByAadhar,
+  normalizeAadhar,
   ensureNoHistoricalLinks,
   isActiveEmployee,
   statusPatch,
   deactivatePatch,
   type EmployeeLinkCounts
 } from "@/business/employeeRules";
+import { assertNotStale } from "@/business/concurrencyRules";
 import { phoneSuffix } from "@/business/phoneRules";
 import { newId } from "@/business/idRules";
 import { employeeRepository } from "@/database/employeeRepository";
@@ -101,6 +106,69 @@ interface PhoneCandidate {
   id: string;
   phone?: string | null;
   status?: string | null;
+}
+
+async function ensureNoActiveNameDuplicate(
+  input: EmployeeInput,
+  excludeId: string | undefined,
+  ctx: EmployeeServiceContext
+): Promise<ApiResult<null>> {
+  if (input.confirm_duplicate_name) return success(null);
+  const key = employeeNameKey(input);
+  if (!key) return success(null);
+
+  const candidates = await employeeRepository.findActiveByName(key, excludeId, dbAccess(ctx));
+  if (!candidates.success) return passFailure(candidates);
+  const mapped = (candidates.data || []).map((r) => ({
+    id: String(r.id),
+    fn: (r.fn as string | null) ?? null,
+    mn: (r.mn as string | null) ?? null,
+    ln: (r.ln as string | null) ?? null,
+    phone: (r.phone as string | null) ?? null,
+    status: (r.status as string | null) ?? null,
+    leave_date: (r.leave_date as string | null) ?? null
+  }));
+  const hit = findActiveEmployeeByName(mapped, input, excludeId);
+  if (!hit) return success(null);
+  const hitName = employeeNameKey(hit);
+  return duplicateFailure(
+    "name",
+    key,
+    `An active employee named "${hitName}" already exists (id ${hit.id}, phone ${
+      hit.phone || "—"
+    }). Confirm and retry to create anyway.`
+  );
+}
+
+async function ensureNoActiveAadharDuplicate(
+  input: EmployeeInput,
+  excludeId: string | undefined,
+  ctx: EmployeeServiceContext
+): Promise<ApiResult<null>> {
+  if (input.confirm_duplicate_name) return success(null);
+  const digits = normalizeAadhar(input.aadhar);
+  if (digits.length !== 12) return success(null);
+
+  const candidates = await employeeRepository.findActiveByAadhar(digits, excludeId, dbAccess(ctx));
+  if (!candidates.success) return passFailure(candidates);
+  const mapped = (candidates.data || []).map((r) => ({
+    id: String(r.id),
+    fn: (r.fn as string | null) ?? null,
+    mn: (r.mn as string | null) ?? null,
+    ln: (r.ln as string | null) ?? null,
+    aadhar: (r.aadhar as string | null) ?? null,
+    status: (r.status as string | null) ?? null,
+    leave_date: (r.leave_date as string | null) ?? null
+  }));
+  const hit = findActiveEmployeeByAadhar(mapped, digits, excludeId);
+  if (!hit) return success(null);
+  return duplicateFailure(
+    "aadhar",
+    digits,
+    `An active employee already uses Aadhar ${digits} (id ${hit.id}, ${employeeNameKey(
+      hit
+    )}). Confirm and retry to create anyway.`
+  );
 }
 
 async function loadDuplicateCandidates(
@@ -195,9 +263,15 @@ export const employeeService = {
       return duplicateFailure("mobile", input.phone, "Active employee already exists for this mobile");
     }
 
+    const nameCheck = await ensureNoActiveNameDuplicate(input, undefined, ctx);
+    if (!nameCheck.success) return passFailure(nameCheck);
+
+    const aadharCheck = await ensureNoActiveAadharDuplicate(input, undefined, ctx);
+    if (!aadharCheck.success) return passFailure(aadharCheck);
+
     const id = input.id || newId.employee();
     const row = {
-      ...employeeToRow(input),
+      ...employeeToRow({ ...input, status: input.status || "Active" }),
       id,
       created: new Date().toISOString(),
       created_by: ctx.actor.email,
@@ -228,6 +302,9 @@ export const employeeService = {
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as EmployeeInput;
 
+    const stale = assertNotStale("Employee", existing.data.updated_at, input.expected_updated_at);
+    if (!stale.success) return passFailure(stale);
+
     const previousPhone = (existing.data.phone as string | undefined) ?? "";
     if (input.phone && input.phone !== previousPhone) {
       const dups = await loadDuplicateCandidates(input.phone, ctx);
@@ -238,7 +315,27 @@ export const employeeService = {
       }
     }
 
-    const patch = { ...employeeToRow(input), updated_by: ctx.actor.email };
+    const merged: EmployeeInput = {
+      ...input,
+      status: (input.status ??
+        String(existing.data.status || "Active")) as EmployeeInput["status"]
+    };
+
+    const prevNameKey = employeeNameKey(existing.data as EmployeeInput);
+    const nextNameKey = employeeNameKey(merged);
+    if (nextNameKey && nextNameKey !== prevNameKey) {
+      const nameCheck = await ensureNoActiveNameDuplicate(merged, id, ctx);
+      if (!nameCheck.success) return passFailure(nameCheck);
+    }
+
+    const prevAadhar = normalizeAadhar(String(existing.data.aadhar || ""));
+    const nextAadhar = normalizeAadhar(merged.aadhar);
+    if (nextAadhar.length === 12 && nextAadhar !== prevAadhar) {
+      const aadharCheck = await ensureNoActiveAadharDuplicate(merged, id, ctx);
+      if (!aadharCheck.success) return passFailure(aadharCheck);
+    }
+
+    const patch = { ...employeeToRow(merged), updated_by: ctx.actor.email };
     const updated = await employeeRepository.update(id, patch, dbAccess(ctx));
     if (!updated.success) return passFailure(updated);
 
@@ -434,8 +531,10 @@ export const employeeService = {
    */
   async remove(
     id: string,
-    ctx: EmployeeServiceContext
+    ctx: EmployeeServiceContext,
+    opts?: { reason?: string }
   ): Promise<ApiResult<EmployeeApiRow & { mode: "soft" | "hard" }>> {
+    const reason = String(opts?.reason || "").trim();
     const existing = await employeeRepository.findById(id, dbAccess(ctx));
     if (!existing.success) return passFailure(existing);
     if (!existing.data) return notFoundFailure("Employee", id);
@@ -445,7 +544,7 @@ export const employeeService = {
 
     const linkCheck = ensureNoHistoricalLinks(counts.data);
     if (!linkCheck.success) {
-      const patch = deactivatePatch(ctx.actor.email, "delete requested");
+      const patch = deactivatePatch(ctx.actor.email, reason || "delete requested");
       const updated = await employeeRepository.updateStatus(id, patch, dbAccess(ctx));
       if (!updated.success) return passFailure(updated);
       const fresh = await loadFreshRow(id, ctx, updated.data ?? null);
@@ -456,7 +555,9 @@ export const employeeService = {
           action: "delete",
           before: existing.data,
           after: fresh.data,
-          stamp: `Soft delete (links: ${JSON.stringify(counts.data)})`
+          stamp: reason
+            ? `Soft delete — ${reason} (links: ${JSON.stringify(counts.data)})`
+            : `Soft delete (links: ${JSON.stringify(counts.data)})`
         }),
         { ...employeeToApi(fresh.data), mode: "soft" as const }
       );
@@ -469,7 +570,7 @@ export const employeeService = {
         entity_id: id,
         action: "delete",
         before: existing.data,
-        stamp: "Hard delete (no historical links)"
+        stamp: reason ? `Hard delete — ${reason}` : "Hard delete (no historical links)"
       }),
       { ...employeeToApi(existing.data), mode: "hard" as const }
     );

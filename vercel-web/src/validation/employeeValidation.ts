@@ -44,6 +44,19 @@ export const EMPLOYEE_ROLES = ["NURSE", "ATTENDANT", "STAFF", "ACCOUNTANT", "OTH
 /** Minimum digit count after stripping non-numeric chars. */
 const MIN_MOBILE_DIGITS = 10;
 
+const AADHAR_RE = /^\d{12}$/;
+const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+
+function normalizeAadharDigits(raw: string | undefined | null): string {
+  return String(raw || "").replace(/\D/g, "");
+}
+
+function normalizePan(raw: string | undefined | null): string {
+  return String(raw || "")
+    .trim()
+    .toUpperCase();
+}
+
 /** Normalised digits-only phone for storage. */
 function normalizeMobile(raw: string | undefined | null): string {
   return (raw || "").replace(/[^0-9+]/g, "");
@@ -110,8 +123,14 @@ export const employeeSchema = z
     leave: dateOnly,
     leave_date: dateOnly,
     salary: z.coerce.number().min(0, "Salary must be ≥ 0").optional().default(0),
-    status: z.enum(EMPLOYEE_STATUSES).optional().default("Active"),
+    /** Omit on PATCH to keep existing status; create defaults to Active in service. */
+    status: z.enum(EMPLOYEE_STATUSES).optional(),
     active: z.boolean().optional(),
+    expected_updated_at: z.string().trim().optional(),
+    confirm_duplicate_name: z
+      .union([z.boolean(), z.string()])
+      .optional()
+      .transform((v) => v === true || v === "true" || v === "1"),
     aadhar: z.string().optional().default(""),
     pan: z.string().optional().default(""),
     permaddr: z.string().optional().default(""),
@@ -176,6 +195,24 @@ export const employeeSchema = z
         });
       }
     }
+
+    const aadharDigits = normalizeAadharDigits(v.aadhar);
+    if (aadharDigits && !AADHAR_RE.test(aadharDigits)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Aadhar must be exactly 12 digits",
+        path: ["aadhar"]
+      });
+    }
+
+    const panNorm = normalizePan(v.pan);
+    if (panNorm && !PAN_RE.test(panNorm)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "PAN must match format ABCDE1234F",
+        path: ["pan"]
+      });
+    }
   })
   .transform((v) => {
     const full = (v.name || v.full_name || `${v.fn || ""} ${v.ln || ""}`).trim();
@@ -183,7 +220,8 @@ export const employeeSchema = z
     const shift = v.shift || v.shift_type || "";
     const join = v.join || v.join_date || v.joining_date || "";
     const leave = v.leave || v.leave_date || "";
-    const status: EmployeeStatus = v.status ?? (v.active === false ? "Inactive" : "Active");
+    const status: EmployeeStatus | undefined =
+      v.status ?? (v.active === false ? "Inactive" : v.active === true ? "Active" : undefined);
     const provided = [v.score_experience, v.score_behaviour, v.score_testimonial].filter(
       (n): n is number => typeof n === "number"
     );

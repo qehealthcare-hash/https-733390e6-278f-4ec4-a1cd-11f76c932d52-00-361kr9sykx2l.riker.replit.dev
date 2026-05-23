@@ -30,8 +30,23 @@ export const PUT = PATCH;
  * /caretaker assignments. Either way, returns the resulting row (or the
  * pre-deletion snapshot) so the client can refetch and reconcile UI.
  */
-export const DELETE = withAuth<Params>(async (_req, { params, actor }) => {
+export const DELETE = withAuth<Params>(async (req, { params, actor }) => {
   requireRole(actor, ["Admin"]);
-  const result = await employeeService.remove(params.id, { actor });
+
+  let body: unknown = undefined;
+  try {
+    const raw = await req.text();
+    if (raw && raw.trim().length > 0) {
+      body = JSON.parse(raw);
+    }
+  } catch {
+    body = undefined;
+  }
+  const reason =
+    body && typeof body === "object" && body !== null && "reason" in body
+      ? String((body as { reason?: string }).reason || "")
+      : "";
+
+  const result = await employeeService.remove(params.id, { actor }, { reason });
   return respond(result);
 });

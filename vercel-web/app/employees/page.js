@@ -61,6 +61,8 @@ function createInitialForm() {
     score_testimonial: null,
     score_touched: { score_experience: false, score_behaviour: false, score_testimonial: false },
     status: "Active",
+    expected_updated_at: "",
+    confirm_duplicate_name: false,
     photo: null,
     documents: []
   };
@@ -139,6 +141,10 @@ export default function EmployeesPage() {
   var [message, setMessage] = useState("");
 
   var [statusDialog, setStatusDialog] = useState(null);
+  var [activateDialog, setActivateDialog] = useState(null);
+  var [deleteDialog, setDeleteDialog] = useState(null);
+  var [conflictPrompt, setConflictPrompt] = useState(null);
+  var [duplicatePrompt, setDuplicatePrompt] = useState(null);
   var [historyDialog, setHistoryDialog] = useState(null);
   var [cameraOpen, setCameraOpen] = useState(false);
   var [historyData, setHistoryData] = useState(null);
@@ -274,6 +280,8 @@ export default function EmployeesPage() {
         score_testimonial: row.score_testimonial != null
       },
       status: row.status || (row.active === false ? "Inactive" : "Active"),
+      expected_updated_at: row.updated_at || "",
+      confirm_duplicate_name: false,
       photo: row.photo && typeof row.photo === "object" ? row.photo : null,
       documents: row.employee_documents || row.docs || []
     });
@@ -421,6 +429,12 @@ export default function EmployeesPage() {
       }
       var maybeTotal = computeScoreTotal(form);
       if (maybeTotal != null) payload.score_total = maybeTotal;
+      if (form.id && form.expected_updated_at) {
+        payload.expected_updated_at = form.expected_updated_at;
+      }
+      if (form.confirm_duplicate_name) {
+        payload.confirm_duplicate_name = true;
+      }
       await requestWithOfflineFallback(
         form.id ? "/employees/" + form.id : "/employees",
         { method: form.id ? "PUT" : "POST", body: payload },
@@ -430,15 +444,59 @@ export default function EmployeesPage() {
       resetForm();
       setMessage(form.id ? "Employee updated successfully" : "Employee created successfully");
     } catch (submitError) {
-      setError(submitError.message || "Unable to save employee");
+      var code = submitError?.code;
+      if (code === "conflict") {
+        setConflictPrompt({
+          actual: submitError?.details?.actual_updated_at,
+          message:
+            submitError.message ||
+            "Employee was modified by another user — reload to see their changes."
+        });
+      } else if (
+        code === "duplicate" &&
+        (submitError?.details?.field === "name" || submitError?.details?.field === "aadhar") &&
+        !form.id
+      ) {
+        setDuplicatePrompt({
+          field: submitError.details.field,
+          message: submitError.message || "An active employee with this identity already exists."
+        });
+      } else {
+        setError(submitError.message || "Unable to save employee");
+      }
     } finally {
       setBusy(false);
     }
   }
 
+  async function reloadEmployeeFromConflict() {
+    if (!form.id) {
+      setConflictPrompt(null);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      var fresh = await request("/employees/" + form.id, null, auth.session);
+      editEmployee(fresh);
+      setConflictPrompt(null);
+      setMessage("Employee reloaded — your previous edits were discarded.");
+    } catch (reloadError) {
+      setError(reloadError.message || "Could not reload employee.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function confirmDuplicateAndResubmit() {
+    setDuplicatePrompt(null);
+    setForm(function (current) { return { ...current, confirm_duplicate_name: true }; });
+    setMessage("Will save as a separate employee on the next save — press Save.");
+  }
+
   function changeStatus(id, nextStatus, rowName) {
     if (nextStatus === "Active") {
-      void applyStatusChange(id, nextStatus, "");
+      setActivateDialog({ id: id, name: rowName || "", note: "" });
       return;
     }
     setStatusDialog({ id: id, name: rowName || "", nextStatus: nextStatus, reason: "" });
@@ -457,6 +515,7 @@ export default function EmployeesPage() {
       if (form.id === id) resetForm();
       setMessage("Employee → " + nextStatus);
       setStatusDialog(null);
+      setActivateDialog(null);
     } catch (err) {
       setError(err.message || "Unable to change status");
     } finally {
@@ -587,20 +646,42 @@ export default function EmployeesPage() {
     openPrintWindow("Employee Directory", body);
   }
 
-  async function deleteEmployee(id) {
-    if (!window.confirm("Delete this employee? If they have history, they will be deactivated instead.")) return;
+  function openDeleteDialog(row) {
+    setDeleteDialog({
+      id: row.id,
+      name: row.full_name || row.name || row.id,
+      reason: ""
+    });
+  }
+
+  async function submitDeleteDialog() {
+    if (!deleteDialog) return;
     setBusy(true);
     setError("");
     try {
-      var result = await requestWithOfflineFallback("/employees/" + id, { method: "DELETE" }, auth.session);
+      var result = await requestWithOfflineFallback(
+        "/employees/" + deleteDialog.id,
+        { method: "DELETE", body: { reason: deleteDialog.reason.trim() } },
+        auth.session
+      );
       await resource.reload();
-      if (form.id === id) resetForm();
-      setMessage(result && result.mode === "soft" ? "Employee deactivated (history preserved)" : "Employee deleted");
+      if (form.id === deleteDialog.id) resetForm();
+      setMessage(
+        result && result.mode === "soft"
+          ? "Employee deactivated (history preserved)"
+          : "Employee deleted"
+      );
+      setDeleteDialog(null);
     } catch (err) {
       setError(err.message || "Unable to delete employee");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submitActivateDialog() {
+    if (!activateDialog) return;
+    await applyStatusChange(activateDialog.id, "Active", activateDialog.note.trim());
   }
 
   return (
@@ -900,8 +981,81 @@ export default function EmployeesPage() {
                   );
                 })}
               </div>
-              {error ? <div className="error-text">{error}</div> : null}
-              {!error && resource.error ? (
+              {conflictPrompt ? (
+                <div
+                  className="error-text"
+                  style={{
+                    border: "1px solid var(--warn, #d97706)",
+                    background: "rgba(217,119,6,0.08)",
+                    padding: "10px 12px",
+                    borderRadius: 6
+                  }}
+                >
+                  <div style={{ marginBottom: 6 }}>
+                    <strong>Concurrent edit detected.</strong> {conflictPrompt.message}
+                    {conflictPrompt.actual ? (
+                      <span className="mini-muted">
+                        {" "}(server updated_at: {String(conflictPrompt.actual)})
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="button-row" style={{ gap: 8 }}>
+                    <button
+                      className="button primary"
+                      type="button"
+                      onClick={reloadEmployeeFromConflict}
+                      disabled={busy}
+                    >
+                      Reload latest
+                    </button>
+                    <button
+                      className="button ghost"
+                      type="button"
+                      onClick={function () { setConflictPrompt(null); }}
+                      disabled={busy}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {duplicatePrompt ? (
+                <div
+                  className="error-text"
+                  style={{
+                    border: "1px solid var(--warn, #d97706)",
+                    background: "rgba(217,119,6,0.08)",
+                    padding: "10px 12px",
+                    borderRadius: 6
+                  }}
+                >
+                  <div style={{ marginBottom: 6 }}>
+                    <strong>Possible duplicate ({duplicatePrompt.field}).</strong> {duplicatePrompt.message}
+                  </div>
+                  <div className="button-row" style={{ gap: 8 }}>
+                    <button
+                      className="button primary"
+                      type="button"
+                      onClick={confirmDuplicateAndResubmit}
+                      disabled={busy}
+                    >
+                      Create as new employee anyway
+                    </button>
+                    <button
+                      className="button ghost"
+                      type="button"
+                      onClick={function () { setDuplicatePrompt(null); }}
+                      disabled={busy}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {error && !conflictPrompt && !duplicatePrompt ? (
+                <div className="error-text">{error}</div>
+              ) : null}
+              {!error && !conflictPrompt && !duplicatePrompt && resource.error ? (
                 <div className="error-text">Live employee list error — {resource.error}</div>
               ) : null}
               {message ? <div className="success-text">{message}</div> : null}
@@ -1115,7 +1269,7 @@ export default function EmployeesPage() {
                             PDF (sanitised)
                           </button>
                           {isAdmin ? (
-                            <button className="button danger" type="button" onClick={function () { deleteEmployee(row.id); }}>
+                            <button className="button danger" type="button" onClick={function () { openDeleteDialog(row); }}>
                               Delete
                             </button>
                           ) : null}
@@ -1136,6 +1290,75 @@ export default function EmployeesPage() {
         onCapture={handleEmployeeCameraCapture}
         facingMode="user"
       />
+
+      {activateDialog ? (
+        <div className="modal-backdrop" onClick={function () { if (!busy) setActivateDialog(null); }}>
+          <div className="card modal-card" onClick={function (e) { e.stopPropagation(); }}>
+            <div className="modal-head">
+              <h3>Reactivate employee</h3>
+              <button className="button ghost" type="button" disabled={busy} onClick={function () { setActivateDialog(null); }}>×</button>
+            </div>
+            <p className="mini-muted">
+              {activateDialog.name ? activateDialog.name + " — " : ""}This will set status to Active and clear the leave date.
+            </p>
+            <div className="field">
+              <label>Note (optional)</label>
+              <textarea
+                rows="3"
+                value={activateDialog.note}
+                onChange={function (e) {
+                  var value = e.target.value;
+                  setActivateDialog(function (current) { return current ? { ...current, note: value } : current; });
+                }}
+                placeholder="Why is this employee being reactivated?"
+              />
+            </div>
+            <div className="button-row" style={{ justifyContent: "flex-end" }}>
+              <button className="button ghost" type="button" disabled={busy} onClick={function () { setActivateDialog(null); }}>
+                Cancel
+              </button>
+              <button className="button primary" type="button" disabled={busy} onClick={submitActivateDialog}>
+                {busy ? "Saving..." : "Confirm Active"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteDialog ? (
+        <div className="modal-backdrop" onClick={function () { if (!busy) setDeleteDialog(null); }}>
+          <div className="card modal-card" onClick={function (e) { e.stopPropagation(); }}>
+            <div className="modal-head">
+              <h3>Delete employee</h3>
+              <button className="button ghost" type="button" disabled={busy} onClick={function () { setDeleteDialog(null); }}>×</button>
+            </div>
+            <p className="mini-muted">
+              {deleteDialog.name ? deleteDialog.name + " — " : ""}
+              If this employee has duties, attendance, payouts, or patient assignments, they will be deactivated instead of permanently deleted.
+            </p>
+            <div className="field">
+              <label>Reason (optional)</label>
+              <textarea
+                rows="3"
+                value={deleteDialog.reason}
+                onChange={function (e) {
+                  var value = e.target.value;
+                  setDeleteDialog(function (current) { return current ? { ...current, reason: value } : current; });
+                }}
+                placeholder="Why is this employee being removed?"
+              />
+            </div>
+            <div className="button-row" style={{ justifyContent: "flex-end" }}>
+              <button className="button ghost" type="button" disabled={busy} onClick={function () { setDeleteDialog(null); }}>
+                Cancel
+              </button>
+              <button className="button danger" type="button" disabled={busy} onClick={submitDeleteDialog}>
+                {busy ? "Working..." : "Confirm delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {statusDialog ? (
         <div className="modal-backdrop" onClick={function () { if (!busy) setStatusDialog(null); }}>

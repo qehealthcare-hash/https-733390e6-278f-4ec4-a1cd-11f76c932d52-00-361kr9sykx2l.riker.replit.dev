@@ -94,8 +94,10 @@ export function employeeToRow(input: EmployeeInput) {
     edu: i.edu || i.education || "",
     exp: i.exp || "",
     company: i.company || "",
-    aadhar: i.aadhar || "",
-    pan: i.pan || "",
+    aadhar: normalizeAadhar(i.aadhar) || "",
+    pan: String(i.pan || "")
+      .trim()
+      .toUpperCase(),
     permaddr: i.permaddr || "",
     permpin: i.permpin || "",
     permdist: i.permdist || "",
@@ -112,11 +114,12 @@ export function employeeToRow(input: EmployeeInput) {
     skills: i.skills || "",
     salary: input.salary != null ? String(input.salary) : "",
     join_date: input.join_date || input.join || "",
-    status: input.status,
-    leave_date: leaveDateForStatus(
-      input.status,
-      input.leave_date || input.leave || ""
-    ),
+    ...(input.status != null ? { status: input.status } : {}),
+    ...(input.status != null
+      ? {
+          leave_date: leaveDateForStatus(input.status, input.leave_date || input.leave || "")
+        }
+      : {}),
     docs: (input.docs ?? i.documents) ?? undefined,
     score_experience: input.score_experience ?? null,
     score_behaviour: input.score_behaviour ?? null,
@@ -182,6 +185,75 @@ export function findActiveEmployeeDuplicate<
     excludeId,
     match: (r) => isActiveEmployee(r)
   });
+}
+
+/** Normalised name key for duplicate detection (case / whitespace insensitive). */
+export function employeeNameKey(parts: {
+  fn?: string | null;
+  mn?: string | null;
+  ln?: string | null;
+  name?: string | null;
+  full_name?: string | null;
+}): string {
+  const explicit = String(parts.name || parts.full_name || "").trim();
+  const built =
+    explicit ||
+    employeeFullName({
+      fn: parts.fn ?? undefined,
+      mn: parts.mn ?? undefined,
+      ln: parts.ln ?? undefined
+    });
+  return built.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function findActiveEmployeeByName<
+  T extends {
+    id: string;
+    fn?: string | null;
+    mn?: string | null;
+    ln?: string | null;
+    name?: string | null;
+    full_name?: string | null;
+    phone?: string | null;
+    status?: string | null;
+    leave_date?: string | null;
+  }
+>(
+  candidates: T[],
+  parts: { fn?: string; mn?: string; ln?: string; name?: string; full_name?: string },
+  excludeId?: string
+): T | null {
+  const key = employeeNameKey(parts);
+  if (!key) return null;
+  for (const c of candidates) {
+    if (excludeId && String(c.id) === excludeId) continue;
+    if (!isActiveEmployee(c)) continue;
+    if (employeeNameKey(c) === key) return c;
+  }
+  return null;
+}
+
+/** Digits-only Aadhar (12) for identity checks. */
+export function normalizeAadhar(raw: string | null | undefined): string {
+  return String(raw || "").replace(/\D/g, "");
+}
+
+export function findActiveEmployeeByAadhar<
+  T extends {
+    id: string;
+    aadhar?: string | null;
+    status?: string | null;
+    leave_date?: string | null;
+  }
+>(candidates: T[], aadhar: string, excludeId?: string): T | null {
+  const key = normalizeAadhar(aadhar);
+  if (key.length !== 12) return null;
+  for (const c of candidates) {
+    if (excludeId && String(c.id) === excludeId) continue;
+    if (!isActiveEmployee(c)) continue;
+    if (normalizeAadhar(c.aadhar) === key) return c;
+  }
+  return null;
 }
 
 /** Counts of historical references that should prevent hard deletion. */

@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   employeeStatusFromRow,
   employeeToRow,
+  employeeNameKey,
+  findActiveEmployeeByName,
+  findActiveEmployeeByAadhar,
+  normalizeAadhar,
   isActiveEmployee,
   deactivatePatch,
   activatePatch,
@@ -55,6 +59,30 @@ describe("employeeRules — status persistence (column + leave_date)", () => {
       leave_date: "",
       updated_by: "a@test.com"
     });
+  });
+
+  it("employeeNameKey normalises case and whitespace", () => {
+    expect(employeeNameKey({ fn: "  Kundanben  ", ln: "Shah" })).toBe("kundanben shah");
+  });
+
+  it("findActiveEmployeeByName matches active rows only", () => {
+    const hit = findActiveEmployeeByName(
+      [
+        { id: "1", fn: "Kundanben", ln: "Shah", status: "Active" },
+        { id: "2", fn: "Kundanben", ln: "Shah", status: "Inactive" }
+      ],
+      { fn: "kundanben", ln: "shah" }
+    );
+    expect(hit?.id).toBe("1");
+  });
+
+  it("findActiveEmployeeByAadhar matches 12-digit identity", () => {
+    const hit = findActiveEmployeeByAadhar(
+      [{ id: "1", aadhar: "930753172933", status: "Active" }],
+      "9307 5317 2933"
+    );
+    expect(hit?.id).toBe("1");
+    expect(normalizeAadhar("9307-5317-2933")).toBe("930753172933");
   });
 
   it("statusPatch persists OnLeave/Suspended as explicit status (not just leave_date)", () => {

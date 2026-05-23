@@ -31,10 +31,8 @@ export const employeeRepository = {
       SCOPE,
       (q) => {
         let query = q;
-        if (filters.status === "Active") {
-          query = query.or("leave_date.is.null,leave_date.eq.");
-        } else if (filters.status === "Inactive") {
-          query = query.not("leave_date", "is", null).neq("leave_date", "");
+        if (filters.status) {
+          query = query.eq("status", filters.status);
         }
         if (filters.dept) query = query.eq("dept", filters.dept);
         if (filters.q) {
@@ -57,8 +55,46 @@ export const employeeRepository = {
     const db = resolveClient(opts);
     return runListQuery(
       () =>
-        db.from(TABLE).select("id, fn, ln, phone, leave_date").ilike("phone", `%${suffix}%`),
+        db
+          .from(TABLE)
+          .select("id, fn, mn, ln, phone, status, leave_date, aadhar")
+          .ilike("phone", `%${suffix}%`),
       `${SCOPE}.findByPhoneSuffix`
+    );
+  },
+
+  findActiveByName(nameKey: string, excludeId?: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    if (!nameKey) return Promise.resolve({ success: true, data: [] });
+    const db = resolveClient(opts);
+    const term = nameKey.replace(/%/g, "").slice(0, 80);
+    return runListQuery(
+      () => {
+        let q = db
+          .from(TABLE)
+          .select("id, fn, mn, ln, phone, status, leave_date, aadhar")
+          .eq("status", "Active");
+        if (excludeId) q = q.neq("id", excludeId);
+        return q.or(`fn.ilike.%${term}%,ln.ilike.%${term}%,mn.ilike.%${term}%`);
+      },
+      `${SCOPE}.findActiveByName`
+    );
+  },
+
+  findActiveByAadhar(aadhar: string, excludeId?: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const digits = aadhar.replace(/\D/g, "");
+    if (digits.length !== 12) return Promise.resolve({ success: true, data: [] });
+    const db = resolveClient(opts);
+    return runListQuery(
+      () => {
+        let q = db
+          .from(TABLE)
+          .select("id, fn, mn, ln, phone, status, leave_date, aadhar")
+          .eq("status", "Active")
+          .eq("aadhar", digits);
+        if (excludeId) q = q.neq("id", excludeId);
+        return q;
+      },
+      `${SCOPE}.findActiveByAadhar`
     );
   },
 
