@@ -169,6 +169,7 @@ export function dutyPersistRow(input: {
   patient_id: string;
   employee_id: string;
   service_type?: string;
+  service_name?: string;
   shift_type: DutyShiftType;
   start_at: string;
   end_at: string;
@@ -176,18 +177,29 @@ export function dutyPersistRow(input: {
   cancel_reason?: string;
   notes?: string;
   billing_id?: string | null;
+  charge_per_day?: number;
+  payout_per_day?: number;
+  payout_term?: string;
+  extra_partners?: unknown;
 }) {
+  const serviceName =
+    (input.service_name || "").trim() || (input.service_type || "").trim() || "Care Taker Services";
   return {
     id: input.id,
     patient_id: input.patient_id,
     employee_id: input.employee_id,
-    service_type: input.service_type ?? "",
+    service_type: input.service_type ?? serviceName,
+    service_name: serviceName,
     shift_type: input.shift_type,
     start_at: input.start_at,
     end_at: input.end_at,
     status: input.status,
     cancel_reason: input.cancel_reason ?? "",
     notes: input.notes ?? "",
-    billing_id: input.billing_id ?? null
+    billing_id: input.billing_id ?? null,
+    charge_per_day: Number(input.charge_per_day ?? 0),
+    payout_per_day: Number(input.payout_per_day ?? 0),
+    payout_term: input.payout_term ?? "Daily",
+    extra_partners: input.extra_partners ?? []
   };
 }

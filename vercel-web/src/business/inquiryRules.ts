@@ -33,7 +33,7 @@ export function isConvertedInquiry(status: string | undefined | null): boolean {
 
 /** Explicit allowlist DB row mapper — only known `hh_inquiries` columns. */
 export function inquiryToRow(input: InquiryInput) {
-  return {
+  const row: Record<string, unknown> = {
     name: input.name,
     phone: input.phone,
     wa: input.wa,
@@ -45,16 +45,17 @@ export function inquiryToRow(input: InquiryInput) {
     service: input.service,
     source: input.source,
     potential: input.potential,
-    rating_emergency: input.rating_emergency,
-    rating_flexibility: input.rating_flexibility,
-    rating_overall: input.rating_overall,
-    status: input.status,
-    assigned_to: input.assigned_to,
+    ...(input.status != null ? { status: input.status } : {}),
+    assigned_to: input.assigned_to || null,
     followup_date: input.followup_date,
     notes: input.notes,
     remarks: input.remarks,
     email: input.email || ""
   };
+  if (input.rating_emergency != null) row.rating_emergency = input.rating_emergency;
+  if (input.rating_flexibility != null) row.rating_flexibility = input.rating_flexibility;
+  if (input.rating_overall != null) row.rating_overall = input.rating_overall;
+  return row;
 }
 
 /** Map raw row to the React/legacy UI shape (keeps page rendering working). */
@@ -194,4 +195,28 @@ export function inquiryConvertPatch(actorEmail: string, notes?: string) {
   };
   if (notes && notes.trim()) patch.notes = notes.trim();
   return patch;
+}
+
+/** Soft-close patch (delete-with-history-preserving). */
+export function inquiryClosePatch(actorEmail: string, reason = "") {
+  const patch: Record<string, unknown> = {
+    status: "Closed" as const,
+    updated_by: actorEmail
+  };
+  if (reason.trim()) patch.remarks = reason.trim();
+  return patch;
+}
+
+/** True when follow-up date is set and before today (YYYY-MM-DD compare). */
+export function isOverdueFollowup(
+  followupDate: string | null | undefined,
+  status: string | null | undefined
+): boolean {
+  if (!followupDate || !String(followupDate).trim()) return false;
+  if (isClosedInquiry(status)) return false;
+  const d = Date.parse(String(followupDate).trim());
+  if (Number.isNaN(d)) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return d < today.getTime();
 }

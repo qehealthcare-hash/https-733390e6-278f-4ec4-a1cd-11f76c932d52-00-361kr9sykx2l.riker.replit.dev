@@ -22,9 +22,13 @@ import {
   dutySchema,
   dutyCancelSchema,
   dutyListQuerySchema,
+  dutyMaterializeSchema,
+  dutyPartnersSchema,
   type DutyInput,
   type DutyCancelInput,
   type DutyListQuery,
+  type DutyMaterializeInput,
+  type DutyPartnersInput,
   type DutyStatus
 } from "@/validation/dutyValidation";
 import { parseInput } from "@/validation/parseValidation";
@@ -38,10 +42,11 @@ import {
   dutyPersistRow,
   payoutPeriodForDuty,
   selectOverlappingDuty,
-  selectPatientOverlappingDuty,
   shouldCheckDutyOverlap,
   type DutyTimeSlot
 } from "@/business/dutyRules";
+import { assertNotStale } from "@/business/concurrencyRules";
+import { dutyDiaryService } from "@/services/dutyDiaryService";
 import { hoursBetween } from "@/business/attendanceRules";
 import { newId } from "@/business/idRules";
 import { dutyRepository } from "@/database/dutyRepository";
@@ -175,28 +180,8 @@ async function ensureNoOverlap(
     );
   }
 
-  const patRows = await dutyRepository.findOverlappingForPatient(
-    input.patient_id,
-    input.start_at,
-    input.end_at,
-    excludeId,
-    access
-  );
-  if (!patRows.success) return passFailure<null>(patRows);
-  const patConflict = selectPatientOverlappingDuty(
-    (patRows.data || []).map(asSlot),
-    input.patient_id,
-    input.start_at,
-    input.end_at,
-    excludeId
-  );
-  if (patConflict) {
-    return duplicateFailure(
-      "patient_window",
-      patConflict.id,
-      "Patient already has a duty overlapping this time"
-    );
-  }
+  // Legacy CRM allows multiple partners on one patient per day (svc diary);
+  // only block the same employee double-booked.
 
   return success(null);
 }
@@ -206,24 +191,40 @@ async function rollbackBillingFromDuty(
   ctx: DutyServiceContext
 ): Promise<ApiResult<null>> {
   const billingId = (duty.billing_id as string | null) || "";
-  if (!billingId) return success(null);
-
+  const dutyId = String(duty.id);
   const access = dbAccess(ctx);
-  const svcLines = await dutyRepository.findSvcEntriesForDuty(billingId, String(duty.id), access);
-  if (!svcLines.success) return passFailure<null>(svcLines);
-  if (!svcLines.data || svcLines.data.length === 0) return success(null);
 
-  const receipts = await dutyRepository.countActiveReceipts(billingId, access);
-  if (!receipts.success) return passFailure<null>(receipts);
-  const guard = canCancelDutyWithBilling(true, receipts.data ?? 0);
-  if (!guard.success) {
-    return failure(guard.error || "Cancellation blocked", guard.code, {
-      ...((guard.details as object) || {}),
-      billing_id: billingId
-    });
+  const diaryRows = await dutyRepository.findSvcEntriesByDutyId(dutyId, access);
+  if (!diaryRows.success) return passFailure<null>(diaryRows);
+
+  const legacyRows = billingId
+    ? await dutyRepository.findSvcEntriesForDuty(billingId, dutyId, access)
+    : { success: true as const, data: [] as JsonRow[] };
+  if (!legacyRows.success) return passFailure<null>(legacyRows);
+
+  const hasLines =
+    (diaryRows.data?.length || 0) > 0 || (legacyRows.data?.length || 0) > 0;
+
+  if (billingId && hasLines) {
+    const receipts = await dutyRepository.countActiveReceipts(billingId, access);
+    if (!receipts.success) return passFailure<null>(receipts);
+    const guard = canCancelDutyWithBilling(true, receipts.data ?? 0);
+    if (!guard.success) {
+      return failure(guard.error || "Cancellation blocked", guard.code, {
+        ...((guard.details as object) || {}),
+        billing_id: billingId
+      });
+    }
   }
-  const cleanup = await dutyRepository.removeSvcEntriesForDuty(billingId, String(duty.id), access);
-  if (!cleanup.success) return passFailure<null>(cleanup);
+
+  if (billingId && legacyRows.data?.length) {
+    const cleanup = await dutyRepository.removeSvcEntriesForDuty(billingId, dutyId, access);
+    if (!cleanup.success) return passFailure<null>(cleanup);
+  }
+
+  const diaryCleanup = await dutyDiaryService.rollbackDutyDiary(dutyId, ctx);
+  if (!diaryCleanup.success) return passFailure<null>(diaryCleanup);
+
   return success(null);
 }
 
@@ -288,6 +289,11 @@ export const dutyService = {
     const fresh = await loadFreshDuty(id, ctx, inserted.data ?? null);
     if (!fresh.success) return passFailure(fresh);
 
+    if (input.materialize) {
+      const mat = await dutyDiaryService.materializeDuty(fresh.data, ctx);
+      if (!mat.success) return passFailure(mat);
+    }
+
     return finalizeWithAudit(
       await fireAudit(ctx, { entity_id: id, action: "create", after: fresh.data }),
       fresh.data
@@ -305,6 +311,9 @@ export const dutyService = {
     const parsed = parseInput(dutySchema, { ...(rawInput as object), id });
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as DutyInput;
+
+    const stale = assertNotStale("Duty", existing.data.updated_at, input.expected_updated_at);
+    if (!stale.success) return passFailure(stale);
 
     const reopenCheck = canReopenCompletedDuty(String(existing.data.status || ""), input.status);
     if (!reopenCheck.success) {
@@ -337,6 +346,11 @@ export const dutyService = {
     const fresh = await loadFreshDuty(id, ctx, updated.data ?? null);
     if (!fresh.success) return passFailure(fresh);
 
+    if (input.materialize) {
+      const mat = await dutyDiaryService.materializeDuty(fresh.data, ctx);
+      if (!mat.success) return passFailure(mat);
+    }
+
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
@@ -345,6 +359,47 @@ export const dutyService = {
         after: fresh.data
       }),
       fresh.data
+    );
+  },
+
+  async materialize(
+    id: string,
+    rawInput: unknown,
+    ctx: DutyServiceContext
+  ): Promise<ApiResult<import("@/services/dutyDiaryService").MaterializeResult>> {
+    const existing = await loadDuty(id, ctx);
+    if (!existing.success) return passFailure(existing);
+
+    const parsed = parseInput(dutyMaterializeSchema, rawInput ?? {});
+    if (!parsed.success) return passFailure(parsed);
+    const input = parsed.data as DutyMaterializeInput;
+
+    return dutyDiaryService.materializeDuty(existing.data, ctx, {
+      from: input.from,
+      to: input.to,
+      dry_run: input.dry_run
+    });
+  },
+
+  async assignPartners(
+    id: string,
+    rawInput: unknown,
+    ctx: DutyServiceContext
+  ): Promise<
+    ApiResult<{ duty: DutyApiRow; materialize?: import("@/services/dutyDiaryService").MaterializeResult }>
+  > {
+    const existing = await loadDuty(id, ctx);
+    if (!existing.success) return passFailure(existing);
+
+    const parsed = parseInput(dutyPartnersSchema, rawInput ?? {});
+    if (!parsed.success) return passFailure(parsed);
+    const input = parsed.data as DutyPartnersInput;
+
+    return dutyDiaryService.assignExtraPartners(
+      existing.data,
+      input.extra_partners,
+      ctx,
+      input.materialize ?? true
     );
   },
 

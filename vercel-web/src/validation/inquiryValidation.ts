@@ -103,8 +103,14 @@ export const inquirySchema = z
     emergency_level: ratingSchema.optional(),
     flexibility_score: ratingSchema.optional(),
     priority_score: ratingSchema.optional(),
-    status: z.enum(INQUIRY_STATUSES).optional().default("New"),
+    /** Omit on PATCH to keep existing status; create defaults to New in service. */
+    status: z.enum(INQUIRY_STATUSES).optional(),
     assigned_to: z.string().max(80).optional().default(""),
+    expected_updated_at: z.string().trim().optional(),
+    confirm_existing_patient: z
+      .union([z.boolean(), z.string()])
+      .optional()
+      .transform((v) => v === true || v === "true" || v === "1"),
     followup_date: followupDateSchema,
     remarks: z.string().max(2000).optional().default(""),
     notes: z.string().max(2000).optional().default(""),
@@ -125,28 +131,37 @@ export const inquirySchema = z
         path: ["phone"]
       });
     }
+    const effectiveStatus = v.status ?? "New";
     if (
-      (v.status === "FollowUp" || v.status === "Negotiating") &&
+      (effectiveStatus === "FollowUp" || effectiveStatus === "Negotiating") &&
       !v.followup_date
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `followup_date is required when status is ${v.status}`,
+        message: `followup_date is required when status is ${effectiveStatus}`,
         path: ["followup_date"]
       });
     }
   })
   .transform((v) => {
     const phone = (v.phone || v.mobile || "").replace(/[^0-9+]/g, "");
+    const hasRating = (n: unknown) => n != null && n !== "";
     return {
       ...v,
       name: v.name || v.patient_name || "",
       phone,
       wa: (v.wa || phone || "").replace(/[^0-9+]/g, ""),
       service: v.service || v.service_required || "",
-      rating_emergency: v.rating_emergency ?? v.emergency_level ?? 5,
-      rating_flexibility: v.rating_flexibility ?? v.flexibility_score ?? 5,
-      rating_overall: v.rating_overall ?? v.priority_score ?? 5
+      status: v.status,
+      rating_emergency: hasRating(v.rating_emergency ?? v.emergency_level)
+        ? Number(v.rating_emergency ?? v.emergency_level)
+        : undefined,
+      rating_flexibility: hasRating(v.rating_flexibility ?? v.flexibility_score)
+        ? Number(v.rating_flexibility ?? v.flexibility_score)
+        : undefined,
+      rating_overall: hasRating(v.rating_overall ?? v.priority_score)
+        ? Number(v.rating_overall ?? v.priority_score)
+        : undefined
     };
   });
 

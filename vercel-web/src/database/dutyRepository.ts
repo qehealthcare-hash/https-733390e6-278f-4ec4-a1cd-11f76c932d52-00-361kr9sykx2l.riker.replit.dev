@@ -12,6 +12,7 @@ import { runListQuery, runQuery } from "@/database/supabaseClient";
 
 const TABLE = "hh_duties";
 const SVC = "hh_svc_entries";
+const PAYOUT_CHARGES = "hh_payout_charges";
 const RECEIPTS = "hh_receipts";
 const SCOPE = "dutyRepository";
 
@@ -150,6 +151,57 @@ export const dutyRepository = {
           .eq("remarks", `duty:${dutyId}`)
           .then(({ error }) => ({ data: null, error })),
       `${SCOPE}.removeSvcEntriesForDuty`
+    );
+  },
+
+  /** All svc rows materialized from a duty (`duty:<id>:...` remarks). */
+  async findSvcEntriesByDutyId(dutyId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery(
+      () =>
+        db
+          .from(SVC)
+          .select("id, billing_id, svc_key, date, partner_id, remarks, total")
+          .like("remarks", `duty:${dutyId}:%`),
+      `${SCOPE}.findSvcEntriesByDutyId`
+    );
+  },
+
+  async removeSvcEntriesByDutyId(dutyId: string, opts?: DbAccess): Promise<ApiResult<null>> {
+    const db = resolveClient(opts);
+    return runQuery<null>(
+      () =>
+        db
+          .from(SVC)
+          .delete()
+          .like("remarks", `duty:${dutyId}:%`)
+          .then(({ error }) => ({ data: null, error })),
+      `${SCOPE}.removeSvcEntriesByDutyId`
+    );
+  },
+
+  async findPayoutChargesByDutyId(dutyId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery(
+      () =>
+        db
+          .from(PAYOUT_CHARGES)
+          .select("id, svc_key, date, partner_id, amount, remarks")
+          .like("remarks", `duty:${dutyId}:%`),
+      `${SCOPE}.findPayoutChargesByDutyId`
+    );
+  },
+
+  async removePayoutChargesByDutyId(dutyId: string, opts?: DbAccess): Promise<ApiResult<null>> {
+    const db = resolveClient(opts);
+    return runQuery<null>(
+      () =>
+        db
+          .from(PAYOUT_CHARGES)
+          .delete()
+          .like("remarks", `duty:${dutyId}:%`)
+          .then(({ error }) => ({ data: null, error })),
+      `${SCOPE}.removePayoutChargesByDutyId`
     );
   },
 

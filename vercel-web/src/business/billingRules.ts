@@ -94,8 +94,14 @@ export function computeBillingTotals(
 // Service-entry shape and duty linkage
 // ───────────────────────────────────────────────────────────────────────────
 
+/** Legacy alias key (patient + service) — prefer `billingSvcKey` for diary rows. */
 export function serviceKey(patientId: string, serviceName: string): string {
   return `${patientId}|${serviceName}`;
+}
+
+/** Legacy duty diary `svc_key`: `<billingId>_<serviceName>`. */
+export function billingSvcKey(billingId: string, serviceName: string): string {
+  return `${billingId}_${serviceName}`;
 }
 
 export function dutyRemarksKey(dutyId: string): string {
@@ -124,10 +130,11 @@ export function buildServiceEntryFromDuty(input: ServiceEntryFromDutyInput) {
   const disc = Number(input.discount || 0);
   const total = Math.max(0, amount - disc);
   return {
-    svc_key: serviceKey(input.patientId, input.serviceName),
+    svc_key: billingSvcKey(input.billingId, input.serviceName),
     billing_id: input.billingId,
     service_name: input.serviceName,
     partner: input.employeeId || "",
+    partner_id: input.employeeId || "",
     date,
     freq: input.shiftType,
     amt: amount,

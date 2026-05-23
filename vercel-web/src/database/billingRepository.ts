@@ -15,6 +15,7 @@ import { runListQuery, runQuery } from "@/database/supabaseClient";
 const BILLINGS = "hh_billings";
 const RECEIPTS = "hh_receipts";
 const SVC = "hh_svc_entries";
+const PAYOUT_CHARGES = "hh_payout_charges";
 const INVOICES = "hh_invoices";
 const INVOICE_ITEMS = "hh_invoice_items";
 const BILLING_RECEIPTS = "hh_billing_receipts";
@@ -316,8 +317,44 @@ export const billingRepository = {
     );
   },
 
+  findSvcByDayPartner(
+    billingId: string,
+    serviceName: string,
+    date: string,
+    partnerId: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow | null>> {
+    const db = resolveClient(opts);
+    let q = db
+      .from(SVC)
+      .select("*")
+      .eq("billing_id", billingId)
+      .eq("service_name", serviceName)
+      .eq("date", date);
+    if (partnerId) q = q.eq("partner_id", partnerId);
+    else q = q.is("partner_id", null);
+    return runQuery(() => q.maybeSingle(), `${SCOPE}.findSvcByDayPartner`);
+  },
+
+  findPayoutByDayPartner(
+    svcKey: string,
+    date: string,
+    partnerId: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow | null>> {
+    const db = resolveClient(opts);
+    let q = db.from(PAYOUT_CHARGES).select("*").eq("svc_key", svcKey).eq("date", date);
+    if (partnerId) q = q.eq("partner_id", partnerId);
+    else q = q.is("partner_id", null);
+    return runQuery(() => q.maybeSingle(), `${SCOPE}.findPayoutByDayPartner`);
+  },
+
   insertSvc(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return insertRow(SVC, row, `${SCOPE}.insertSvc`, opts);
+  },
+
+  insertPayoutCharge(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
+    return insertRow(PAYOUT_CHARGES, row, `${SCOPE}.insertPayoutCharge`, opts);
   },
 
   updateSvc(id: string, patch: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {

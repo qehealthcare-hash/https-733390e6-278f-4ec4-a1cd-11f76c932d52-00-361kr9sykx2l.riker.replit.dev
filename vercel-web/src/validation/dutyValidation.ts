@@ -20,19 +20,34 @@ export type DutyShiftType = (typeof DUTY_SHIFT_TYPES)[number];
  * Includes inline cross-field guards: end_at > start_at, COMPLETED needs no
  * cancel_reason, CANCELLED requires a reason for audit hygiene.
  */
+const dutyPartnerSchema = z.object({
+  employee_id: idSchema,
+  charge_per_day: z.coerce.number().min(0).optional(),
+  payout_per_day: z.coerce.number().min(0).optional(),
+  payout_term: z.string().trim().max(40).optional()
+});
+
 export const dutySchema = z
   .object({
     id: idSchema.optional(),
     patient_id: idSchema,
     employee_id: idSchema,
     service_type: z.string().optional().default(""),
+    service_name: z.string().trim().max(120).optional().default(""),
     shift_type: shiftTypeSchema.default("DAY"),
     start_at: isoDate,
     end_at: isoDate,
     status: z.enum(DUTY_STATUSES).default("SCHEDULED"),
     cancel_reason: z.string().optional().default(""),
     notes: z.string().optional().default(""),
-    billing_id: z.string().optional().nullable()
+    billing_id: z.string().optional().nullable(),
+    charge_per_day: z.coerce.number().min(0).optional().default(0),
+    payout_per_day: z.coerce.number().min(0).optional().default(0),
+    payout_term: z.string().trim().max(40).optional().default("Daily"),
+    extra_partners: z.array(dutyPartnerSchema).optional().default([]),
+    expected_updated_at: z.string().optional(),
+    /** When true, expands date range into hh_svc_entries + hh_payout_charges after save. */
+    materialize: z.boolean().optional().default(false)
   })
   .superRefine((v, ctx) => {
     if (v.patient_id && v.employee_id && v.patient_id === v.employee_id) {
@@ -84,3 +99,19 @@ export type DutyInput = z.infer<typeof dutySchema>;
 export type DutyCheckAtInput = z.infer<typeof dutyCheckAtSchema>;
 export type DutyCancelInput = z.infer<typeof dutyCancelSchema>;
 export type DutyListQuery = z.infer<typeof dutyListQuerySchema>;
+
+/** POST /duties/[id]/materialize — expand duty window to per-day diary rows. */
+export const dutyMaterializeSchema = z.object({
+  from: z.string().optional(),
+  to: z.string().optional(),
+  dry_run: z.boolean().optional().default(false)
+});
+
+/** POST /duties/[id]/partners — replace extra partner assignments. */
+export const dutyPartnersSchema = z.object({
+  extra_partners: z.array(dutyPartnerSchema).default([]),
+  materialize: z.boolean().optional().default(true)
+});
+
+export type DutyMaterializeInput = z.infer<typeof dutyMaterializeSchema>;
+export type DutyPartnersInput = z.infer<typeof dutyPartnersSchema>;

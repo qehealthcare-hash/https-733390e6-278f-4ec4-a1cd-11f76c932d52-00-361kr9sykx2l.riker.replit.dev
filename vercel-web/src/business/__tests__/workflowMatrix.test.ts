@@ -240,7 +240,7 @@ describe("CRM full workflow — module integration", () => {
     });
     expect(svc.billing_id).toBe("INVE000900");
     expect(svc.total).toBe(amount);
-    expect(svc.svc_key).toBe("PID000900|Caretaker");
+    expect(svc.svc_key).toBe("INVE000900_Caretaker");
   });
 
   it("step 6: generates a payout, requires source data, prevents over-deduction", () => {

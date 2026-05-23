@@ -4,7 +4,8 @@ import {
   canEditInquiry,
   canTransitionInquiryTo,
   findOpenInquiryDuplicate,
-  isOpenInquiry
+  isOpenInquiry,
+  isOverdueFollowup
 } from "@/business/inquiryRules";
 import { ErrorCodes } from "@/types/common";
 import { expectFail, expectOk } from "@/test/assertions";
@@ -49,5 +50,11 @@ describe("inquiryRules — test matrix", () => {
   it("requires reason to reopen Closed inquiry", () => {
     expectFail(canTransitionInquiryTo("Closed", "New", false), ErrorCodes.business);
     expectOk(canTransitionInquiryTo("Closed", "New", true));
+  });
+
+  it("flags overdue follow-ups for open inquiries only", () => {
+    expect(isOverdueFollowup("2020-01-01", "New")).toBe(true);
+    expect(isOverdueFollowup("2020-01-01", "Closed")).toBe(false);
+    expect(isOverdueFollowup("", "New")).toBe(false);
   });
 });

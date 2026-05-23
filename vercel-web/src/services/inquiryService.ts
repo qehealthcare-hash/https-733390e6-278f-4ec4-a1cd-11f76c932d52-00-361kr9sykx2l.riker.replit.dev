@@ -38,12 +38,14 @@ import {
   canEditInquiry,
   canTransitionInquiryTo,
   findOpenInquiryDuplicate,
+  inquiryClosePatch,
   inquiryConvertPatch,
   inquiryStatusPatch,
   inquiryToApi,
   inquiryToRow,
   isConvertedInquiry
 } from "@/business/inquiryRules";
+import { assertNotStale } from "@/business/concurrencyRules";
 import { newId } from "@/business/idRules";
 import { inquiryRepository } from "@/database/inquiryRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
@@ -126,6 +128,23 @@ async function loadFreshInquiry(
   const row = refreshed.data ?? fallback ?? null;
   if (!row) return toLoadFailure(failure("Inquiry not found after mutation", ErrorCodes.internal));
   return { success: true, data: row };
+}
+
+async function ensurePhoneNotExistingPatient(
+  phone: string,
+  confirmExistingPatient: boolean | undefined,
+  ctx: InquiryServiceContext
+): Promise<ApiResult<null>> {
+  if (!phone || confirmExistingPatient) return success(null);
+  const linked = await inquiryRepository.findPatientByPhone(phone, dbAccess(ctx));
+  if (!linked.success) return passFailure(linked);
+  const patient = linked.data;
+  if (!patient) return success(null);
+  return duplicateFailure(
+    "phone_existing_patient",
+    phone,
+    `This mobile is already registered as patient "${patient.name}" (id ${patient.id}). Confirm to continue anyway.`
+  );
 }
 
 async function ensureNoActiveDuplicate(
@@ -212,9 +231,22 @@ export const inquiryService = {
     const dupCheck = await ensureNoActiveDuplicate(input.phone, undefined, ctx);
     if (!dupCheck.success) return passFailure(dupCheck);
 
+    const patientCheck = await ensurePhoneNotExistingPatient(
+      input.phone,
+      input.confirm_existing_patient,
+      ctx
+    );
+    if (!patientCheck.success) return passFailure(patientCheck);
+
     const id = input.id || newId.inquiry();
     const row = {
-      ...inquiryToRow(input),
+      ...inquiryToRow({
+        ...input,
+        status: input.status || "New",
+        rating_emergency: input.rating_emergency ?? 5,
+        rating_flexibility: input.rating_flexibility ?? 5,
+        rating_overall: input.rating_overall ?? 5
+      }),
       id,
       created: new Date().toISOString(),
       created_by: ctx.actor.email,
@@ -267,15 +299,29 @@ export const inquiryService = {
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as InquiryInput;
 
+    const stale = assertNotStale("Inquiry", existing.data.updated_at, input.expected_updated_at);
+    if (!stale.success) return passFailure(stale);
+
     // Phone change → re-run the active-duplicate guard, excluding this id.
     const prevPhone = (existing.data.phone as string | null) || "";
     if (input.phone && input.phone !== prevPhone) {
       const dupCheck = await ensureNoActiveDuplicate(input.phone, id, ctx);
       if (!dupCheck.success) return passFailure(dupCheck);
+      const patientCheck = await ensurePhoneNotExistingPatient(
+        input.phone,
+        input.confirm_existing_patient,
+        ctx
+      );
+      if (!patientCheck.success) return passFailure(patientCheck);
     }
 
+    const merged: InquiryInput = {
+      ...input,
+      status: (input.status ?? String(existing.data.status || "New")) as InquiryInput["status"]
+    };
+
     const patch = {
-      ...inquiryToRow(input),
+      ...inquiryToRow(merged),
       updated_by: ctx.actor.email
     };
     const updated = await inquiryRepository.update(id, patch, dbAccess(ctx));
@@ -585,22 +631,48 @@ export const inquiryService = {
     );
   },
 
+  /**
+   * DELETE defaults to soft-close (`status=Closed`). Pass `hard: true` (Admin)
+   * to permanently remove a non-converted inquiry.
+   */
   async remove(
     id: string,
-    ctx: InquiryServiceContext
-  ): Promise<ApiResult<{ id: string }>> {
+    ctx: InquiryServiceContext,
+    opts?: { reason?: string; hard?: boolean }
+  ): Promise<ApiResult<{ id: string; mode: "soft" | "hard" }>> {
+    const reason = String(opts?.reason || "").trim();
+    const hard = Boolean(opts?.hard);
+
     const existing = await loadInquiry(id, ctx);
     if (!existing.success) {
       return failure(existing.error || "Inquiry not found", existing.code, existing.details);
     }
 
-    // Refuse to hard-delete a Converted inquiry — the audit trail would lose
-    // the link to the patient. Use status="Lost"/"Closed" instead.
     if (isConvertedInquiry(existing.data.status as string | null)) {
       return failure(
-        "Cannot delete a Converted inquiry — close the patient record instead",
+        "Cannot delete a Converted inquiry — manage the linked patient instead",
         ErrorCodes.business,
         { status: existing.data.status }
+      );
+    }
+
+    if (!hard) {
+      const patch = inquiryClosePatch(ctx.actor.email, reason || "Closed via delete");
+      const updated = await inquiryRepository.update(id, patch, dbAccess(ctx));
+      if (!updated.success) return passFailure(updated);
+      const fresh = await loadFreshInquiry(id, ctx, updated.data ?? null);
+      if (!fresh.success) {
+        return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
+      }
+      return finalizeWithAudit(
+        await fireAudit(ctx, {
+          entity_id: id,
+          action: "deactivate",
+          before: existing.data,
+          after: fresh.data,
+          stamp: reason ? `Closed inquiry — ${reason}` : `Closed inquiry ${id}`
+        }),
+        { id, mode: "soft" as const }
       );
     }
 
@@ -612,9 +684,9 @@ export const inquiryService = {
         entity_id: id,
         action: "delete",
         before: existing.data,
-        stamp: `Deleted inquiry ${id}`
+        stamp: reason ? `Hard delete — ${reason}` : `Hard deleted inquiry ${id}`
       }),
-      { id }
+      { id, mode: "hard" as const }
     );
   }
 };
