@@ -32,6 +32,12 @@ export const patientRepository = {
     return findById(TABLE, id, SCOPE, opts);
   },
 
+  findByIds(ids: string[], opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    if (!ids.length) return Promise.resolve({ success: true, data: [] });
+    const unique = Array.from(new Set(ids.filter(Boolean)));
+    return listAll(TABLE, SCOPE, (q) => q.in("id", unique), opts);
+  },
+
   list(filters: PatientListFilters = {}, opts?: DbAccess): Promise<ApiResult<ListResult<JsonRow>>> {
     return listRows(
       TABLE,

@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 type Params = { id: string };
 
 export const GET = withAuth<Params>(async (_req, { params, actor }) => {
+  requireRole(actor, ["Admin", "Manager", "Staff", "Executive", "Nurse"]);
   const result = await dutyService.getById(params.id, { actor });
   return respond(result);
 });

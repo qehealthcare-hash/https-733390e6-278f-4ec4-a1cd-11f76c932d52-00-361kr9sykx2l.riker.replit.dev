@@ -29,8 +29,21 @@ export interface DutyDiaryDayRowInput {
   freq?: string;
 }
 
-export function dutyDiaryRemarks(dutyId: string, isoDate: string, employeeId: string): string {
-  return `duty:${dutyId}:${isoDate}:${employeeId}`;
+/**
+ * Per-day diary remarks marker. Optional `:m` suffix means the row was
+ * manually edited by an operator from the calendar's day panel and must
+ * NOT be overwritten by the next materialize pass. The pruner still owns
+ * the slot (so cancelling / shrinking the duty still removes it), but
+ * the amount + payout are frozen.
+ */
+export function dutyDiaryRemarks(
+  dutyId: string,
+  isoDate: string,
+  employeeId: string,
+  manual?: boolean
+): string {
+  const base = `duty:${dutyId}:${isoDate}:${employeeId}`;
+  return manual ? `${base}:m` : base;
 }
 
 export function isDutyDiaryRemarks(remarks: string | null | undefined): boolean {
@@ -46,10 +59,11 @@ export function parseDutyDiaryRemarks(remarks: string | null | undefined): {
   dutyId: string;
   isoDate: string;
   employeeId: string;
+  manual: boolean;
 } | null {
-  const m = String(remarks || "").match(/^duty:([^:]+):(\d{4}-\d{2}-\d{2}):([^:]+)$/);
+  const m = String(remarks || "").match(/^duty:([^:]+):(\d{4}-\d{2}-\d{2}):([^:]+?)(:m)?$/);
   if (!m) return null;
-  return { dutyId: m[1], isoDate: m[2], employeeId: m[3] };
+  return { dutyId: m[1], isoDate: m[2], employeeId: m[3], manual: !!m[4] };
 }
 
 export function diarySlotKey(isoDate: string, employeeId: string): string {
@@ -132,7 +146,7 @@ export function collectDutyPartners(
   return out;
 }
 
-export function buildSvcEntryRow(input: DutyDiaryDayRowInput) {
+export function buildSvcEntryRow(input: DutyDiaryDayRowInput, actorEmail?: string) {
   const disc = 0;
   const total = Math.max(0, input.chargePerDay - disc);
   return {
@@ -147,11 +161,12 @@ export function buildSvcEntryRow(input: DutyDiaryDayRowInput) {
     count: 1,
     disc,
     total,
-    remarks: dutyDiaryRemarks(input.dutyId, input.isoDate, input.employeeId)
+    remarks: dutyDiaryRemarks(input.dutyId, input.isoDate, input.employeeId),
+    ...(actorEmail ? { created_by: actorEmail, updated_by: actorEmail } : {})
   };
 }
 
-export function buildPayoutChargeRow(input: DutyDiaryDayRowInput) {
+export function buildPayoutChargeRow(input: DutyDiaryDayRowInput, actorEmail?: string) {
   return {
     svc_key: billingSvcKey(input.billingId, input.serviceName),
     billing_id: input.billingId,
@@ -161,6 +176,7 @@ export function buildPayoutChargeRow(input: DutyDiaryDayRowInput) {
     date: input.isoDate,
     term: input.payoutTerm || "Daily",
     amount: input.payoutPerDay,
-    remarks: dutyDiaryRemarks(input.dutyId, input.isoDate, input.employeeId)
+    remarks: dutyDiaryRemarks(input.dutyId, input.isoDate, input.employeeId),
+    ...(actorEmail ? { created_by: actorEmail, updated_by: actorEmail } : {})
   };
 }

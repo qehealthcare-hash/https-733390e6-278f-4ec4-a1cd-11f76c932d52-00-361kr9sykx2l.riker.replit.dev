@@ -90,6 +90,39 @@ export function computeBillingTotals(
   };
 }
 
+/**
+ * Derive UNPAID / PARTIAL / PAID from server-side totals.
+ * - Bill with no services yet → UNPAID (so the supervisor never confuses a
+ *   freshly-opened bill with a paid one).
+ * - Receipts cover billed → PAID
+ * - Any receipts but not enough → PARTIAL
+ */
+export type BillingPaidStatus = "UNPAID" | "PARTIAL" | "PAID";
+
+/** Unique YYYY-MM keys from service-line dates. */
+export function billingPeriodsFromDates(dates: Array<string | null | undefined>): string[] {
+  return Array.from(
+    new Set(
+      dates
+        .map((d) => String(d || "").slice(0, 7))
+        .filter((p) => /^\d{4}-\d{2}$/.test(p))
+    )
+  );
+}
+
+export function invoiceOutstanding(amount: number, received: number): number {
+  return Math.max(0, Number(amount || 0) - Number(received || 0));
+}
+
+export function derivePaidStatus(totals: BillingTotals): BillingPaidStatus {
+  const billed = Number(totals.services || 0);
+  const received = Number(totals.receipts || 0);
+  if (billed <= 0) return "UNPAID";
+  if (received <= 0) return "UNPAID";
+  if (totals.outstanding <= 0) return "PAID";
+  return "PARTIAL";
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Service-entry shape and duty linkage
 // ───────────────────────────────────────────────────────────────────────────
@@ -267,9 +300,17 @@ export function canTransitionTo(
 // Patches applied to hh_billings
 // ───────────────────────────────────────────────────────────────────────────
 
-/** Status-only patch — close metadata is stored in hh_audit_logs (production may lack close_reason columns). */
+/**
+ * Status-only patch + closed_at stamp. Close metadata (reason text)
+ * still lives in hh_audit_logs because the production schema may not
+ * carry close_reason columns, but closed_at is now first-class so the
+ * reopen-resume logic can detect the exact cap day deterministically.
+ */
 export function billingCloseRow(_actorEmail: string, _reason?: string, _otherReason?: string) {
-  return { status: "Closed" as BillingStatus };
+  return {
+    status: "Closed" as BillingStatus,
+    closed_at: new Date().toISOString()
+  };
 }
 
 export function billingPauseRow(_actorEmail: string, _pauseReason?: string) {
@@ -277,7 +318,10 @@ export function billingPauseRow(_actorEmail: string, _pauseReason?: string) {
 }
 
 export function billingReopenRow(_actorEmail: string, _reason?: string) {
-  return { status: "Active" as BillingStatus };
+  return {
+    status: "Active" as BillingStatus,
+    closed_at: null as string | null
+  };
 }
 
 export function billingStatusRow(status: BillingStatus, _actorEmail: string) {

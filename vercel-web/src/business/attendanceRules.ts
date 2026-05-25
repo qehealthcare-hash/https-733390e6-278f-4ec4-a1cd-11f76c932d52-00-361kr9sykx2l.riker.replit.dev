@@ -3,6 +3,7 @@ import { businessFailure, businessOk } from "@/business/businessResult";
 import { payoutPeriodFromTimestamp } from "@/business/dateRules";
 import type { AttendanceStatus } from "@/validation/attendanceValidation";
 import { ATTENDANCE_NO_TIME_STATUSES } from "@/validation/attendanceValidation";
+import { crmDateKeyFromTimestamp, crmTodayIso } from "@/utils/crmToday";
 
 export type { AttendanceStatus };
 export { ATTENDANCE_NO_TIME_STATUSES };
@@ -50,6 +51,7 @@ export interface AttendancePersistInput {
   employee_id: string;
   patient_id?: string;
   shift_type?: string;
+  work_date?: string;
   check_in_at?: string;
   check_out_at?: string;
   status: AttendanceStatus;
@@ -62,6 +64,7 @@ export interface AttendanceRow {
   employee_id: string;
   patient_id?: string | null;
   shift_type?: string | null;
+  work_date?: string | null;
   check_in_at?: string | null;
   check_out_at?: string | null;
   hours?: number | null;
@@ -74,6 +77,16 @@ export interface AttendanceRow {
  * Status-based time clamping happens here so we never store
  * `check_in_at` for an `ABSENT` record.
  */
+function resolveWorkDate(
+  input: AttendancePersistInput,
+  checkIn: string | null
+): string {
+  const explicit = String(input.work_date || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(explicit)) return explicit;
+  if (checkIn) return crmDateKeyFromTimestamp(checkIn);
+  return crmTodayIso();
+}
+
 export function buildAttendanceRow(
   input: AttendancePersistInput,
   actorEmail: string,
@@ -82,11 +95,14 @@ export function buildAttendanceRow(
   const noTime = ATTENDANCE_NO_TIME_STATUSES.has(input.status);
   const checkIn = noTime ? null : input.check_in_at || new Date().toISOString();
   const checkOut = noTime ? null : input.check_out_at || null;
+  const workDate = resolveWorkDate(input, checkIn);
   return {
     id: input.id || fallbackId,
     duty_id: input.duty_id || null,
     employee_id: input.employee_id,
     patient_id: input.patient_id || null,
+    shift_type: input.shift_type || null,
+    work_date: workDate,
     check_in_at: checkIn,
     check_out_at: checkOut,
     hours: hoursBetween(checkIn, checkOut),
@@ -106,9 +122,19 @@ export function buildAttendancePatch(
   const noTime = ATTENDANCE_NO_TIME_STATUSES.has(input.status);
   const checkIn = noTime ? null : input.check_in_at || existing.check_in_at || null;
   const checkOut = noTime ? null : input.check_out_at || existing.check_out_at || null;
+  const workDate = resolveWorkDate(
+    {
+      ...input,
+      work_date: input.work_date || (existing as { work_date?: string }).work_date
+    },
+    checkIn
+  );
   return {
     duty_id: input.duty_id ?? existing.duty_id ?? null,
+    employee_id: input.employee_id,
     patient_id: input.patient_id ?? existing.patient_id ?? null,
+    shift_type: input.shift_type ?? existing.shift_type ?? null,
+    work_date: workDate,
     check_in_at: checkIn,
     check_out_at: checkOut,
     hours: hoursBetween(checkIn, checkOut),
@@ -136,16 +162,37 @@ export function findAttendanceDuplicate(
     candidates.find((c) => {
       if (c.id === excludeId) return false;
       if (c.employee_id !== employeeId) return false;
-      if (dutyId) return c.duty_id === dutyId;
-      const candidateDate = String(c.check_in_at || "").slice(0, 10);
+      if (dutyId) return c.duty_id === dutyId && c.employee_id === employeeId;
+      const candidateDate = attendanceRowWorkDate(c);
       return candidateDate === dateKey;
     }) || null
   );
 }
 
-/** Calendar date key (YYYY-MM-DD) used for duplicate detection. */
-export function attendanceDateKey(checkInAt: string | undefined | null): string {
-  return String(checkInAt || new Date().toISOString()).slice(0, 10);
+/** Calendar date key (YYYY-MM-DD, IST) used for duplicate detection. */
+export function attendanceDateKey(
+  checkInAt: string | undefined | null,
+  workDate?: string | null
+): string {
+  const wd = String(workDate || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(wd)) return wd;
+  return crmDateKeyFromTimestamp(checkInAt || new Date().toISOString());
+}
+
+/** CRM work date for a persisted or candidate row. */
+export function attendanceRowWorkDate(row: {
+  work_date?: string | null;
+  check_in_at?: string | null;
+  updated_at?: string | null;
+}): string {
+  const wd = String(row.work_date || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(wd)) return wd;
+  if (row.check_in_at) return crmDateKeyFromTimestamp(String(row.check_in_at));
+  return crmDateKeyFromTimestamp(String(row.updated_at || ""));
+}
+
+export function attendanceDutyEmployeeKey(dutyId: string, employeeId: string): string {
+  return `${dutyId}|${employeeId}`;
 }
 
 /**
@@ -157,8 +204,11 @@ export function attendanceDateKey(checkInAt: string | undefined | null): string 
 export function attendancePayoutPeriod(
   attendanceCheckIn: string | undefined | null,
   dutyStart: string | undefined | null,
+  workDate?: string | null,
   fallbackNow = new Date().toISOString()
 ): string {
+  const wd = String(workDate || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(wd)) return wd.slice(0, 7);
   return (
     payoutPeriodFromTimestamp(dutyStart || undefined) ||
     payoutPeriodFromTimestamp(attendanceCheckIn || undefined) ||
@@ -222,9 +272,11 @@ export function aggregateAttendanceByEmployee(rows: AttendanceRollupRow[]): Map<
   for (const a of rows) {
     if (!a.employee_id) continue;
     const m = map.get(a.employee_id) || { ...EMPTY_ROLLUP };
-    if (a.status === "PRESENT") m.present += 1;
-    else if (a.status === "ABSENT") m.absent += 1;
-    else if (a.status === "LATE") m.late += 1;
+    const s = String(a.status || "").toUpperCase();
+    if (s === "PRESENT") m.present += 1;
+    else if (s === "ABSENT") m.absent += 1;
+    else if (s === "LATE") m.late += 1;
+    else if (s === "HALF_DAY") m.present += 1;
     m.hours += Number(a.hours || 0);
     map.set(a.employee_id, m);
   }

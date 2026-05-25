@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { BILLING_READ_ROLES } from "@/lib/api/billingRoles";
 import { billingService } from "@/services/billingService";
 import { respond } from "@/lib/api/apiResultBridge";
 
@@ -16,6 +17,7 @@ export const dynamic = "force-dynamic";
  * - Without `patient_id`: paginated list across all billings.
  */
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
+  requireRole(actor, [...BILLING_READ_ROLES]);
   const url = new URL(req.url);
   const patientId = url.searchParams.get("patient_id");
   if (patientId) {

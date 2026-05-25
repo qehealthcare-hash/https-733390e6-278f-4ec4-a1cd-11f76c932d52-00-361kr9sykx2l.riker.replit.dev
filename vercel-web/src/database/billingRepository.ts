@@ -17,8 +17,7 @@ const RECEIPTS = "hh_receipts";
 const SVC = "hh_svc_entries";
 const PAYOUT_CHARGES = "hh_payout_charges";
 const INVOICES = "hh_invoices";
-const INVOICE_ITEMS = "hh_invoice_items";
-const BILLING_RECEIPTS = "hh_billing_receipts";
+const INVOICE_LINES = "hh_invoice_lines";
 const SCOPE = "billingRepository";
 
 export interface BillingListFilters extends ListQuery {
@@ -92,8 +91,46 @@ export const billingRepository = {
     return insertRow(BILLINGS, row, SCOPE, opts);
   },
 
+  /** Allocate the next sequential invoice number (year-stamped). */
+  nextInvoiceNoRpc(opts?: DbAccess): Promise<ApiResult<string | null>> {
+    return callRpc<string>("hh_next_invoice_no", {}, `${SCOPE}.nextInvoiceNoRpc`, opts);
+  },
+
+  /** Allocate the next sequential receipt number (year-stamped). */
+  nextReceiptNoRpc(opts?: DbAccess): Promise<ApiResult<string | null>> {
+    return callRpc<string>("hh_next_receipt_no", {}, `${SCOPE}.nextReceiptNoRpc`, opts);
+  },
+
   updateBilling(id: string, patch: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return updateRow(BILLINGS, id, patch, SCOPE, opts);
+  },
+
+  /**
+   * Atomically flip billing status Active <-> Closed under a patient-scoped
+   * `pg_advisory_xact_lock` + `SELECT … FOR UPDATE`. Used after duty cap /
+   * resume so two operators cannot leave shortened diaries with a still-Active
+   * bill (or duplicate Active rows on reopen).
+   */
+  flipBillingStatusRpc(
+    billingId: string,
+    targetStatus: "Active" | "Closed",
+    actorEmail: string,
+    closedAt?: string | null,
+    opts?: DbAccess
+  ): Promise<
+    ApiResult<{ ok: boolean; billing?: JsonRow; code?: string; message?: string } | null>
+  > {
+    return callRpc<{ ok: boolean; billing?: JsonRow; code?: string; message?: string }>(
+      "hominal_flip_billing_status",
+      {
+        p_billing_id: billingId,
+        p_target_status: targetStatus,
+        p_actor: actorEmail,
+        p_closed_at: closedAt ?? null
+      },
+      `${SCOPE}.flipBillingStatusRpc`,
+      opts
+    );
   },
 
   removeBilling(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
@@ -248,6 +285,40 @@ export const billingRepository = {
     );
   },
 
+  /** All svc rows for a set of billings (list page enrichment). */
+  listSvcByBillingIds(billingIds: string[], opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    if (!billingIds.length) return Promise.resolve({ success: true, data: [] });
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from(SVC)
+          .select("*")
+          .in("billing_id", billingIds)
+          .order("date", { ascending: true }),
+      `${SCOPE}.listSvcByBillingIds`
+    );
+  },
+
+  /** Active receipts for a set of billings (list page enrichment). */
+  listActiveReceiptsByBillingIds(
+    billingIds: string[],
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    if (!billingIds.length) return Promise.resolve({ success: true, data: [] });
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from(RECEIPTS)
+          .select("*")
+          .in("billing_id", billingIds)
+          .is("deleted_at", null)
+          .order("date", { ascending: true }),
+      `${SCOPE}.listActiveReceiptsByBillingIds`
+    );
+  },
+
   /** Active (non-soft-deleted) receipts attached to a billing. */
   async listActiveReceiptsByBilling(
     billingId: string,
@@ -377,18 +448,166 @@ export const billingRepository = {
     return deleteRow(PAYOUT_CHARGES, String(id), `${SCOPE}.removePayoutCharge`, opts);
   },
 
-  // --- Invoices (Phase 4 ledger) ---
+  // --- Invoices (per-period generation) ---
 
   findInvoiceById(id: string, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return findById(INVOICES, id, SCOPE, opts);
   },
 
-  listInvoiceItems(invoiceId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
-    return listAll(INVOICE_ITEMS, SCOPE, (q) => q.eq("invoice_id", invoiceId), opts);
+  listInvoicesByBilling(billingId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    return listAll(INVOICES, SCOPE, (q) => q.eq("billing_id", billingId), {
+      ...opts,
+      orderBy: "created_at",
+      ascending: false
+    });
   },
 
-  listBillingReceiptLinks(billingId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
-    return listAll(BILLING_RECEIPTS, SCOPE, (q) => q.eq("billing_id", billingId), opts);
+  listInvoicesByPatient(patientId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    return listAll(INVOICES, SCOPE, (q) => q.eq("patient_id", patientId), {
+      ...opts,
+      orderBy: "created_at",
+      ascending: false
+    });
+  },
+
+  findInvoiceForPeriod(
+    billingId: string,
+    period: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow | null>> {
+    const db = resolveClient(opts);
+    return runQuery(
+      () =>
+        db
+          .from(INVOICES)
+          .select("*")
+          .eq("billing_id", billingId)
+          .eq("kind", "MONTHLY")
+          .eq("period", period)
+          .neq("status", "CANCELLED")
+          .maybeSingle(),
+      `${SCOPE}.findInvoiceForPeriod`
+    );
+  },
+
+  insertInvoice(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
+    return insertRow(INVOICES, row, `${SCOPE}.insertInvoice`, opts);
+  },
+
+  updateInvoice(
+    id: string,
+    patch: JsonRow,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow | null>> {
+    return updateRow(INVOICES, id, patch, `${SCOPE}.updateInvoice`, opts);
+  },
+
+  insertInvoiceLines(
+    rows: JsonRow[],
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[] | null>> {
+    if (!rows.length) return Promise.resolve({ success: true, data: [] });
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () => db.from(INVOICE_LINES).insert(rows).select("*"),
+      `${SCOPE}.insertInvoiceLines`
+    );
+  },
+
+  /** Hard delete — cascades to hh_invoice_lines via FK. */
+  deleteInvoice(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
+    return deleteRow(INVOICES, id, `${SCOPE}.deleteInvoice`, opts);
+  },
+
+  /** Atomic delete + receipt detach + sequence compact (Postgres RPC). */
+  deleteInvoiceRpc(
+    invoiceId: string,
+    actor: string,
+    opts?: DbAccess
+  ): Promise<
+    ApiResult<{
+      ok: boolean;
+      invoice_no?: string;
+      billing_id?: string;
+      receipts_detached?: number;
+      code?: string;
+      message?: string;
+    } | null>
+  > {
+    return callRpc(
+      "hominal_delete_invoice",
+      { p_invoice_id: invoiceId, p_actor: actor },
+      `${SCOPE}.deleteInvoiceRpc`,
+      opts
+    );
+  },
+
+  /** Detach receipts from an invoice (set invoice_id = null). */
+  async detachReceiptsFromInvoice(
+    invoiceId: string,
+    actor: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<number>> {
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(RECEIPTS)
+          .update({ invoice_id: null, updated_by: actor })
+          .eq("invoice_id", invoiceId)
+          .select("id"),
+      `${SCOPE}.detachReceiptsFromInvoice`
+    );
+    if (!result.success) {
+      return { success: false, error: result.error, code: result.code, details: result.details };
+    }
+    return { success: true, data: (result.data || []).length };
+  },
+
+  /** Compact the invoice number sequence — call after every invoice delete. */
+  compactInvoiceSeqRpc(opts?: DbAccess): Promise<ApiResult<number | null>> {
+    return callRpc<number>("hh_compact_invoice_seq", {}, `${SCOPE}.compactInvoiceSeqRpc`, opts);
+  },
+
+  listInvoiceLines(invoiceId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    return listAll(INVOICE_LINES, SCOPE, (q) => q.eq("invoice_id", invoiceId), {
+      ...opts,
+      orderBy: "date",
+      ascending: true
+    });
+  },
+
+  async removeInvoiceLinesByInvoice(
+    invoiceId: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<null>> {
+    const db = resolveClient(opts);
+    const result = await runQuery(
+      () => db.from(INVOICE_LINES).delete().eq("invoice_id", invoiceId),
+      `${SCOPE}.removeInvoiceLinesByInvoice`
+    );
+    if (!result.success) {
+      return { success: false, error: result.error, code: result.code, details: result.details };
+    }
+    return { success: true, data: null };
+  },
+
+  /** Active (non-soft-deleted) receipts attached to an invoice. */
+  listReceiptsByInvoice(
+    invoiceId: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from(RECEIPTS)
+          .select("*")
+          .eq("invoice_id", invoiceId)
+          .is("deleted_at", null)
+          .order("date", { ascending: true }),
+      `${SCOPE}.listReceiptsByInvoice`
+    );
   },
 
   /** Bundle read for invoice screen — no totals (business layer computes). */

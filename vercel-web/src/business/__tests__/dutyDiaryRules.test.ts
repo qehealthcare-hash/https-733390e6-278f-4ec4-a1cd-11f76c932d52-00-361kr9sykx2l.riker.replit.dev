@@ -57,7 +57,14 @@ describe("dutyDiaryRules", () => {
     expect(parseDutyDiaryRemarks("duty:D1:2026-05-01:EMP9")).toEqual({
       dutyId: "D1",
       isoDate: "2026-05-01",
-      employeeId: "EMP9"
+      employeeId: "EMP9",
+      manual: false
+    });
+    expect(parseDutyDiaryRemarks("duty:D1:2026-05-01:EMP9:m")).toEqual({
+      dutyId: "D1",
+      isoDate: "2026-05-01",
+      employeeId: "EMP9",
+      manual: true
     });
     expect(parseDutyDiaryRemarks("legacy")).toBeNull();
   });

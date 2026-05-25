@@ -140,6 +140,73 @@ export const payoutRepository = {
     return upsertRow(PAID_TX, row, `${SCOPE}.paidTx`, opts, "id");
   },
 
+  /**
+   * True if a given (employee_id, isoDate) is already disbursed via
+   * hh_paid_transactions. Used by the per-day diary editor to refuse
+   * mutations that would break payment reconciliation.
+   */
+  async isDayPaid(
+    employeeId: string,
+    isoDate: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<boolean>> {
+    if (!employeeId || !isoDate) return { success: true, data: false };
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(PAID_TX)
+          .select("id, paid_dates, from_date, to_date")
+          .eq("employee_id", employeeId)
+          .or(
+            `paid_dates.cs.{${isoDate}},and(from_date.lte.${isoDate},to_date.gte.${isoDate})`
+          )
+          .limit(1),
+      `${SCOPE}.isDayPaid`
+    );
+    if (!result.success) {
+      return { success: false, error: result.error, code: result.code, details: result.details };
+    }
+    return { success: true, data: (result.data || []).length > 0 };
+  },
+
+  /**
+   * True if ANY of the supplied (employee_id, isoDate) slots appear in
+   * hh_paid_transactions. Used before duty cancel / hard-delete rolls back
+   * diary rows that were already disbursed.
+   */
+  async anyDayPaid(
+    slots: Array<{ employee_id: string; iso_date: string }>,
+    opts?: DbAccess
+  ): Promise<ApiResult<{ paid: boolean; employee_id?: string; iso_date?: string }>> {
+    const unique = Array.from(
+      new Map(
+        (slots || [])
+          .map((s) => ({
+            employee_id: String(s.employee_id || "").trim(),
+            iso_date: String(s.iso_date || "").trim()
+          }))
+          .filter((s) => s.employee_id && s.iso_date)
+          .map((s) => [`${s.employee_id}|${s.iso_date}`, s] as const)
+      ).values()
+    );
+    for (const slot of unique) {
+      const hit = await payoutRepository.isDayPaid(slot.employee_id, slot.iso_date, opts);
+      if (!hit.success) {
+        return {
+          success: false,
+          error: hit.error,
+          code: hit.code,
+          details: hit.details
+        };
+      }
+      if (hit.data) {
+        return { success: true, data: { paid: true, employee_id: slot.employee_id, iso_date: slot.iso_date } };
+      }
+    }
+    return { success: true, data: { paid: false } };
+  },
+
   findPaidTransaction(payoutId: string, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return findById(PAID_TX, payoutId, `${SCOPE}.paidTx`, opts);
   },

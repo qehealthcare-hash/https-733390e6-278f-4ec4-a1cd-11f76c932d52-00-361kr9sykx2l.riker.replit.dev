@@ -109,6 +109,7 @@ export const billingEditSchema = z
 export const receiptSchema = z.object({
   id: idSchema.optional(),
   billing_id: idSchema,
+  invoice_id: idSchema.optional().nullable(),
   patient_id: z.string().optional().default(""),
   // All date columns are normalised into ISO YYYY-MM-DD so dashboard /
   // reports queries that use `gte('date', start).lt('date', end)` produce
@@ -212,4 +213,48 @@ export type ReceiptInput = z.infer<typeof receiptSchema>;
 export type GenerateFromDutyInput = z.infer<typeof generateFromDutySchema>;
 export type GenerateFromDutyRangeInput = z.infer<typeof generateFromDutyRangeSchema>;
 export type BillingListQuery = z.infer<typeof billingListQuerySchema>;
+
+// ──────────────────────────────────────────────────────────────────────
+// Per-period invoice generation
+// ──────────────────────────────────────────────────────────────────────
+
+const invoiceLineRowSchema = z.object({
+  date: optionalIsoDate,
+  service_name: z.string().optional().default(""),
+  partner: z.string().optional().default(""),
+  count: z.coerce.number().min(0).optional().default(1),
+  amt: moneySchema.optional().default(0),
+  total: moneySchema.optional().default(0)
+});
+
+/**
+ * Generate an invoice for a billing (= patient account).
+ *  - kind=MONTHLY: snapshot all svc entries in the billing whose date is in
+ *    `period` (YYYY-MM). Idempotent — refuses if a non-cancelled MONTHLY
+ *    invoice already exists for this billing + period.
+ *  - kind=MANUAL: snapshot `manual_lines` (ad-hoc) instead.
+ */
+export const generateInvoiceSchema = z
+  .object({
+    billing_id: idSchema,
+    kind: z.enum(["MONTHLY", "MANUAL"]).default("MONTHLY"),
+    period: monthPeriodSchema.optional(),
+    from_date: optionalIsoDate,
+    to_date: optionalIsoDate,
+    notes: z.string().max(500).optional().default(""),
+    manual_lines: z.array(invoiceLineRowSchema).max(200).optional()
+  })
+  .refine((v) => v.kind !== "MONTHLY" || !!v.period, {
+    message: "period (YYYY-MM) is required for MONTHLY invoices",
+    path: ["period"]
+  })
+  .refine(
+    (v) => v.kind !== "MANUAL" || (v.manual_lines && v.manual_lines.length > 0),
+    {
+      message: "MANUAL invoices require at least one line",
+      path: ["manual_lines"]
+    }
+  );
+
+export type GenerateInvoiceInput = z.infer<typeof generateInvoiceSchema>;
 export type ShiftRatesInput = z.infer<typeof shiftRatesSchema>;

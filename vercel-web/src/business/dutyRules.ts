@@ -9,6 +9,50 @@ export type { DutyShiftType, DutyStatus };
 /** Statuses that should be skipped when checking for overlap. */
 export const DUTY_OVERLAP_SKIP_STATUSES = new Set<DutyStatus>(["CANCELLED", "NO_SHOW"]);
 
+/**
+ * Sentinel `end_at` stored when a duty is "open-ended" — the legacy CRM had
+ * no way to express "runs until the bill closes", and the production `hh_duties`
+ * table requires a non-null end_at. We pick a far-future timestamp so that:
+ *   - The DB unique / overlap indexes still work
+ *   - The materializer can detect open-ended duties via {@link isOpenEndedEndAt}
+ *   - Closing the bill rewrites this to the actual close date
+ */
+export const OPEN_ENDED_END_AT = "2099-12-31T23:59:59.000Z";
+
+/** Match the sentinel even if persisted with a different time component. */
+export function isOpenEndedEndAt(endAt: string | null | undefined): boolean {
+  if (!endAt) return true;
+  return String(endAt).slice(0, 10) === "2099-12-31";
+}
+
+/** Pick a sentinel that's safely after `start_at`. */
+export function openEndedSentinelFor(_startAt: string): string {
+  return OPEN_ENDED_END_AT;
+}
+
+/**
+ * The date through which the materializer should expand a duty into per-day
+ * diary rows. For an open-ended duty this is "today"; once a closing date
+ * (bill close or explicit end_at) is set, it caps to whichever is earlier.
+ *
+ * `nowIso` is injected for deterministic tests.
+ */
+export function effectiveMaterializeEndAt(
+  duty: { end_at?: string | null },
+  billClosedAt: string | null | undefined,
+  nowIso: string
+): string {
+  const today = nowIso;
+  let candidate = today;
+  if (duty.end_at && !isOpenEndedEndAt(duty.end_at)) {
+    candidate = duty.end_at < today ? duty.end_at : today;
+  }
+  if (billClosedAt) {
+    candidate = billClosedAt < candidate ? billClosedAt : candidate;
+  }
+  return candidate;
+}
+
 export interface DutyTimeSlot {
   id: string;
   employee_id?: string | null;
@@ -109,6 +153,20 @@ export function canEditDutyStatus(currentStatus: string, nextStatus: string): Ap
   );
 }
 
+/** Dedicated cancel endpoint — COMPLETED duties are terminal. */
+export function canCancelDuty(currentStatus: string): ApiResult<null> {
+  const s = String(currentStatus || "").toUpperCase();
+  if (s === "COMPLETED") {
+    return businessFailure(
+      "Completed duties cannot be cancelled. Create a new duty instead."
+    );
+  }
+  if (s === "CANCELLED") {
+    return businessFailure("Duty is already cancelled.");
+  }
+  return businessOk();
+}
+
 export function canCancelDutyWithBilling(
   hasServiceLine: boolean,
   activeReceiptCount: number
@@ -172,7 +230,7 @@ export function dutyPersistRow(input: {
   service_name?: string;
   shift_type: DutyShiftType;
   start_at: string;
-  end_at: string;
+  end_at?: string;
   status: DutyStatus;
   cancel_reason?: string;
   notes?: string;
@@ -182,8 +240,9 @@ export function dutyPersistRow(input: {
   payout_term?: string;
   extra_partners?: unknown;
 }) {
-  const serviceName =
+  const rawName =
     (input.service_name || "").trim() || (input.service_type || "").trim() || "Care Taker Services";
+  const serviceName = rawName.replace(/\s+/g, " ").trim();
   return {
     id: input.id,
     patient_id: input.patient_id,
@@ -192,7 +251,7 @@ export function dutyPersistRow(input: {
     service_name: serviceName,
     shift_type: input.shift_type,
     start_at: input.start_at,
-    end_at: input.end_at,
+    end_at: input.end_at || openEndedSentinelFor(input.start_at),
     status: input.status,
     cancel_reason: input.cancel_reason ?? "",
     notes: input.notes ?? "",

@@ -36,10 +36,24 @@ export const dutyRepository = {
       SCOPE,
       (q) => {
         let query = q;
-        if (filters.employeeId) query = query.eq("employee_id", filters.employeeId);
+        // Employee filter must also match extra_partners rows so that the
+        // calendar swimlane for a reassigned partner includes duties where
+        // they are NOT the primary employee. We compare the JSONB column
+        // via a containment ANY-of expression so any partner with this
+        // employee_id qualifies.
+        if (filters.employeeId) {
+          const empId = filters.employeeId.replace(/"/g, '\\"');
+          query = query.or(
+            `employee_id.eq.${filters.employeeId},extra_partners.cs.[{"employee_id":"${empId}"}]`
+          );
+        }
         if (filters.patientId) query = query.eq("patient_id", filters.patientId);
-        if (filters.from) query = query.gte("start_at", filters.from);
-        if (filters.to) query = query.lte("end_at", filters.to);
+        // Calendar overlap semantics: include a duty if its [start_at, end_at]
+        // window touches the requested [from, to] window. Open-ended duties
+        // (sentinel end_at = 2099-12-31) will still satisfy `end_at >= from`,
+        // so they keep appearing on every month after their start.
+        if (filters.to) query = query.lte("start_at", filters.to);
+        if (filters.from) query = query.gte("end_at", filters.from);
         if (filters.status) query = query.eq("status", filters.status);
         if (filters.q) {
           const term = filters.q.replace(/%/g, "");
@@ -105,6 +119,33 @@ export const dutyRepository = {
     return { success: true, data: rows };
   },
 
+  /** Scheduled / in-progress duties for a patient — used when a bill closes. */
+  async findActiveByPatient(patientId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery(
+      () =>
+        db
+          .from(TABLE)
+          .select("*")
+          .eq("patient_id", patientId)
+          .in("status", ["SCHEDULED", "IN_PROGRESS"]),
+      `${SCOPE}.findActiveByPatient`
+    );
+  },
+
+  /** Scheduled / in-progress duties across all patients — used by daily extend cron. */
+  async findActive(opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery(
+      () =>
+        db
+          .from(TABLE)
+          .select("*")
+          .in("status", ["SCHEDULED", "IN_PROGRESS"]),
+      `${SCOPE}.findActive`
+    );
+  },
+
   insert(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return insertRow(TABLE, row, SCOPE, opts);
   },
@@ -161,7 +202,7 @@ export const dutyRepository = {
       () =>
         db
           .from(SVC)
-          .select("id, billing_id, svc_key, date, partner_id, remarks, total")
+          .select("id, billing_id, svc_key, date, partner_id, partner, remarks, total, amt, updated_at")
           .like("remarks", `duty:${dutyId}:%`),
       `${SCOPE}.findSvcEntriesByDutyId`
     );
@@ -186,7 +227,7 @@ export const dutyRepository = {
       () =>
         db
           .from(PAYOUT_CHARGES)
-          .select("id, svc_key, date, partner_id, amount, remarks")
+          .select("id, svc_key, date, partner_id, partner, amount, remarks, updated_at")
           .like("remarks", `duty:${dutyId}:%`),
       `${SCOPE}.findPayoutChargesByDutyId`
     );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -23,9 +23,6 @@ function monthKey(d) {
 function createInitialForm() {
   var start = new Date();
   start.setHours(8, 0, 0, 0);
-  var end = new Date(start);
-  end.setDate(end.getDate() + 1);
-  end.setHours(18, 0, 0, 0);
   return {
     id: "",
     patient_id: "",
@@ -33,7 +30,8 @@ function createInitialForm() {
     service_name: "Care Taker Services",
     shift_type: "DAY",
     start_at: start.toISOString().slice(0, 16),
-    end_at: end.toISOString().slice(0, 16),
+    end_at: "",
+    open_ended: true,
     status: "SCHEDULED",
     charge_per_day: "",
     payout_per_day: "",
@@ -45,10 +43,46 @@ function createInitialForm() {
   };
 }
 
+function isOpenEndedIso(iso) {
+  if (!iso) return true;
+  return String(iso).slice(0, 10) === "2099-12-31";
+}
+
 function toIsoFromLocal(local) {
   if (!local) return "";
   var d = new Date(local);
   return Number.isNaN(d.getTime()) ? local : d.toISOString();
+}
+
+function toLocalDatetimeValue(iso) {
+  if (!iso) return "";
+  var d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  var pad = function (n) {
+    return String(n).padStart(2, "0");
+  };
+  return (
+    d.getFullYear() +
+    "-" +
+    pad(d.getMonth() + 1) +
+    "-" +
+    pad(d.getDate()) +
+    "T" +
+    pad(d.getHours()) +
+    ":" +
+    pad(d.getMinutes())
+  );
+}
+
+function crmTodayIso() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+}
+
+function partnerDisplayName(employeeId, storedPartner, employeeNameById) {
+  var lookup = employeeNameById[employeeId];
+  if (lookup && lookup !== employeeId) return lookup;
+  if (storedPartner && storedPartner !== employeeId) return storedPartner;
+  return lookup || storedPartner || employeeId || "—";
 }
 
 function daysInMonthGrid(year, monthIndex) {
@@ -68,7 +102,10 @@ function daysInMonthGrid(year, monthIndex) {
 function dutyTouchesDay(row, isoDay) {
   if (!row.start_at || !isoDay) return false;
   var start = String(row.start_at).slice(0, 10);
-  var end = String(row.end_at || row.start_at).slice(0, 10);
+  var rawEnd = String(row.end_at || row.start_at).slice(0, 10);
+  // Only open-ended duties clip to today; fixed future ranges stay visible.
+  var today = crmTodayIso();
+  var end = isOpenEndedIso(row.end_at) ? today : rawEnd;
   return isoDay >= start && isoDay <= end;
 }
 
@@ -97,6 +134,90 @@ function dutyMatchesEmployee(row, employeeId) {
   return extras.some(function (p) {
     return p && p.employee_id === employeeId;
   });
+}
+
+function CalendarTotalsStripe(props) {
+  var totals = props.totals;
+  var patientFilter = props.patientId;
+  var employeeFilter = props.employeeId;
+  var pill = function (label, amount, tone) {
+    var color = tone === "danger" ? "#b91c1c" : tone === "warn" ? "#b45309" : "#15803d";
+    return (
+      <span
+        key={label}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 10px",
+          borderRadius: 999,
+          background: "#f8fafc",
+          border: "1px solid #e2e8f0",
+          fontSize: 13
+        }}
+      >
+        <span className="mini-muted">{label}</span>
+        <strong style={{ color: color }}>{amount}</strong>
+      </span>
+    );
+  };
+
+  var pills = [];
+  if (patientFilter && totals && totals.patient) {
+    pills.push(
+      pill(
+        "Patient outstanding",
+        formatCurrency(totals.patient.outstanding),
+        totals.patient.outstanding > 0 ? "danger" : "ok"
+      )
+    );
+    if (totals.patient.sec_dep) {
+      pills.push(pill("Security dep.", formatCurrency(totals.patient.sec_dep), "ok"));
+    }
+  }
+  if (employeeFilter && totals && totals.partner) {
+    pills.push(
+      pill(
+        "Partner pending payout",
+        formatCurrency(totals.partner.pending),
+        totals.partner.pending > 0 ? "warn" : "ok"
+      )
+    );
+  }
+
+  if (!pills.length && (patientFilter || employeeFilter)) {
+    pills.push(
+      <span key="loading" className="mini-muted" style={{ fontSize: 13 }}>
+        Loading totals…
+      </span>
+    );
+  }
+  if (!pills.length) {
+    pills.push(
+      <span key="empty" className="mini-muted" style={{ fontSize: 13 }}>
+        Filter by patient or caretaker to see live outstanding and payout totals.
+      </span>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 8,
+        alignItems: "center",
+        padding: "8px 12px",
+        marginBottom: 10,
+        background: "#fff",
+        border: "1px solid #e2e8f0",
+        borderRadius: 8
+      }}
+    >
+      <strong style={{ fontSize: 13, marginRight: 4 }}>Totals</strong>
+      {pills}
+    </div>
+  );
 }
 
 function FinancialBifurcation(props) {
@@ -172,9 +293,12 @@ export default function DutiesPage() {
   var [conflictBanner, setConflictBanner] = useState("");
   var [outstanding, setOutstanding] = useState(null);
   var [totals, setTotals] = useState(null);
-  var [filterTotals, setFilterTotals] = useState(null);
   var [selectedDay, setSelectedDay] = useState("");
   var [previewDialog, setPreviewDialog] = useState(null);
+  var [filterTotals, setFilterTotals] = useState(null);
+  var [diaryByDuty, setDiaryByDuty] = useState({});
+  var [diaryEdits, setDiaryEdits] = useState({});
+  var [diaryBusy, setDiaryBusy] = useState({});
 
   var ym = useMemo(
     function () {
@@ -191,7 +315,9 @@ export default function DutiesPage() {
     [ym]
   );
 
-  async function reload() {
+  var reloadRef = useRef(function () {});
+
+  var reload = useCallback(async function reload() {
     if (!auth.session?.access_token) return;
     setLoading(true);
     try {
@@ -211,12 +337,17 @@ export default function DutiesPage() {
       }
       setRows(list);
       setError("");
+      loadDiariesForVisible(list);
     } catch (err) {
       setError(err.message || "Unable to load duties");
     } finally {
       setLoading(false);
     }
-  }
+  }, [auth.session, viewMonth, ym.year, ym.monthIndex, statusFilter, filterPatient, filterEmployee]);
+
+  useEffect(function () {
+    reloadRef.current = reload;
+  }, [reload]);
 
   async function loadOutstanding(patientId) {
     if (!patientId || !auth.session?.access_token) {
@@ -274,7 +405,61 @@ export default function DutiesPage() {
       if (!auth.session?.access_token) return;
       reload();
     },
-    [auth.session, viewMonth, statusFilter, filterPatient, filterEmployee]
+    [auth.session, reload]
+  );
+
+  // Realtime — when billing closes, duties cap, or diary rows change in
+  // another tab, refresh the calendar without a manual reload.
+  var filterPatientRef = useRef(filterPatient);
+  var filterEmployeeRef = useRef(filterEmployee);
+  useEffect(
+    function () {
+      filterPatientRef.current = filterPatient;
+    },
+    [filterPatient]
+  );
+  useEffect(
+    function () {
+      filterEmployeeRef.current = filterEmployee;
+    },
+    [filterEmployee]
+  );
+  useEffect(
+    function () {
+      if (!auth.session?.access_token || !auth.supabase) return undefined;
+      var debounce = null;
+      function scheduleRefresh() {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(function () {
+          debounce = null;
+          reloadRef.current();
+          var fp = filterPatientRef.current;
+          var fe = filterEmployeeRef.current;
+          if (fp || fe) {
+            loadTotals(fp, fe).then(function (ft) {
+              setFilterTotals(ft || null);
+            });
+          }
+          if (fp) loadOutstanding(fp);
+        }, 300);
+      }
+      var channel = auth.supabase.channel("crm-hh_duties_calendar");
+      ["hh_duties", "hh_billings", "hh_svc_entries", "hh_payout_charges", "hh_attendance"].forEach(
+        function (tableName) {
+          channel.on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: tableName },
+            scheduleRefresh
+          );
+        }
+      );
+      channel.subscribe();
+      return function cleanup() {
+        if (debounce) clearTimeout(debounce);
+        auth.supabase.removeChannel(channel);
+      };
+    },
+    [auth.session, auth.supabase]
   );
 
   useEffect(
@@ -329,7 +514,7 @@ export default function DutiesPage() {
         return;
       }
       loadTotals(filterPatient, filterEmployee).then(function (data) {
-        setFilterTotals(data);
+        setFilterTotals(data || null);
       });
     },
     [filterPatient, filterEmployee, auth.session]
@@ -367,6 +552,16 @@ export default function DutiesPage() {
     [rows, selectedDay]
   );
 
+  useEffect(
+    function () {
+      if (!selectedDay) return;
+      dayDuties.forEach(function (d) {
+        if (!diaryByDuty[d.id]) loadDiaryFor(d.id);
+      });
+    },
+    [selectedDay, dayDuties]
+  );
+
   function updateField(name, value) {
     setForm(function (current) {
       return { ...current, [name]: value };
@@ -381,14 +576,16 @@ export default function DutiesPage() {
   }
 
   function editDuty(row) {
+    var openEnded = isOpenEndedIso(row.end_at);
     setForm({
       id: row.id,
       patient_id: row.patient_id || "",
       employee_id: row.employee_id || "",
       service_name: row.service_name || row.service_type || "Care Taker Services",
       shift_type: row.shift_type || "DAY",
-      start_at: row.start_at ? String(row.start_at).slice(0, 16) : "",
-      end_at: row.end_at ? String(row.end_at).slice(0, 16) : "",
+      start_at: toLocalDatetimeValue(row.start_at),
+      end_at: openEnded ? "" : toLocalDatetimeValue(row.end_at),
+      open_ended: openEnded,
       status: row.status || "SCHEDULED",
       charge_per_day: row.charge_per_day != null ? String(row.charge_per_day) : "",
       payout_per_day: row.payout_per_day != null ? String(row.payout_per_day) : "",
@@ -428,15 +625,15 @@ export default function DutiesPage() {
     });
   }
 
-  function buildPayload(confirmOverlap) {
-    return {
+  function buildPayload(confirm) {
+    var confirmObj = confirm || {};
+    var payload = {
       patient_id: form.patient_id,
       employee_id: form.employee_id,
       service_name: form.service_name,
       service_type: form.service_name,
       shift_type: form.shift_type,
       start_at: toIsoFromLocal(form.start_at),
-      end_at: toIsoFromLocal(form.end_at),
       status: form.status,
       notes: form.notes,
       charge_per_day: Number(form.charge_per_day || 0),
@@ -456,8 +653,13 @@ export default function DutiesPage() {
         }),
       materialize: form.materialize,
       expected_updated_at: form.expected_updated_at || undefined,
-      confirm_staff_overlap: !!confirmOverlap
+      confirm_staff_overlap: !!confirmObj.staff,
+      confirm_patient_overlap: !!confirmObj.patient
     };
+    if (!form.open_ended && form.end_at) {
+      payload.end_at = toIsoFromLocal(form.end_at);
+    }
+    return payload;
   }
 
   async function submitPayload(payload) {
@@ -484,12 +686,27 @@ export default function DutiesPage() {
     setMessage("");
     setConflictBanner("");
     try {
-      await submitPayload(buildPayload(false));
+      await submitPayload(buildPayload({}));
     } catch (submitError) {
       var msg = String(submitError.message || "").toLowerCase();
       var code = submitError.code || "";
-      if (msg.indexOf("overlapping") >= 0 || code === "DUPLICATE") {
-        setOverlapDialog({ message: submitError.message || "Staff has another overlapping duty" });
+      var details = submitError.details || {};
+      var field = String(details.field || "");
+      if (field === "patient_window" || msg.indexOf("patient already has another duty") >= 0) {
+        setOverlapDialog({
+          kind: "patient",
+          message: submitError.message || "Patient already has another duty overlapping this time"
+        });
+      } else if (
+        field === "employee_window" ||
+        msg.indexOf("staff already has a duty") >= 0 ||
+        msg.indexOf("overlapping") >= 0 ||
+        code === "DUPLICATE"
+      ) {
+        setOverlapDialog({
+          kind: "staff",
+          message: submitError.message || "Staff has another overlapping duty"
+        });
       } else if (code === "CONFLICT" || msg.indexOf("stale") >= 0) {
         setConflictBanner(submitError.message || "Record changed elsewhere — reload and retry");
         setError(submitError.message || "Unable to save duty");
@@ -505,7 +722,9 @@ export default function DutiesPage() {
     setBusy(true);
     setError("");
     try {
-      await submitPayload(buildPayload(true));
+      var kind = (overlapDialog && overlapDialog.kind) || "staff";
+      var confirmFlags = kind === "patient" ? { patient: true } : { staff: true };
+      await submitPayload(buildPayload(confirmFlags));
       setOverlapDialog(null);
     } catch (err) {
       setError(err.message || "Save failed");
@@ -609,6 +828,187 @@ export default function DutiesPage() {
     }
   }
 
+  async function loadDiaryFor(dutyId) {
+    if (!dutyId || !auth.session?.access_token) return;
+    try {
+      var data = await request("/duties/" + encodeURIComponent(dutyId) + "/diary", null, auth.session);
+      setDiaryByDuty(function (cur) {
+        var next = { ...cur };
+        next[dutyId] = Array.isArray(data?.entries) ? data.entries : [];
+        return next;
+      });
+    } catch (err) {
+      setError(err.message || "Unable to load day-wise entries");
+    }
+  }
+
+  async function loadDiariesForVisible(rowList) {
+    if (!auth.session?.access_token || !rowList || !rowList.length) return;
+    var ids = rowList.map(function (r) { return r.id; }).filter(Boolean);
+    if (!ids.length) return;
+    try {
+      // Single round-trip — replaces the previous N+1 fan-out which
+      // could fire up to 500 requests on a busy calendar.
+      var data = await request(
+        "/duties/diary/batch",
+        { method: "POST", body: { duty_ids: ids } },
+        auth.session
+      );
+      var map = (data && typeof data === "object") ? data : {};
+      setDiaryByDuty(function (cur) {
+        var next = { ...cur };
+        ids.forEach(function (id) {
+          var entry = map[id];
+          if (entry && Array.isArray(entry.entries)) {
+            next[id] = entry.entries;
+          } else if (!next[id]) {
+            next[id] = [];
+          }
+        });
+        return next;
+      });
+    } catch (_e) {
+      // Fall back to per-duty fetch only for the few visible duties on
+      // failure — preserves the previous behaviour as a safety net.
+      var pairs = await Promise.all(
+        ids.map(async function (id) {
+          try {
+            var d = await request("/duties/" + encodeURIComponent(id) + "/diary", null, auth.session);
+            return [id, Array.isArray(d?.entries) ? d.entries : []];
+          } catch (_err) {
+            return [id, []];
+          }
+        })
+      );
+      setDiaryByDuty(function (cur) {
+        var next = { ...cur };
+        pairs.forEach(function (p) { next[p[0]] = p[1]; });
+        return next;
+      });
+    }
+  }
+
+  function diaryKey(dutyId, isoDate, employeeId) {
+    return dutyId + "|" + isoDate + "|" + employeeId;
+  }
+
+  function startEditDay(dutyId, entry) {
+    var k = diaryKey(dutyId, entry.date, entry.employee_id);
+    setDiaryEdits(function (cur) {
+      var next = { ...cur };
+      next[k] = {
+        charge: String(entry.charge ?? ""),
+        payout: String(entry.payout ?? ""),
+        employee_id: entry.employee_id
+      };
+      return next;
+    });
+  }
+
+  function cancelEditDay(dutyId, entry) {
+    var k = diaryKey(dutyId, entry.date, entry.employee_id);
+    setDiaryEdits(function (cur) {
+      var next = { ...cur };
+      delete next[k];
+      return next;
+    });
+  }
+
+  function updateDayField(dutyId, entry, field, value) {
+    var k = diaryKey(dutyId, entry.date, entry.employee_id);
+    setDiaryEdits(function (cur) {
+      var next = { ...cur };
+      next[k] = { ...(next[k] || {}), [field]: value };
+      return next;
+    });
+  }
+
+  async function saveDayEdit(dutyId, entry) {
+    var k = diaryKey(dutyId, entry.date, entry.employee_id);
+    var draft = diaryEdits[k] || {};
+    var newEmp = draft.employee_id && draft.employee_id !== entry.employee_id ? draft.employee_id : undefined;
+    setDiaryBusy(function (cur) { var n = { ...cur }; n[k] = true; return n; });
+    try {
+      await request(
+        "/duties/" + encodeURIComponent(dutyId) + "/diary/" + encodeURIComponent(entry.date),
+        {
+          method: "PATCH",
+          body: {
+            employee_id: entry.employee_id,
+            new_employee_id: newEmp,
+            charge: draft.charge === "" ? undefined : Number(draft.charge),
+            payout: draft.payout === "" ? undefined : Number(draft.payout),
+            svc_updated_at: entry.svc_updated_at || undefined,
+            payout_updated_at: entry.payout_updated_at || undefined
+          }
+        },
+        auth.session
+      );
+      cancelEditDay(dutyId, entry);
+      await loadDiaryFor(dutyId);
+      // If we reassigned a partner the server promotes the target into
+      // hh_duties.extra_partners — refresh the duty rows so the
+      // calendar swimlane re-renders with the new partner list.
+      if (newEmp) {
+        await reload();
+      }
+      if (filterPatient || filterEmployee) {
+        var ft = await loadTotals(filterPatient, filterEmployee);
+        setFilterTotals(ft || null);
+      }
+      setMessage(newEmp ? "Day entry reassigned and saved (marked manual)" : "Day entry saved (marked manual — will resist next sync)");
+    } catch (err) {
+      setError(err.message || "Could not save day entry");
+    } finally {
+      setDiaryBusy(function (cur) { var n = { ...cur }; delete n[k]; return n; });
+    }
+  }
+
+  async function clearDayManual(dutyId, entry) {
+    var k = diaryKey(dutyId, entry.date, entry.employee_id);
+    setDiaryBusy(function (cur) { var n = { ...cur }; n[k] = true; return n; });
+    try {
+      await request(
+        "/duties/" + encodeURIComponent(dutyId) + "/diary/" + encodeURIComponent(entry.date),
+        {
+          method: "PATCH",
+          body: { employee_id: entry.employee_id, clear_manual: true }
+        },
+        auth.session
+      );
+      await loadDiaryFor(dutyId);
+      setMessage("Manual lock removed — next sync will reconcile this day");
+    } catch (err) {
+      setError(err.message || "Could not unlock day entry");
+    } finally {
+      setDiaryBusy(function (cur) { var n = { ...cur }; delete n[k]; return n; });
+    }
+  }
+
+  async function deleteDay(dutyId, entry) {
+    if (!window.confirm("Remove diary entry for " + entry.date + "? The next sync will recreate it unless you shrink the duty's date range.")) return;
+    var k = diaryKey(dutyId, entry.date, entry.employee_id);
+    setDiaryBusy(function (cur) { var n = { ...cur }; n[k] = true; return n; });
+    try {
+      await request(
+        "/duties/" + encodeURIComponent(dutyId) + "/diary/" + encodeURIComponent(entry.date) +
+          "?employee_id=" + encodeURIComponent(entry.employee_id),
+        { method: "DELETE" },
+        auth.session
+      );
+      await loadDiaryFor(dutyId);
+      if (filterPatient || filterEmployee) {
+        var ft = await loadTotals(filterPatient, filterEmployee);
+        setFilterTotals(ft || null);
+      }
+      setMessage("Day entry removed");
+    } catch (err) {
+      setError(err.message || "Could not delete day entry");
+    } finally {
+      setDiaryBusy(function (cur) { var n = { ...cur }; delete n[k]; return n; });
+    }
+  }
+
   async function runDutyAction(id, action) {
     setBusy(true);
     setError("");
@@ -632,6 +1032,39 @@ export default function DutiesPage() {
     return rows.filter(function (r) {
       return dutyTouchesDay(r, isoDay);
     });
+  }
+
+  /**
+   * Effective partner names for a given duty on a given calendar day.
+   * Prefers the materialized diary entries (so reassignments + extra
+   * partners show up), and falls back to the duty's primary employee
+   * when nothing has been materialized yet.
+   */
+  function partnersForDutyDay(row, isoDay) {
+    var entries = diaryByDuty[row.id] || [];
+    var dayEntries = entries.filter(function (e) { return e.date === isoDay; });
+    // Always prefer the lookup name — older diary rows persisted the
+    // employee_id in the `partner` column (server-side fn/mn/ln bug),
+    // so we'd otherwise render "EMP640207047" forever on those rows.
+    function displayFor(empId, storedPartner) {
+      return partnerDisplayName(empId, storedPartner, employeeNameById);
+    }
+    if (dayEntries.length) {
+      return dayEntries.map(function (e) {
+        return {
+          employee_id: e.employee_id,
+          partner: displayFor(e.employee_id, e.partner),
+          manual: !!e.manual
+        };
+      });
+    }
+    return [
+      {
+        employee_id: row.employee_id,
+        partner: displayFor(row.employee_id, ""),
+        manual: false
+      }
+    ];
   }
 
   return (
@@ -778,11 +1211,23 @@ export default function DutiesPage() {
                   <input
                     type="datetime-local"
                     value={form.end_at}
+                    disabled={form.open_ended}
+                    min={form.start_at || undefined}
                     onChange={function (event) {
                       updateField("end_at", event.target.value);
                     }}
-                    required
                   />
+                  <label className="checkbox-row" style={{ marginTop: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={form.open_ended}
+                      onChange={function (event) {
+                        updateField("open_ended", event.target.checked);
+                        if (event.target.checked) updateField("end_at", "");
+                      }}
+                    />
+                    Open-ended (run daily until the patient&apos;s active bill is closed)
+                  </label>
                 </div>
               </div>
 
@@ -863,7 +1308,7 @@ export default function DutiesPage() {
                     updateField("materialize", event.target.checked);
                   }}
                 />
-                Auto-add per-day charges + payouts to active bill (by date range)
+                Auto-add charges + payouts to active bill every day (stops when bill closes)
               </label>
 
               <textarea
@@ -907,6 +1352,12 @@ export default function DutiesPage() {
               </div>
             }
           >
+            <CalendarTotalsStripe
+              patientId={filterPatient}
+              employeeId={filterEmployee}
+              totals={filterTotals}
+            />
+
             <div className="toolbar" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <div className="field">
                 <label>Filter patient ({patients.length})</label>
@@ -965,15 +1416,6 @@ export default function DutiesPage() {
               </div>
             </div>
 
-            {filterPatient || filterEmployee ? (
-              <FinancialBifurcation
-                patientId={filterPatient}
-                employeeId={filterEmployee}
-                totals={filterTotals}
-                outstanding={null}
-              />
-            ) : null}
-
             <div className="calendar-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
               {WEEKDAYS.map(function (w) {
                 return (
@@ -1007,45 +1449,89 @@ export default function DutiesPage() {
                     }}
                   >
                     <div style={{ fontWeight: 600 }}>{isoDay.slice(8)}</div>
-                    {dayRows.length ? (
-                      <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
-                        {dayRows.slice(0, 3).map(function (row) {
-                          var chip = shiftChipStyle(row.shift_type);
-                          return (
-                            <span
-                              key={row.id}
-                              style={{
-                                fontSize: 10,
-                                lineHeight: 1.2,
-                                padding: "2px 4px",
-                                borderRadius: 4,
-                                background: chip.bg,
-                                border: "1px solid " + chip.border,
-                                color: chip.text,
-                                overflow: "hidden",
-                                whiteSpace: "nowrap",
-                                textOverflow: "ellipsis"
-                              }}
-                              title={
-                                (employeeNameById[row.employee_id] || row.employee_id || "—") +
-                                " · " +
-                                (patientNameById[row.patient_id] || row.patient_id) +
-                                " · " +
-                                (row.shift_type || "DAY")
-                              }
-                            >
-                              {shortLabel(employeeNameById[row.employee_id], row.employee_id || "—")}{" "}
-                              <span style={{ opacity: 0.85 }}>{row.shift_type}</span>
+                    {dayRows.length ? (() => {
+                      var chips = [];
+                      dayRows.forEach(function (row) {
+                        var partners = partnersForDutyDay(row, isoDay);
+                        partners.forEach(function (p) {
+                          chips.push({ row: row, partner: p });
+                        });
+                      });
+                      // Dedupe chips so the same (patient, partner) pair only
+                      // shows once per day even if both filters somehow overlap
+                      // with extra_partners reassignments.
+                      var seen = {};
+                      var unique = [];
+                      chips.forEach(function (c) {
+                        var k = c.row.patient_id + "|" + c.partner.employee_id + "|" + c.row.shift_type;
+                        if (seen[k]) return;
+                        seen[k] = true;
+                        unique.push(c);
+                      });
+                      var visible = unique.slice(0, 3);
+                      var rest = unique.length - visible.length;
+                      return (
+                        <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
+                          {visible.map(function (c, ix) {
+                            var chip = shiftChipStyle(c.row.shift_type);
+                            var partnerName = c.partner.partner;
+                            var patientName = patientNameById[c.row.patient_id] || c.row.patient_id;
+                            // Chip text adapts to the active filter so the
+                            // unique-per-day dimension is always emphasised.
+                            var primary;
+                            var secondary = "";
+                            if (filterPatient) {
+                              primary = partnerName;
+                            } else if (filterEmployee) {
+                              primary = patientName;
+                            } else {
+                              primary = patientName;
+                              secondary = partnerName;
+                            }
+                            return (
+                              <span
+                                key={c.row.id + "::" + c.partner.employee_id + "::" + ix}
+                                style={{
+                                  fontSize: 10,
+                                  lineHeight: 1.2,
+                                  padding: "2px 4px",
+                                  borderRadius: 4,
+                                  background: chip.bg,
+                                  border: "1px solid " + chip.border,
+                                  color: chip.text,
+                                  overflow: "hidden",
+                                  whiteSpace: "nowrap",
+                                  textOverflow: "ellipsis"
+                                }}
+                                title={
+                                  patientName +
+                                  " · " +
+                                  partnerName +
+                                  " · " +
+                                  (c.row.shift_type || "DAY") +
+                                  (c.partner.manual ? " · manual override" : "")
+                                }
+                              >
+                                {c.partner.manual ? "✎ " : ""}
+                                <strong>{shortLabel(primary, "—")}</strong>
+                                {secondary ? (
+                                  <span style={{ opacity: 0.85 }}>
+                                    {" · "}
+                                    {shortLabel(secondary, "")}
+                                  </span>
+                                ) : null}{" "}
+                                <span style={{ opacity: 0.85 }}>{c.row.shift_type}</span>
+                              </span>
+                            );
+                          })}
+                          {rest > 0 ? (
+                            <span className="mini-muted" style={{ fontSize: 10 }}>
+                              +{rest} more
                             </span>
-                          );
-                        })}
-                        {dayRows.length > 3 ? (
-                          <span className="mini-muted" style={{ fontSize: 10 }}>
-                            +{dayRows.length - 3} more
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
+                          ) : null}
+                        </div>
+                      );
+                    })() : null}
                   </button>
                 );
               })}
@@ -1059,18 +1545,33 @@ export default function DutiesPage() {
                 ) : (
                   <div className="record-list">
                     {dayDuties.map(function (row) {
+                      var allEntries = diaryByDuty[row.id] || [];
+                      var entriesForDay = allEntries.filter(function (e) { return e.date === selectedDay; });
+                      // Use the same display fallback as the chips so old
+                      // diary rows (with partner = employee_id) still render
+                      // as the staff's real name.
+                      var dayPartnerNames = entriesForDay.length
+                        ? entriesForDay
+                            .map(function (e) {
+                              return (
+                                partnerDisplayName(e.employee_id, e.partner, employeeNameById) +
+                                (e.manual ? " ✎" : "")
+                              );
+                            })
+                            .join(" + ")
+                        : partnerDisplayName(row.employee_id, "", employeeNameById);
                       return (
                         <div className="record-card" key={row.id}>
                           <div className="button-row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
                             <div>
                               <h3>{patientNameById[row.patient_id] || row.patient_id}</h3>
                               <div className="record-meta">
-                                <span>{employeeNameById[row.employee_id] || row.employee_id || "—"}</span>
+                                <span>{dayPartnerNames}</span>
                                 <span>{row.service_name || row.service_type}</span>
                                 <span className={"status " + String(row.status || "").toLowerCase()}>{row.status}</span>
                               </div>
                               <div className="mini-muted" style={{ marginTop: 6 }}>
-                                ₹{row.charge_per_day || 0}/day charge · ₹{row.payout_per_day || 0}/day payout
+                                Default ₹{row.charge_per_day || 0}/day charge · ₹{row.payout_per_day || 0}/day payout
                               </div>
                             </div>
                             <div className="button-row">
@@ -1111,12 +1612,14 @@ export default function DutiesPage() {
                                 disabled={busy}
                                 style={{ background: "transparent", color: "#b91c1c", borderColor: "#fecaca" }}
                                 onClick={function () {
+                                  var endLabel = row.end_at && String(row.end_at).slice(0, 10) !== "2099-12-31"
+                                    ? String(row.end_at).slice(0, 10)
+                                    : "open-ended";
                                   setDeleteDialog({
                                     id: row.id,
                                     patient: patientNameById[row.patient_id] || row.patient_id,
                                     employee: employeeNameById[row.employee_id] || row.employee_id || "—",
-                                    range: String(row.start_at || "").slice(0, 10) +
-                                      " → " + String(row.end_at || row.start_at || "").slice(0, 10)
+                                    range: String(row.start_at || "").slice(0, 10) + " → " + endLabel
                                   });
                                 }}
                               >
@@ -1135,6 +1638,176 @@ export default function DutiesPage() {
                                 </button>
                               ) : null}
                             </div>
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop: 10,
+                              padding: 10,
+                              borderTop: "1px dashed #e2e8f0",
+                              background: "#fbfdff",
+                              borderRadius: 6
+                            }}
+                          >
+                            <div className="button-row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+                              <strong style={{ fontSize: 13 }}>
+                                Day-wise entries · {formatDate(selectedDay + "T12:00:00Z")}
+                              </strong>
+                              <span className="mini-muted" style={{ fontSize: 12 }}>
+                                Edits here override the duty defaults for this day only.
+                              </span>
+                            </div>
+                            {!entriesForDay.length ? (
+                              <div className="mini-muted" style={{ fontSize: 12 }}>
+                                No materialized entry yet — click <em>Sync diary</em> to generate one.
+                              </div>
+                            ) : (
+                              entriesForDay.map(function (entry) {
+                                var k = diaryKey(row.id, entry.date, entry.employee_id);
+                                var draft = diaryEdits[k];
+                                var entryBusy = !!diaryBusy[k];
+                                return (
+                                  <div
+                                    key={k}
+                                    style={{
+                                      display: "grid",
+                                      gridTemplateColumns: "minmax(160px, 1.4fr) 110px 110px auto",
+                                      gap: 8,
+                                      alignItems: "center",
+                                      padding: "6px 0",
+                                      borderTop: "1px solid #eef2f7"
+                                    }}
+                                  >
+                                    {draft ? (
+                                      <div>
+                                        <select
+                                          value={draft.employee_id || entry.employee_id}
+                                          onChange={function (event) {
+                                            updateDayField(row.id, entry, "employee_id", event.target.value);
+                                          }}
+                                          style={{ width: "100%" }}
+                                        >
+                                          {employees.map(function (e) {
+                                            return (
+                                              <option key={e.id} value={e.id}>
+                                                {(e.full_name || e.name) + " (" + e.id + ")"}
+                                              </option>
+                                            );
+                                          })}
+                                        </select>
+                                        {draft.employee_id && draft.employee_id !== entry.employee_id ? (
+                                          <div className="mini-muted" style={{ fontSize: 11, marginTop: 4, color: "#b45309" }}>
+                                            Reassigning from {employeeNameById[entry.employee_id] || entry.partner || entry.employee_id} →{" "}
+                                            {employeeNameById[draft.employee_id] || draft.employee_id}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    ) : (
+                                      <div>
+                                        <div style={{ fontWeight: 600, fontSize: 13 }}>
+                                          {(function () {
+                                            var lookup = employeeNameById[entry.employee_id];
+                                            if (lookup && lookup !== entry.employee_id) return lookup;
+                                            if (entry.partner && entry.partner !== entry.employee_id) return entry.partner;
+                                            return lookup || entry.partner || entry.employee_id;
+                                          })()}
+                                        </div>
+                                        <div className="mini-muted" style={{ fontSize: 11 }}>
+                                          {entry.manual ? "Manual override · sync will skip" : "Auto · sync may update"}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {draft ? (
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={draft.charge}
+                                        placeholder="Charge"
+                                        onChange={function (event) {
+                                          updateDayField(row.id, entry, "charge", event.target.value);
+                                        }}
+                                      />
+                                    ) : (
+                                      <div style={{ fontSize: 13 }}>
+                                        <span className="mini-muted">Charge </span>
+                                        ₹{Number(entry.charge || 0).toLocaleString("en-IN")}
+                                      </div>
+                                    )}
+                                    {draft ? (
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={draft.payout}
+                                        placeholder="Payout"
+                                        onChange={function (event) {
+                                          updateDayField(row.id, entry, "payout", event.target.value);
+                                        }}
+                                      />
+                                    ) : (
+                                      <div style={{ fontSize: 13 }}>
+                                        <span className="mini-muted">Payout </span>
+                                        ₹{Number(entry.payout || 0).toLocaleString("en-IN")}
+                                      </div>
+                                    )}
+                                    <div className="button-row">
+                                      {draft ? (
+                                        <>
+                                          <button
+                                            className="button primary"
+                                            type="button"
+                                            disabled={entryBusy}
+                                            onClick={function () { saveDayEdit(row.id, entry); }}
+                                          >
+                                            Save
+                                          </button>
+                                          <button
+                                            className="button secondary"
+                                            type="button"
+                                            disabled={entryBusy}
+                                            onClick={function () { cancelEditDay(row.id, entry); }}
+                                          >
+                                            Cancel
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <button
+                                            className="button secondary"
+                                            type="button"
+                                            disabled={entryBusy}
+                                            onClick={function () { startEditDay(row.id, entry); }}
+                                          >
+                                            Edit
+                                          </button>
+                                          {entry.manual ? (
+                                            <button
+                                              className="button secondary"
+                                              type="button"
+                                              disabled={entryBusy}
+                                              title="Drop the manual lock and let the next sync recompute this day"
+                                              onClick={function () { clearDayManual(row.id, entry); }}
+                                            >
+                                              Unlock
+                                            </button>
+                                          ) : null}
+                                          <button
+                                            className="button danger ghost"
+                                            type="button"
+                                            disabled={entryBusy}
+                                            style={{ background: "transparent", color: "#b91c1c", borderColor: "#fecaca" }}
+                                            onClick={function () { deleteDay(row.id, entry); }}
+                                          >
+                                            Delete
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
                           </div>
                         </div>
                       );
@@ -1212,10 +1885,16 @@ export default function DutiesPage() {
         {overlapDialog ? (
           <div className="modal-backdrop" role="presentation">
             <div className="modal-card">
-              <h3>Staff has overlapping duty</h3>
+              <h3>
+                {overlapDialog.kind === "patient"
+                  ? "Patient has overlapping duty"
+                  : "Staff has overlapping duty"}
+              </h3>
               <p>{overlapDialog.message}</p>
               <p className="mini-muted">
-                Legacy CRM allowed the same staff to be on relief / shared shifts. Confirm to save anyway.
+                {overlapDialog.kind === "patient"
+                  ? "Two carers on the same patient is legitimate for relief / partner-share shifts. Confirm to add anyway — both partners will accrue per-day charges + payouts."
+                  : "Legacy CRM allowed the same staff to be on relief / shared shifts. Confirm to save anyway."}
               </p>
               <div className="button-row">
                 <button className="button primary" type="button" disabled={busy} onClick={confirmOverlapAndSave}>

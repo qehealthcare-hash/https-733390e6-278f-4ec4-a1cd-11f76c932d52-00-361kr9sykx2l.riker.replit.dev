@@ -1,1 +1,8 @@
-{}
+{
+  "crons": [
+    {
+      "path": "/api/v1/cron/duties-extend",
+      "schedule": "0 19 * * *"
+    }
+  ]
+}

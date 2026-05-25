@@ -19,6 +19,11 @@ export const ATTENDANCE_NO_TIME_STATUSES = new Set<AttendanceStatus>([
   "HOLIDAY"
 ]);
 
+const dateKeySchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD")
+  .optional();
+
 /**
  * Canonical Attendance payload.
  *
@@ -37,6 +42,7 @@ export const attendanceSchema = z
     employee_id: idSchema,
     patient_id: z.string().trim().optional(),
     shift_type: shiftTypeSchema.optional(),
+    work_date: dateKeySchema,
     check_in_at: isoDate.optional(),
     check_out_at: isoDate.optional(),
     status: z.enum(ATTENDANCE_STATUSES).default("PRESENT"),
@@ -81,9 +87,24 @@ export const attendanceListQuerySchema = z.object({
   duty_id: z.string().optional(),
   patient_id: z.string().optional(),
   status: z.enum(ATTENDANCE_STATUSES).optional(),
-  from: z.string().optional(),
-  to: z.string().optional()
+  from: dateKeySchema,
+  to: dateKeySchema
+});
+
+/** POST /attendance/day/mark — quick mark from the day board. */
+export const attendanceDayMarkSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
+  employee_id: idSchema,
+  duty_id: z.string().trim().optional(),
+  patient_id: z.string().trim().optional(),
+  shift_type: shiftTypeSchema.optional(),
+  status: z.enum(ATTENDANCE_STATUSES),
+  check_in_at: isoDate.optional(),
+  check_out_at: isoDate.optional(),
+  notes: z.string().optional().default(""),
+  sync_duty: z.boolean().optional().default(true)
 });
 
 export type AttendanceInput = z.infer<typeof attendanceSchema>;
 export type AttendanceListQuery = z.infer<typeof attendanceListQuerySchema>;
+export type AttendanceDayMarkInput = z.infer<typeof attendanceDayMarkSchema>;

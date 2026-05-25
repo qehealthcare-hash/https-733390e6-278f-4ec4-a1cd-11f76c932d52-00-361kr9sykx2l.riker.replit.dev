@@ -36,7 +36,13 @@ export const dutySchema = z
     service_name: z.string().trim().max(120).optional().default(""),
     shift_type: shiftTypeSchema.default("DAY"),
     start_at: isoDate,
-    end_at: isoDate,
+    /**
+     * Optional. Omit (or pass blank/null) to mark the duty as open-ended —
+     * the diary materializer will keep adding per-day charges and payouts
+     * to the patient's Active bill until the bill is closed. When given,
+     * the duty stops on this date even if the bill remains open.
+     */
+    end_at: isoDate.optional(),
     status: z.enum(DUTY_STATUSES).default("SCHEDULED"),
     cancel_reason: z.string().optional().default(""),
     notes: z.string().optional().default(""),
@@ -49,7 +55,8 @@ export const dutySchema = z
     /** When true, expands date range into hh_svc_entries + hh_payout_charges after save. */
     materialize: z.boolean().optional().default(false),
     /** Allow saving even if the staff has another overlapping duty (relief / partner share). */
-    confirm_staff_overlap: z.boolean().optional().default(false)
+    confirm_staff_overlap: z.boolean().optional().default(false),
+    confirm_patient_overlap: z.boolean().optional().default(false)
   })
   .superRefine((v, ctx) => {
     if (v.patient_id && v.employee_id && v.patient_id === v.employee_id) {
@@ -59,12 +66,14 @@ export const dutySchema = z
         path: ["employee_id"]
       });
     }
-    if (new Date(v.end_at).getTime() <= new Date(v.start_at).getTime()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "end_at must be after start_at",
-        path: ["end_at"]
-      });
+    if (v.end_at) {
+      if (new Date(v.end_at).getTime() <= new Date(v.start_at).getTime()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "end_at must be after start_at",
+          path: ["end_at"]
+        });
+      }
     }
     if (v.status === "CANCELLED" && !v.cancel_reason.trim()) {
       ctx.addIssue({
@@ -82,7 +91,14 @@ export const dutyCheckAtSchema = z.object({
 
 /** DELETE /duties/[id] body (or query) — explicit reason. */
 export const dutyCancelSchema = z.object({
-  reason: z.string().trim().max(500).default("")
+  reason: z.string().trim().min(1, "Cancellation reason is required").max(500)
+});
+
+export const dutyDiaryBatchSchema = z.object({
+  duty_ids: z
+    .array(z.string().trim().min(1))
+    .max(500, "At most 500 duty ids per batch request")
+    .default([])
 });
 
 /** GET /duties query string. */

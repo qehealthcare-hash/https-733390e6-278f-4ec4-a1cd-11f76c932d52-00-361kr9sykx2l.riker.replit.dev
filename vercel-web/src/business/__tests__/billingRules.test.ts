@@ -4,6 +4,10 @@ import {
   canEditBilling,
   canReopenBilling,
   canTransitionTo,
+  computeBillingTotals,
+  derivePaidStatus,
+  billingPeriodsFromDates,
+  invoiceOutstanding,
   sumReceiptAmounts,
   sumServiceTotals
 } from "@/business/billingRules";
@@ -71,5 +75,47 @@ describe("billingRules — test matrix", () => {
   it("sums service totals and receipts for reports", () => {
     expect(sumServiceTotals([{ total: 100 }, { total: "50" }])).toBe(150);
     expect(sumReceiptAmounts([{ amount: 80 }, { amount: 20 }])).toBe(100);
+  });
+});
+
+describe("billingRules — paid_status derivation", () => {
+  it("brand-new bill with no services is UNPAID", () => {
+    const totals = computeBillingTotals({ services: [], receipts: [] });
+    expect(derivePaidStatus(totals)).toBe("UNPAID");
+  });
+
+  it("billed but no receipts is UNPAID", () => {
+    const totals = computeBillingTotals({
+      services: [{ total: 100, amount: 0 }],
+      receipts: []
+    });
+    expect(derivePaidStatus(totals)).toBe("UNPAID");
+  });
+
+  it("billed with partial receipts is PARTIAL", () => {
+    const totals = computeBillingTotals({
+      services: [{ total: 100, amount: 0 }],
+      receipts: [{ total: 0, amount: 40 }]
+    });
+    expect(derivePaidStatus(totals)).toBe("PARTIAL");
+  });
+
+  it("billed with receipts >= billed is PAID", () => {
+    const totals = computeBillingTotals({
+      services: [{ total: 100, amount: 0 }],
+      receipts: [{ total: 0, amount: 100 }]
+    });
+    expect(derivePaidStatus(totals)).toBe("PAID");
+  });
+});
+
+describe("billingRules — invoice period helpers", () => {
+  it("billingPeriodsFromDates dedupes months", () => {
+    expect(billingPeriodsFromDates(["2026-05-01", "2026-05-20"])).toEqual(["2026-05"]);
+  });
+
+  it("invoiceOutstanding never goes negative", () => {
+    expect(invoiceOutstanding(100, 200)).toBe(0);
+    expect(invoiceOutstanding(100, 40)).toBe(60);
   });
 });

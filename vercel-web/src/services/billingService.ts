@@ -34,6 +34,7 @@ import {
   replaceServiceEntriesSchema,
   generateFromDutySchema,
   generateFromDutyRangeSchema,
+  generateInvoiceSchema,
   billingListQuerySchema,
   type BillingInput,
   type BillingStatusInput,
@@ -45,6 +46,7 @@ import {
   type ReplaceServiceEntriesInput,
   type GenerateFromDutyInput,
   type GenerateFromDutyRangeInput,
+  type GenerateInvoiceInput,
   type BillingListQuery,
   type BillingStatus
 } from "@/validation/billingValidation";
@@ -60,6 +62,10 @@ import {
   canBillDuty,
   canCloseBilling,
   canEditBilling,
+  derivePaidStatus,
+  billingPeriodsFromDates,
+  invoiceOutstanding,
+  type BillingPaidStatus,
   canReopenBilling,
   canTransitionTo,
   computeBillingTotals,
@@ -72,6 +78,7 @@ import {
   type BillingTotals
 } from "@/business/billingRules";
 import { assertNotStale } from "@/business/concurrencyRules";
+import { businessFailure, businessOk } from "@/business/businessResult";
 import { newId } from "@/business/idRules";
 import { billingRepository } from "@/database/billingRepository";
 import { patientRepository } from "@/database/patientRepository";
@@ -100,6 +107,137 @@ export interface BillingServiceContext {
 function dbAccess(ctx: BillingServiceContext) {
   const token = ctx.accessToken ?? ctx.actor.accessToken;
   return token ? { accessToken: token } : undefined;
+}
+
+export interface CapDutiesResult {
+  duties_capped: number;
+  duties_resumed: number;
+  duties_processed: number;
+  svc_pruned: number;
+  payouts_pruned: number;
+  errors: { duty_id: string; error: string }[];
+  capped_end_at?: string;
+  restored_end_at?: string;
+}
+
+/**
+ * Cap or restore open-ended duties when a patient's bill flips status.
+ *
+ * Closing:
+ *   - Run BEFORE the DB status changes so dutyDiaryService.materializeDuty
+ *     still sees an Active bill and can reconcile + prune in one pass.
+ *   - Walk every SCHEDULED / IN_PROGRESS duty for the patient. If end_at is
+ *     open-ended (or further than today), set it to today and run a
+ *     reconciling materialize so future diary rows get pruned.
+ *
+ * Reopening:
+ *   - If a duty's end_at exactly matches the previous bill close date
+ *     (or sits at the cap from a recent close), restore the open-ended
+ *     sentinel so the daily extend cron resumes accrual automatically.
+ */
+async function capLinkedDutiesOnBillingClose(
+  patientId: string,
+  ctx: BillingServiceContext,
+  mode: "close" | "reopen" = "close",
+  prevCloseEndAt?: string
+): Promise<CapDutiesResult> {
+  const { isOpenEndedEndAt, openEndedSentinelFor } = await import("@/business/dutyRules");
+  const { dutyDiaryService } = await import("@/services/dutyDiaryService");
+  const { crmTodayEndIso, crmTodayIso } = await import("@/utils/crmToday");
+  const todayDate = crmTodayIso();
+  const cappedEnd = crmTodayEndIso();
+  const out: CapDutiesResult = {
+    duties_capped: 0,
+    duties_resumed: 0,
+    duties_processed: 0,
+    svc_pruned: 0,
+    payouts_pruned: 0,
+    errors: []
+  };
+
+  const active = await dutyRepository.findActiveByPatient(patientId, dbAccess(ctx));
+  if (!active.success || !active.data?.length) return out;
+
+  for (const duty of active.data) {
+    const dutyId = String(duty.id);
+    out.duties_processed += 1;
+    try {
+      if (mode === "close") {
+        const currentEnd = String(duty.end_at || "");
+        const needsCap = isOpenEndedEndAt(currentEnd) || currentEnd > cappedEnd;
+        if (needsCap) {
+          const upd = await dutyRepository.update(
+            dutyId,
+            { end_at: cappedEnd, updated_by: ctx.actor.email },
+            dbAccess(ctx)
+          );
+          if (!upd.success) {
+            out.errors.push({ duty_id: dutyId, error: upd.error || "cap update failed" });
+            continue;
+          }
+          out.duties_capped += 1;
+          // Per-duty audit on cap so each duty's end_at change is queryable
+          // (the summary capStamp on the billing audit is not).
+          await writeMutationAudit(dbAccess(ctx), ctx.actor, {
+            module: "duty",
+            entity_id: dutyId,
+            action: "update",
+            stamp: `Capped on bill close · ${currentEnd || "(open)"} → ${cappedEnd}`,
+            before: { end_at: currentEnd },
+            after: { end_at: cappedEnd }
+          }).catch((err) => {
+            console.error("[capLinkedDutiesOnBillingClose] cap audit failed", err);
+          });
+        }
+        const capped = { ...duty, end_at: cappedEnd } as JsonRow;
+        const mat = await dutyDiaryService.materializeDuty(capped, ctx);
+        if (!mat.success) {
+          out.errors.push({ duty_id: dutyId, error: mat.error || "materialize failed" });
+          continue;
+        }
+        out.svc_pruned += mat.data?.deleted_svc ?? 0;
+        out.payouts_pruned += mat.data?.deleted_payout ?? 0;
+      } else {
+        const currentEnd = String(duty.end_at || "").slice(0, 10);
+        const capDay = (prevCloseEndAt || cappedEnd).slice(0, 10);
+        // Resume only duties that were capped by a recent close (end matches
+        // the cap day) and not a manually picked future date.
+        if (!isOpenEndedEndAt(currentEnd) && currentEnd === capDay) {
+          const sentinel = openEndedSentinelFor(String(duty.start_at || ""));
+          const upd = await dutyRepository.update(
+            dutyId,
+            { end_at: sentinel, updated_by: ctx.actor.email },
+            dbAccess(ctx)
+          );
+          if (!upd.success) {
+            out.errors.push({ duty_id: dutyId, error: upd.error || "resume update failed" });
+            continue;
+          }
+          out.duties_resumed += 1;
+          await writeMutationAudit(dbAccess(ctx), ctx.actor, {
+            module: "duty",
+            entity_id: dutyId,
+            action: "update",
+            stamp: `Resumed on bill reopen · ${currentEnd} → open-ended`,
+            before: { end_at: currentEnd },
+            after: { end_at: sentinel }
+          }).catch((err) => {
+            console.error("[capLinkedDutiesOnBillingClose] resume audit failed", err);
+          });
+          const resumed = { ...duty, end_at: sentinel } as JsonRow;
+          await dutyDiaryService.materializeDuty(resumed, ctx);
+        }
+      }
+    } catch (err) {
+      out.errors.push({
+        duty_id: dutyId,
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
+  }
+  if (mode === "close") out.capped_end_at = cappedEnd;
+  if (mode === "reopen") out.restored_end_at = prevCloseEndAt;
+  return out;
 }
 
 async function fireAudit(
@@ -158,10 +296,19 @@ async function loadFreshBilling(
   return { success: true, data: row };
 }
 
+export interface InvoiceSummary {
+  invoice: JsonRow;
+  amount: number;
+  received: number;
+  outstanding: number;
+  status: BillingPaidStatus | "CANCELLED";
+}
+
 export interface BillingWithTotals {
   billing: JsonRow;
   services: JsonRow[];
   receipts: JsonRow[];
+  invoices: InvoiceSummary[];
   totals: BillingTotals;
   period: { from?: string; to?: string; months: string[] };
   /**
@@ -179,6 +326,154 @@ export interface BillingWithTotals {
     city: string;
     pincode: string;
   } | null;
+}
+
+function buildInvoiceSummaries(
+  invoiceRows: JsonRow[],
+  receipts: JsonRow[]
+): InvoiceSummary[] {
+  const receiptsByInvoice = new Map<string, number>();
+  for (const r of receipts) {
+    const invId = String(r.invoice_id || "");
+    if (!invId) continue;
+    receiptsByInvoice.set(
+      invId,
+      Number(receiptsByInvoice.get(invId) || 0) + Number(r.amount || 0)
+    );
+  }
+  return invoiceRows
+    .filter((inv) => String(inv.status || "").toUpperCase() !== "CANCELLED")
+    .map((inv) => {
+      const id = String(inv.id);
+      const amount = Number(inv.amount || 0);
+      const received = Number(receiptsByInvoice.get(id) || 0);
+      const outstanding = invoiceOutstanding(amount, received);
+      let status: InvoiceSummary["status"];
+      const persisted = String(inv.status || "").toUpperCase();
+      if (persisted === "CANCELLED") status = "CANCELLED";
+      else if (amount <= 0 || received <= 0) status = "UNPAID";
+      else if (received >= amount) status = "PAID";
+      else status = "PARTIAL";
+      return { invoice: inv, amount, received, outstanding, status };
+    });
+}
+
+/** Refuse svc mutations for months that already have a MONTHLY invoice. */
+async function assertNoMonthlyInvoiceLock(
+  billingId: string,
+  dates: string[],
+  access: ReturnType<typeof dbAccess>
+): Promise<ApiResult<null>> {
+  const periods = billingPeriodsFromDates(dates);
+  for (const period of periods) {
+    const existing = await billingRepository.findInvoiceForPeriod(billingId, period, access);
+    if (!existing.success) return passFailure(existing);
+    if (existing.data) {
+      const invNo = String(existing.data.invoice_no || existing.data.id);
+      return businessFailure(
+        `Period ${period} already has invoice ${invNo} — delete or regenerate that invoice before changing service entries`,
+        { period, invoice_id: existing.data.id, invoice_no: invNo }
+      );
+    }
+  }
+  return businessOk();
+}
+
+/**
+ * Recompute and persist paid_status on hh_billings based on current totals.
+ */
+async function recomputePaidStatus(
+  billingId: string,
+  ctx: BillingServiceContext
+): Promise<LoadResult<BillingPaidStatus>> {
+  const bundle = await loadBundleWithTotals(billingId, ctx);
+  if (!bundle.success) {
+    return { success: false, error: bundle.error, code: bundle.code, details: bundle.details };
+  }
+  const next = derivePaidStatus(bundle.data.totals);
+  const current = String(bundle.data.billing.paid_status || "");
+  if (current === next) return { success: true, data: next };
+  const updated = await billingRepository.updateBilling(
+    billingId,
+    { paid_status: next, updated_by: ctx.actor.email },
+    dbAccess(ctx)
+  );
+  if (!updated.success) {
+    return {
+      success: false,
+      error: updated.error || "Could not update paid_status",
+      code: updated.code,
+      details: updated.details
+    };
+  }
+  await fireAudit(ctx, "billing", {
+    entity_id: billingId,
+    action: "update",
+    before: { paid_status: current },
+    after: { paid_status: next },
+    stamp: `Bill paid_status ${current || "—"} → ${next}`
+  });
+  return { success: true, data: next };
+}
+
+/**
+ * Recompute and persist an invoice's status from its linked receipts.
+ * UNPAID  → no receipts (or amount <= 0)
+ * PARTIAL → some receipts, not enough
+ * PAID    → received >= amount
+ * CANCELLED bills are not touched.
+ */
+async function recomputeInvoiceStatus(
+  invoiceId: string,
+  ctx: BillingServiceContext
+): Promise<LoadResult<BillingPaidStatus | "CANCELLED">> {
+  const access = dbAccess(ctx);
+  const invoice = await billingRepository.findInvoiceById(invoiceId, access);
+  if (!invoice.success || !invoice.data) {
+    return { success: false, error: "Invoice not found", code: ErrorCodes.notFound };
+  }
+  if (String(invoice.data.status || "").toUpperCase() === "CANCELLED") {
+    return { success: true, data: "CANCELLED" };
+  }
+  const receipts = await billingRepository.listReceiptsByInvoice(invoiceId, access);
+  if (!receipts.success) {
+    return { success: false, error: receipts.error, code: receipts.code };
+  }
+  const amount = Number(invoice.data.amount || 0);
+  const received = (receipts.data || []).reduce(
+    (sum, r) => sum + Number(r.amount || 0),
+    0
+  );
+  let next: BillingPaidStatus;
+  if (amount <= 0) next = "UNPAID";
+  else if (received <= 0) next = "UNPAID";
+  else if (received >= amount) next = "PAID";
+  else next = "PARTIAL";
+
+  const current = String(invoice.data.status || "");
+  if (current !== next) {
+    const updated = await billingRepository.updateInvoice(
+      invoiceId,
+      { status: next, updated_by: ctx.actor.email },
+      access
+    );
+    if (!updated.success) {
+      return {
+        success: false,
+        error: updated.error || "Could not update invoice status",
+        code: updated.code,
+        details: updated.details
+      };
+    }
+    await fireAudit(ctx, "billing", {
+      entity_id: invoiceId,
+      action: "update",
+      before: { status: current },
+      after: { status: next },
+      stamp: `Invoice ${invoice.data.invoice_no || invoiceId} status ${current || "—"} → ${next}`
+    });
+  }
+  return { success: true, data: next };
 }
 
 /** Load a billing bundle (billing + svc + receipts) and compute server-side totals. */
@@ -218,12 +513,23 @@ async function loadBundleWithTotals(
     }
   }
 
+  // Per-period invoices for this bill. We compute received-per-invoice
+  // from the bill's receipt set (cheaper than per-invoice round-trips and
+  // keeps the bundle one Supabase call per child table).
+  const invoicesRes = await billingRepository.listInvoicesByBilling(
+    billingId,
+    dbAccess(ctx)
+  );
+  const invoiceRows = invoicesRes.success ? invoicesRes.data || [] : [];
+  const invoices = buildInvoiceSummaries(invoiceRows, receipts);
+
   return {
     success: true,
     data: {
       billing,
       services,
       receipts,
+      invoices,
       totals,
       period: periodFromServices(services),
       patient: patientSummary
@@ -251,6 +557,7 @@ async function ensureActiveBilling(
       id,
       patient_id: patientId,
       status: "Active",
+      paid_status: "UNPAID",
       sec_dep: 0,
       created: new Date().toISOString(),
       created_by: ctx.actor.email,
@@ -295,6 +602,7 @@ export const billingService = {
     if (!parsed.success) return passFailure(parsed);
     const query = parsed.data as BillingListQuery;
 
+    const access = dbAccess(ctx);
     const result = await billingRepository.listBillings(
       {
         limit: query.limit,
@@ -303,11 +611,68 @@ export const billingService = {
         patient_id: query.patient_id,
         status: query.status
       },
-      dbAccess(ctx)
+      access
     );
     if (!result.success) return passFailure(result);
+    const rows = result.data?.rows || [];
+    const billingIds = rows.map((r) => String(r.id));
+    const patientIds = Array.from(
+      new Set(rows.map((r) => String(r.patient_id || "")).filter(Boolean))
+    );
+
+    const [allSvc, allReceipts, patientsRes] = await Promise.all([
+      billingRepository.listSvcByBillingIds(billingIds, access),
+      billingRepository.listActiveReceiptsByBillingIds(billingIds, access),
+      patientRepository.findByIds(patientIds, access)
+    ]);
+    if (!allSvc.success) return passFailure(allSvc);
+    if (!allReceipts.success) return passFailure(allReceipts);
+    if (!patientsRes.success) return passFailure(patientsRes);
+
+    const svcByBilling = new Map<string, JsonRow[]>();
+    for (const s of allSvc.data || []) {
+      const bid = String(s.billing_id || "");
+      if (!svcByBilling.has(bid)) svcByBilling.set(bid, []);
+      svcByBilling.get(bid)!.push(s);
+    }
+    const receiptsByBilling = new Map<string, JsonRow[]>();
+    for (const r of allReceipts.data || []) {
+      const bid = String(r.billing_id || "");
+      if (!receiptsByBilling.has(bid)) receiptsByBilling.set(bid, []);
+      receiptsByBilling.get(bid)!.push(r);
+    }
+    const patientMap = new Map<string, { name: string; phone: string }>();
+    for (const p of patientsRes.data || []) {
+      const pid = String(p.id || "");
+      patientMap.set(pid, {
+        name: String(p.full_name || p.name || "").trim(),
+        phone: String(p.mobile || p.phone || "").trim()
+      });
+    }
+
+    const enriched = rows.map((b) => {
+      const id = String(b.id);
+      const services = svcByBilling.get(id) || [];
+      const receipts = receiptsByBilling.get(id) || [];
+      const totals = computeBillingTotals({
+        services,
+        receipts,
+        secDep: Number(b.sec_dep || 0)
+      });
+      const patient = patientMap.get(String(b.patient_id || "")) || null;
+      return {
+        ...b,
+        patient_name: patient?.name || "",
+        patient_phone: patient?.phone || "",
+        totals,
+        paid_status:
+          (b.paid_status as string | null) ||
+          derivePaidStatus(totals)
+      };
+    });
+
     return success({
-      rows: result.data?.rows || [],
+      rows: enriched,
       total: result.data?.total ?? 0
     });
   },
@@ -325,6 +690,7 @@ export const billingService = {
       billings: JsonRow[];
       receipts: JsonRow[];
       services: JsonRow[];
+      invoices: InvoiceSummary[];
       totalsByBilling: Record<string, BillingTotals>;
     }>
   > {
@@ -335,27 +701,22 @@ export const billingService = {
     const billings = await billingRepository.listBillingsByPatient(patientId, access);
     if (!billings.success) return passFailure(billings);
     const billingRows = billings.data || [];
-    const billingIds = new Set(billingRows.map((b) => String(b.id)));
+    const billingIdList = billingRows.map((b) => String(b.id));
+    const billingIds = new Set(billingIdList);
 
-    const [allReceipts, allSvc] = await Promise.all([
+    const [allReceipts, allSvc, invoiceRows] = await Promise.all([
       billingRepository.listAllReceipts(access),
-      // Pull svc entries via per-billing reads (cheap on indexed billing_id):
-      Promise.all(
-        billingRows.map((b) =>
-          billingRepository.listSvcByBilling(String(b.id), access)
-        )
-      )
+      billingRepository.listSvcByBillingIds(billingIdList, access),
+      billingRepository.listInvoicesByPatient(patientId, access)
     ]);
     if (!allReceipts.success) return passFailure(allReceipts);
-    for (const r of allSvc) {
-      if (!r.success) return passFailure(r);
-    }
+    if (!allSvc.success) return passFailure(allSvc);
+    if (!invoiceRows.success) return passFailure(invoiceRows);
 
     const receipts = (allReceipts.data || []).filter((r) =>
       billingIds.has(String(r.billing_id || ""))
     );
-    const services: JsonRow[] = [];
-    for (const r of allSvc) services.push(...(r.data || []));
+    const services = allSvc.data || [];
 
     const totalsByBilling: Record<string, BillingTotals> = {};
     for (const b of billingRows) {
@@ -367,10 +728,13 @@ export const billingService = {
       });
     }
 
+    const invoices = buildInvoiceSummaries(invoiceRows.data || [], receipts);
+
     return success({
       billings: billingRows,
       receipts,
       services,
+      invoices,
       totalsByBilling
     });
   },
@@ -555,22 +919,140 @@ export const billingService = {
       return failure(guard.error || "Cannot close bill", guard.code, guard.details);
     }
 
-    const patch = billingCloseRow(ctx.actor.email, input.reason, input.close_reason_other);
-    const updated = await billingRepository.updateBilling(id, patch, dbAccess(ctx));
-    if (!updated.success) return passFailure(updated);
+    // P0 ordering: cap + prune linked duty diary rows BEFORE flipping the
+    // bill to Closed, so dutyDiaryService.materializeDuty still sees an
+    // Active bill (its own guard refuses to write to a Closed bill).
+    //
+    // Hardening (audit follow-up):
+    //   1. After capping, re-run loadBundleWithTotals + canCloseBilling so
+    //      pruning future svc rows can't accidentally pass an
+    //      already-failed guard. (In practice cap reduces totals, so a
+    //      passing pre-check stays passing — this is a defence in depth.)
+    //   2. If the status-flip update fails, attempt to restore the duty
+    //      windows so we don't end up with shortened diaries AND an Active
+    //      bill (operator confusion + financial drift).
+    const patientId = String(existing.data.patient_id || "");
+    let capSummary: CapDutiesResult | null = null;
+    if (patientId) {
+      try {
+        capSummary = await capLinkedDutiesOnBillingClose(patientId, ctx, "close");
+        if (capSummary.errors.length) {
+          await writeMutationAudit(dbAccess(ctx), ctx.actor, {
+            module: "billing",
+            entity_id: id,
+            action: "update",
+            stamp: `Cap-on-close partial failure (${capSummary.errors.length} duties)`,
+            before: null,
+            after: capSummary
+          });
+        }
+      } catch (err) {
+        console.error("[billingService.close] cap linked duties failed", err);
+        await writeMutationAudit(dbAccess(ctx), ctx.actor, {
+          module: "billing",
+          entity_id: id,
+          action: "update",
+          stamp: `Cap-on-close threw: ${err instanceof Error ? err.message : String(err)}`,
+          before: null,
+          after: null
+        });
+      }
+    }
+
+    // Re-validate against the post-cap snapshot. If the cap removed every
+    // svc row (edge case: open-ended duty had no past-day entries), the
+    // guard's services-count check would now fail — return a clean error.
+    const postCap = await loadBundleWithTotals(id, ctx);
+    if (!postCap.success) {
+      return failure(postCap.error || "Post-cap refetch failed", postCap.code, postCap.details);
+    }
+    const postCapGuard = canCloseBilling(
+      postCap.data.totals,
+      postCap.data.services.length,
+      input.force
+    );
+    if (!postCapGuard.success) {
+      return failure(
+        postCapGuard.error || "Cannot close bill after diary cap",
+        postCapGuard.code,
+        postCapGuard.details
+      );
+    }
+
+    const closePatch = billingCloseRow(ctx.actor.email, input.reason, input.close_reason_other);
+    const flipped = await billingRepository.flipBillingStatusRpc(
+      id,
+      "Closed",
+      ctx.actor.email,
+      String(closePatch.closed_at || new Date().toISOString()),
+      dbAccess(ctx)
+    );
+    if (!flipped.success) {
+      return passFailure(flipped);
+    }
+    const flipBody = flipped.data;
+    if (!flipBody?.ok) {
+      const code =
+        flipBody?.code === "duplicate"
+          ? ErrorCodes.duplicate
+          : flipBody?.code === "conflict"
+            ? ErrorCodes.conflict
+            : ErrorCodes.business;
+      // Compensating rollback when the atomic status flip fails.
+      if (patientId && capSummary && capSummary.duties_capped > 0) {
+        try {
+          const prevCloseEnd = capSummary.capped_end_at || new Date().toISOString();
+          const restore = await capLinkedDutiesOnBillingClose(
+            patientId,
+            ctx,
+            "reopen",
+            prevCloseEnd
+          );
+          await writeMutationAudit(dbAccess(ctx), ctx.actor, {
+            module: "billing",
+            entity_id: id,
+            action: "update",
+            stamp: `Close flip FAILED — rolled back cap (resumed:${restore.duties_resumed})`,
+            before: capSummary,
+            after: restore
+          });
+        } catch (err) {
+          console.error("[billingService.close] compensating rollback failed", err);
+        }
+      }
+      return failure(
+        flipBody?.message || "Could not close bill — refresh and retry",
+        code,
+        flipBody
+      );
+    }
+    if (!flipBody.billing) {
+      if (patientId && capSummary && capSummary.duties_capped > 0) {
+        try {
+          const prevCloseEnd = capSummary.capped_end_at || new Date().toISOString();
+          await capLinkedDutiesOnBillingClose(patientId, ctx, "reopen", prevCloseEnd);
+        } catch (err) {
+          console.error("[billingService.close] compensating rollback failed", err);
+        }
+      }
+      return failure("Billing close returned no row", ErrorCodes.internal);
+    }
 
     const refreshed = await loadBundleWithTotals(id, ctx);
     if (!refreshed.success) {
       return failure(refreshed.error || "Refetch failed", refreshed.code, refreshed.details);
     }
 
+    const capStamp = capSummary
+      ? ` · duties:${capSummary.duties_processed} capped:${capSummary.duties_capped} svc-pruned:${capSummary.svc_pruned} payouts-pruned:${capSummary.payouts_pruned}${capSummary.errors.length ? ` errors:${capSummary.errors.length}` : ""}`
+      : "";
     return finalizeWithAudit(
       await fireAudit(ctx, "billing", {
         entity_id: id,
         action: "close",
         before: existing.data,
         after: refreshed.data.billing,
-        stamp: `Closed${input.reason ? `: ${input.reason}` : ""}${input.force ? " (force)" : ""}`
+        stamp: `Closed${input.reason ? `: ${input.reason}` : ""}${input.force ? " (force)" : ""}${capStamp}`
       }),
       refreshed.data
     );
@@ -610,22 +1092,78 @@ export const billingService = {
       );
     }
 
-    const patch = billingReopenRow(ctx.actor.email, input.reason);
-    const updated = await billingRepository.updateBilling(id, patch, dbAccess(ctx));
-    if (!updated.success) return passFailure(updated);
+    const flipped = await billingRepository.flipBillingStatusRpc(
+      id,
+      "Active",
+      ctx.actor.email,
+      null,
+      dbAccess(ctx)
+    );
+    if (!flipped.success) return passFailure(flipped);
+    const flipBody = flipped.data;
+    if (!flipBody?.ok) {
+      const code =
+        flipBody?.code === "duplicate"
+          ? ErrorCodes.duplicate
+          : flipBody?.code === "conflict"
+            ? ErrorCodes.conflict
+            : ErrorCodes.business;
+      return failure(
+        flipBody?.message || "Could not reopen bill — refresh and retry",
+        code,
+        flipBody
+      );
+    }
+
+    // Restore open-ended accrual for any duty whose end_at was capped at
+    // the bill's previous close timestamp. Best-effort: failures get
+    // audited but don't unwind the reopen. We prefer the new `closed_at`
+    // column over `updated_at` (which moves on every subsequent edit and
+    // therefore failed to match the actual cap day after any post-close
+    // mutation).
+    const patientId = String(existing.data.patient_id || "");
+    let resumeSummary: CapDutiesResult | null = null;
+    if (patientId) {
+      try {
+        const prevCloseEnd = String(
+          existing.data.closed_at || existing.data.updated_at || ""
+        );
+        resumeSummary = await capLinkedDutiesOnBillingClose(
+          patientId,
+          ctx,
+          "reopen",
+          prevCloseEnd
+        );
+        if (resumeSummary.errors.length) {
+          await writeMutationAudit(dbAccess(ctx), ctx.actor, {
+            module: "billing",
+            entity_id: id,
+            action: "update",
+            stamp: `Resume-on-reopen partial failure (${resumeSummary.errors.length} duties)`,
+            before: null,
+            after: resumeSummary
+          });
+        }
+      } catch (err) {
+        console.error("[billingService.reopen] resume linked duties failed", err);
+      }
+    }
 
     const refreshed = await loadBundleWithTotals(id, ctx);
     if (!refreshed.success) {
       return failure(refreshed.error || "Refetch failed", refreshed.code, refreshed.details);
     }
 
+    const resumeStamp = resumeSummary && resumeSummary.duties_resumed
+      ? ` · duties-resumed:${resumeSummary.duties_resumed}`
+      : "";
     return finalizeWithAudit(
       await fireAudit(ctx, "billing", {
         entity_id: id,
         action: "update",
         before: existing.data,
         after: refreshed.data.billing,
-        stamp: `Reopened: ${input.reason}`
+        stamp: `Reopened: ${input.reason}${resumeStamp}`
       }),
       refreshed.data
     );
@@ -772,6 +1310,13 @@ export const billingService = {
       discount: input.discount
     });
 
+    const svcLock = await assertNoMonthlyInvoiceLock(
+      billingId,
+      [row.date],
+      access
+    );
+    if (!svcLock.success) return passFailure(svcLock);
+
     const inserted = await billingRepository.insertSvc(row, access);
     if (!inserted.success) return passFailure(inserted);
 
@@ -787,6 +1332,8 @@ export const billingService = {
     if (!totals.success) {
       return failure(totals.error || "Refetch failed", totals.code, totals.details);
     }
+
+    await recomputePaidStatus(billingId, ctx);
 
     return finalizeWithAudit(
       await fireAudit(ctx, "billing", {
@@ -902,6 +1449,8 @@ export const billingService = {
       return failure(totals.error || "Refetch failed", totals.code, totals.details);
     }
 
+    await recomputePaidStatus(billingId, ctx);
+
     const resultData = {
       billing_id: billingId,
       created,
@@ -949,6 +1498,36 @@ export const billingService = {
       );
     }
 
+    if (input.invoice_id) {
+      const inv = await billingRepository.findInvoiceById(String(input.invoice_id), access);
+      if (!inv.success) return passFailure(inv);
+      if (!inv.data) return notFoundFailure("Invoice", String(input.invoice_id));
+      if (String(inv.data.billing_id) !== input.billing_id) {
+        return failure(
+          "Invoice does not belong to this bill",
+          ErrorCodes.business,
+          { invoice_id: input.invoice_id, billing_id: input.billing_id }
+        );
+      }
+      const invReceipts = await billingRepository.listReceiptsByInvoice(
+        String(input.invoice_id),
+        access
+      );
+      if (!invReceipts.success) return passFailure(invReceipts);
+      const received = (invReceipts.data || []).reduce(
+        (s, r) => s + Number(r.amount || 0),
+        0
+      );
+      const outstanding = invoiceOutstanding(Number(inv.data.amount || 0), received);
+      if (Number(input.amount) > outstanding + 0.005) {
+        return failure(
+          `Receipt amount ₹${input.amount} exceeds invoice outstanding ₹${outstanding}`,
+          ErrorCodes.business,
+          { outstanding, amount: input.amount, invoice_no: inv.data.invoice_no }
+        );
+      }
+    }
+
     if (input.id) {
       const exists = await billingRepository.receiptExists(input.id, access);
       if (!exists.success) return passFailure(exists);
@@ -957,20 +1536,490 @@ export const billingService = {
       }
     }
     const id = input.id || newId.receipt();
+    const receiptNoRes = await billingRepository.nextReceiptNoRpc(access);
+    const receiptNo =
+      receiptNoRes.success && receiptNoRes.data ? receiptNoRes.data : null;
     const saved = await billingRepository.saveReceiptRpc(
       { ...input, id, created_by: ctx.actor.email },
       access
     );
     if (!saved.success) return passFailure(saved);
 
+    if (receiptNo) {
+      const stamp = await billingRepository.updateReceipt(
+        id,
+        { receipt_no: receiptNo },
+        access
+      );
+      if (stamp.success && stamp.data) {
+        (saved.data ?? {})["receipt_no"] = receiptNo;
+      }
+    }
+
+    await recomputePaidStatus(input.billing_id, ctx);
+    if (input.invoice_id) {
+      await recomputeInvoiceStatus(String(input.invoice_id), ctx);
+    }
+
     return finalizeWithAudit(
       await fireAudit(ctx, "receipt", {
         entity_id: id,
         action: "create",
         after: saved.data ?? null,
-        stamp: `₹${input.amount} on bill ${input.billing_id}`
+        stamp: `${receiptNo ? `${receiptNo} ` : ""}₹${input.amount} on bill ${input.billing_id}`
       }),
       saved.data ?? null
+    );
+  },
+
+  /**
+   * Recompute `paid_status` (UNPAID | PARTIAL | PAID) for a billing from
+   * server-side totals. Idempotent — safe to call after every receipt /
+   * svc-entry / soft-delete mutation. Called internally by recordPayment,
+   * softDeleteReceipt, and the svc-entry replace endpoint.
+   */
+  async recomputePaidStatus(
+    billingId: string,
+    ctx: BillingServiceContext
+  ): Promise<ApiResult<{ paid_status: BillingPaidStatus }>> {
+    const result = await recomputePaidStatus(billingId, ctx);
+    return result.success
+      ? success({ paid_status: result.data })
+      : failure(result.error || "Could not recompute paid status", result.code, result.details);
+  },
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Per-period invoices (each generation gets its own invoice_no)
+  // ─────────────────────────────────────────────────────────────────────
+
+  async listInvoices(
+    billingId: string,
+    ctx: BillingServiceContext
+  ): Promise<ApiResult<InvoiceSummary[]>> {
+    const bundle = await loadBundleWithTotals(billingId, ctx);
+    if (!bundle.success) {
+      return failure(bundle.error || "Bill not found", bundle.code, bundle.details);
+    }
+    return success(bundle.data.invoices);
+  },
+
+  async getInvoice(
+    invoiceId: string,
+    ctx: BillingServiceContext
+  ): Promise<
+    ApiResult<{
+      invoice: JsonRow;
+      lines: JsonRow[];
+      receipts: JsonRow[];
+      received: number;
+      outstanding: number;
+      status: BillingPaidStatus | "CANCELLED";
+    }>
+  > {
+    const access = dbAccess(ctx);
+    const invoice = await billingRepository.findInvoiceById(invoiceId, access);
+    if (!invoice.success) return passFailure(invoice);
+    if (!invoice.data) return notFoundFailure("Invoice", invoiceId);
+    const [lines, receipts] = await Promise.all([
+      billingRepository.listInvoiceLines(invoiceId, access),
+      billingRepository.listReceiptsByInvoice(invoiceId, access)
+    ]);
+    if (!lines.success) return passFailure(lines);
+    if (!receipts.success) return passFailure(receipts);
+    const amount = Number(invoice.data.amount || 0);
+    const received = (receipts.data || []).reduce(
+      (s, r) => s + Number(r.amount || 0),
+      0
+    );
+    const outstanding = Math.max(0, amount - received);
+    let status: BillingPaidStatus | "CANCELLED";
+    const persisted = String(invoice.data.status || "").toUpperCase();
+    if (persisted === "CANCELLED") status = "CANCELLED";
+    else if (amount <= 0 || received <= 0) status = "UNPAID";
+    else if (received >= amount) status = "PAID";
+    else status = "PARTIAL";
+    return success({
+      invoice: invoice.data,
+      lines: lines.data || [],
+      receipts: receipts.data || [],
+      received,
+      outstanding,
+      status
+    });
+  },
+
+  /**
+   * Generate a per-period invoice. MONTHLY snapshots all svc entries in the
+   * billing whose date is in `period`; MANUAL takes the explicit lines. Each
+   * generation allocates a fresh invoice number and starts UNPAID.
+   *
+   * MONTHLY is idempotent: re-running for the same (billing_id, period)
+   * returns the existing invoice with `duplicate: true`.
+   */
+  async generateInvoice(
+    rawInput: unknown,
+    ctx: BillingServiceContext
+  ): Promise<
+    ApiResult<{
+      invoice: JsonRow;
+      lines: JsonRow[];
+      duplicate: boolean;
+    }>
+  > {
+    const parsed = parseInput(generateInvoiceSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const input = parsed.data as GenerateInvoiceInput;
+    const access = dbAccess(ctx);
+
+    const billing = await billingRepository.findBillingById(input.billing_id, access);
+    if (!billing.success) return passFailure(billing);
+    if (!billing.data) return notFoundFailure("Billing", input.billing_id);
+
+    const editGuard = canEditBilling(String(billing.data.status || ""));
+    if (!editGuard.success) {
+      return failure(
+        editGuard.error || "Bill is closed — cannot issue new invoices",
+        editGuard.code,
+        editGuard.details
+      );
+    }
+
+    // MONTHLY: idempotent.
+    if (input.kind === "MONTHLY" && input.period) {
+      const existing = await billingRepository.findInvoiceForPeriod(
+        input.billing_id,
+        input.period,
+        access
+      );
+      if (!existing.success) return passFailure(existing);
+      if (existing.data) {
+        const lines = await billingRepository.listInvoiceLines(
+          String(existing.data.id),
+          access
+        );
+        return success({
+          invoice: existing.data,
+          lines: lines.success ? lines.data || [] : [],
+          duplicate: true
+        });
+      }
+    }
+
+    // Build line snapshots.
+    type LineSnapshot = {
+      svc_entry_id: number | null;
+      date: string;
+      service_name: string;
+      partner: string;
+      count: number;
+      amt: number;
+      total: number;
+    };
+    let lines: LineSnapshot[] = [];
+    let fromDate: string | null = input.from_date || null;
+    let toDate: string | null = input.to_date || null;
+
+    if (input.kind === "MONTHLY") {
+      const svc = await billingRepository.listSvcByBilling(input.billing_id, access);
+      if (!svc.success) return passFailure(svc);
+      const period = input.period as string;
+      const matching = (svc.data || []).filter(
+        (s) => String(s.date || "").slice(0, 7) === period
+      );
+      if (matching.length === 0) {
+        return failure(
+          `No service entries in ${period} for this bill — nothing to invoice`,
+          ErrorCodes.business
+        );
+      }
+      lines = matching
+        .map((s) => ({
+          svc_entry_id:
+            typeof s.id === "number" ? s.id : s.id ? Number(s.id) : null,
+          date: String(s.date || ""),
+          service_name: String(s.service_name || ""),
+          partner: String(s.partner || ""),
+          count: Number(s.count || 1),
+          amt: Number(s.amt || 0),
+          total: Number(s.total || 0)
+        }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (!fromDate) fromDate = lines[0].date || null;
+      if (!toDate) toDate = lines[lines.length - 1].date || null;
+    } else {
+      lines = (input.manual_lines || []).map((l) => ({
+        svc_entry_id: null,
+        date: String(l.date || ""),
+        service_name: String(l.service_name || ""),
+        partner: String(l.partner || ""),
+        count: Number(l.count || 1),
+        amt: Number(l.amt || 0),
+        total: Number(l.total || Number(l.amt || 0) * Number(l.count || 1))
+      }));
+    }
+
+    const amount = lines.reduce((s, l) => s + Number(l.total || 0), 0);
+
+    const invoiceNoRes = await billingRepository.nextInvoiceNoRpc(access);
+    if (!invoiceNoRes.success || !invoiceNoRes.data) {
+      return failure(
+        invoiceNoRes.error || "Could not allocate invoice number",
+        invoiceNoRes.code || ErrorCodes.internal
+      );
+    }
+    const invoiceId = newId.invoice();
+    const inserted = await billingRepository.insertInvoice(
+      {
+        id: invoiceId,
+        invoice_no: invoiceNoRes.data,
+        billing_id: input.billing_id,
+        patient_id: String(billing.data.patient_id || ""),
+        kind: input.kind,
+        period: input.kind === "MONTHLY" ? input.period : null,
+        from_date: fromDate,
+        to_date: toDate,
+        amount,
+        status: "UNPAID",
+        notes: input.notes || "",
+        created_by: ctx.actor.email,
+        updated_by: ctx.actor.email
+      },
+      access
+    );
+    if (!inserted.success) {
+      const msg = (inserted.error || "").toLowerCase();
+      if (
+        input.kind === "MONTHLY" &&
+        input.period &&
+        (msg.includes("uq_hh_invoices_monthly_period") || msg.includes("duplicate key"))
+      ) {
+        const race = await billingRepository.findInvoiceForPeriod(
+          input.billing_id,
+          input.period,
+          access
+        );
+        if (race.success && race.data) {
+          const raceLines = await billingRepository.listInvoiceLines(
+            String(race.data.id),
+            access
+          );
+          return success({
+            invoice: race.data,
+            lines: raceLines.success ? raceLines.data || [] : [],
+            duplicate: true
+          });
+        }
+      }
+      return passFailure(inserted);
+    }
+    if (!inserted.data) {
+      return failure("Invoice insert returned no row", ErrorCodes.internal);
+    }
+
+    if (lines.length) {
+      const linesRes = await billingRepository.insertInvoiceLines(
+        lines.map((l) => ({ ...l, invoice_id: invoiceId })),
+        access
+      );
+      if (!linesRes.success) return passFailure(linesRes);
+    }
+
+    const linesAfter = await billingRepository.listInvoiceLines(invoiceId, access);
+
+    return finalizeWithAudit(
+      await fireAudit(ctx, "billing", {
+        entity_id: invoiceId,
+        action: "create",
+        after: inserted.data,
+        stamp: `${invoiceNoRes.data} ${input.kind}${
+          input.kind === "MONTHLY" ? ` ${input.period}` : ""
+        } ₹${amount}`
+      }),
+      {
+        invoice: inserted.data,
+        lines: linesAfter.success ? linesAfter.data || [] : [],
+        duplicate: false
+      }
+    );
+  },
+
+  /**
+   * Rebuild a MONTHLY invoice snapshot from live svc entries (only when no
+   * receipts have been applied).
+   */
+  async regenerateInvoice(
+    invoiceId: string,
+    ctx: BillingServiceContext
+  ): Promise<
+    ApiResult<{
+      invoice: JsonRow;
+      lines: JsonRow[];
+    }>
+  > {
+    const access = dbAccess(ctx);
+    const existing = await billingRepository.findInvoiceById(invoiceId, access);
+    if (!existing.success) return passFailure(existing);
+    if (!existing.data) return notFoundFailure("Invoice", invoiceId);
+
+    if (String(existing.data.kind || "") !== "MONTHLY" || !existing.data.period) {
+      return failure(
+        "Only MONTHLY invoices can be regenerated from service entries",
+        ErrorCodes.business
+      );
+    }
+
+    const billingId = String(existing.data.billing_id || "");
+    const billing = await billingRepository.findBillingById(billingId, access);
+    if (!billing.success) return passFailure(billing);
+    if (!billing.data) return notFoundFailure("Billing", billingId);
+
+    const editGuard = canEditBilling(String(billing.data.status || ""));
+    if (!editGuard.success) {
+      return failure(editGuard.error || "Bill is locked", editGuard.code, editGuard.details);
+    }
+
+    const receipts = await billingRepository.listReceiptsByInvoice(invoiceId, access);
+    if (!receipts.success) return passFailure(receipts);
+    const received = (receipts.data || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+    if (received > 0) {
+      return failure(
+        "Cannot regenerate an invoice that already has receipts — delete receipts first",
+        ErrorCodes.business,
+        { received }
+      );
+    }
+
+    const period = String(existing.data.period);
+    const svc = await billingRepository.listSvcByBilling(billingId, access);
+    if (!svc.success) return passFailure(svc);
+    const matching = (svc.data || []).filter(
+      (s) => String(s.date || "").slice(0, 7) === period
+    );
+    if (!matching.length) {
+      return failure(
+        `No service entries in ${period} — nothing to regenerate`,
+        ErrorCodes.business
+      );
+    }
+
+    const lines = matching
+      .map((s) => ({
+        svc_entry_id: typeof s.id === "number" ? s.id : s.id ? Number(s.id) : null,
+        date: String(s.date || ""),
+        service_name: String(s.service_name || ""),
+        partner: String(s.partner || ""),
+        count: Number(s.count || 1),
+        amt: Number(s.amt || 0),
+        total: Number(s.total || 0),
+        invoice_id: invoiceId
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const amount = lines.reduce((s, l) => s + Number(l.total || 0), 0);
+    const fromDate = lines[0]?.date || null;
+    const toDate = lines[lines.length - 1]?.date || null;
+
+    const cleared = await billingRepository.removeInvoiceLinesByInvoice(invoiceId, access);
+    if (!cleared.success) return passFailure(cleared);
+
+    if (lines.length) {
+      const inserted = await billingRepository.insertInvoiceLines(lines, access);
+      if (!inserted.success) return passFailure(inserted);
+    }
+
+    const updated = await billingRepository.updateInvoice(
+      invoiceId,
+      {
+        amount,
+        from_date: fromDate,
+        to_date: toDate,
+        status: "UNPAID",
+        updated_by: ctx.actor.email
+      },
+      access
+    );
+    if (!updated.success) return passFailure(updated);
+    if (!updated.data) {
+      return failure("Invoice update returned no row", ErrorCodes.internal);
+    }
+
+    const linesAfter = await billingRepository.listInvoiceLines(invoiceId, access);
+
+    return finalizeWithAudit(
+      await fireAudit(ctx, "billing", {
+        entity_id: invoiceId,
+        action: "update",
+        before: existing.data,
+        after: updated.data,
+        stamp: `Regenerated ${existing.data.invoice_no} for ${period} ₹${amount}`
+      }),
+      {
+        invoice: updated.data,
+        lines: linesAfter.success ? linesAfter.data || [] : []
+      }
+    );
+  },
+
+  async recomputeInvoiceStatus(
+    invoiceId: string,
+    ctx: BillingServiceContext
+  ): Promise<ApiResult<{ status: BillingPaidStatus | "CANCELLED" }>> {
+    const res = await recomputeInvoiceStatus(invoiceId, ctx);
+    return res.success
+      ? success({ status: res.data })
+      : failure(res.error || "Could not recompute invoice status", res.code, res.details);
+  },
+
+  /**
+   * Cancel an invoice = HARD DELETE. The invoice + its lines are removed from
+   * the system; any receipts that were applied to it are detached
+   * (invoice_id → NULL) so they stay on the bill as on-account credit.
+   * After deletion the invoice number sequence is compacted so the next
+   * generation continues without a gap.
+   */
+  async cancelInvoice(
+    invoiceId: string,
+    ctx: BillingServiceContext
+  ): Promise<ApiResult<{ deleted: true; invoice_no: string; receipts_detached: number }>> {
+    const access = dbAccess(ctx);
+    const existing = await billingRepository.findInvoiceById(invoiceId, access);
+    if (!existing.success) return passFailure(existing);
+    if (!existing.data) return notFoundFailure("Invoice", invoiceId);
+
+    const rpc = await billingRepository.deleteInvoiceRpc(
+      invoiceId,
+      ctx.actor.email || "",
+      access
+    );
+    if (!rpc.success) return passFailure(rpc);
+    const payload = rpc.data;
+    if (!payload?.ok) {
+      return failure(
+        payload?.message || "Could not delete invoice",
+        payload?.code === "BUSINESS" ? ErrorCodes.business : ErrorCodes.internal,
+        payload ?? undefined
+      );
+    }
+
+    const billingId = String(payload.billing_id || existing.data.billing_id || "");
+    if (billingId) {
+      const paid = await recomputePaidStatus(billingId, ctx);
+      if (!paid.success) return passFailure(paid);
+    }
+
+    return finalizeWithAudit(
+      await fireAudit(ctx, "billing", {
+        entity_id: invoiceId,
+        action: "soft-delete",
+        before: existing.data,
+        after: null,
+        stamp: `Invoice ${payload.invoice_no || invoiceId} deleted (${payload.receipts_detached ?? 0} receipts detached)`
+      }),
+      {
+        deleted: true as const,
+        invoice_no: String(payload.invoice_no || existing.data.invoice_no || invoiceId),
+        receipts_detached: Number(payload.receipts_detached ?? 0)
+      }
     );
   },
 
@@ -1027,6 +2076,12 @@ export const billingService = {
       access
     );
     if (!deleted.success) return passFailure(deleted);
+
+    await recomputePaidStatus(billingId, ctx);
+    const linkedInvoiceId = String((existing.data || {}).invoice_id || "");
+    if (linkedInvoiceId) {
+      await recomputeInvoiceStatus(linkedInvoiceId, ctx);
+    }
 
     return finalizeWithAudit(
       await fireAudit(ctx, "receipt", {
@@ -1218,6 +2273,13 @@ export const billingService = {
         editGuard.details
       );
     }
+
+    const lock = await assertNoMonthlyInvoiceLock(
+      billingId,
+      input.rows.map((r) => r.date || ""),
+      access
+    );
+    if (!lock.success) return passFailure(lock);
 
     const rows: JsonRow[] = input.rows.map((row) => ({
       billing_id: row.billing_id || billingId,

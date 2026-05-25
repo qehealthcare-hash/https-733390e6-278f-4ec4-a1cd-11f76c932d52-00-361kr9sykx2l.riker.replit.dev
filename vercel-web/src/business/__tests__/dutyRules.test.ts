@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  canCancelDuty,
   canCancelDutyWithBilling,
   canEditDutyStatus,
   canReopenCompletedDuty,
   dutiesTimeOverlap,
+  dutyPersistRow,
+  effectiveMaterializeEndAt,
+  isOpenEndedEndAt,
   isOverlapExcludedStatus,
+  OPEN_ENDED_END_AT,
+  openEndedSentinelFor,
   selectOverlappingDuty,
   selectPatientOverlappingDuty,
   shouldCheckDutyOverlap
@@ -109,5 +115,68 @@ describe("dutyRules — workflow matrix", () => {
     expectFail(canCancelDutyWithBilling(true, 1), ErrorCodes.business);
     expectOk(canCancelDutyWithBilling(true, 0));
     expectOk(canCancelDutyWithBilling(false, 5));
+  });
+
+  it("blocks cancelling a COMPLETED duty", () => {
+    expectFail(canCancelDuty("COMPLETED"), ErrorCodes.business);
+    expectOk(canCancelDuty("IN_PROGRESS"));
+    expectFail(canCancelDuty("CANCELLED"), ErrorCodes.business);
+  });
+});
+
+describe("dutyRules — open-ended duty (no end_at)", () => {
+  it("isOpenEndedEndAt detects sentinel and blank end_at", () => {
+    expect(isOpenEndedEndAt(undefined)).toBe(true);
+    expect(isOpenEndedEndAt("")).toBe(true);
+    expect(isOpenEndedEndAt(OPEN_ENDED_END_AT)).toBe(true);
+    expect(isOpenEndedEndAt("2099-12-31T00:00:00Z")).toBe(true);
+    expect(isOpenEndedEndAt("2026-05-01T08:00:00Z")).toBe(false);
+  });
+
+  it("dutyPersistRow defaults end_at to the open-ended sentinel when missing", () => {
+    const row = dutyPersistRow({
+      id: "DUTY1",
+      patient_id: "PAT1",
+      employee_id: "EMP1",
+      shift_type: "DAY",
+      start_at: "2026-05-01T08:00:00Z",
+      status: "SCHEDULED",
+      service_name: "Care Taker Services"
+    });
+    expect(row.end_at).toBe(openEndedSentinelFor("2026-05-01T08:00:00Z"));
+    expect(isOpenEndedEndAt(row.end_at)).toBe(true);
+  });
+
+  it("dutyPersistRow keeps an explicit end_at when provided", () => {
+    const row = dutyPersistRow({
+      id: "DUTY1",
+      patient_id: "PAT1",
+      employee_id: "EMP1",
+      shift_type: "DAY",
+      start_at: "2026-05-01T08:00:00Z",
+      end_at: "2026-05-10T20:00:00Z",
+      status: "SCHEDULED",
+      service_name: "Care Taker Services"
+    });
+    expect(row.end_at).toBe("2026-05-10T20:00:00Z");
+  });
+
+  it("effectiveMaterializeEndAt for an open-ended duty caps to today", () => {
+    const today = "2026-05-04T23:59:59.999Z";
+    const result = effectiveMaterializeEndAt({ end_at: OPEN_ENDED_END_AT }, null, today);
+    expect(result).toBe(today);
+  });
+
+  it("effectiveMaterializeEndAt caps to bill close date when earlier than today", () => {
+    const today = "2026-05-04T23:59:59.999Z";
+    const billClose = "2026-05-02T18:00:00Z";
+    const result = effectiveMaterializeEndAt({ end_at: OPEN_ENDED_END_AT }, billClose, today);
+    expect(result).toBe(billClose);
+  });
+
+  it("effectiveMaterializeEndAt respects explicit end_at when earlier than today", () => {
+    const today = "2026-05-10T23:59:59.999Z";
+    const result = effectiveMaterializeEndAt({ end_at: "2026-05-05T20:00:00Z" }, null, today);
+    expect(result).toBe("2026-05-05T20:00:00Z");
   });
 });
