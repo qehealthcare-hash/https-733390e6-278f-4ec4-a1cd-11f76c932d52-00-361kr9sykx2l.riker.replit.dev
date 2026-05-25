@@ -75,6 +75,118 @@ function clampScore(value) {
   return Math.max(0, Math.min(10, n));
 }
 
+// Legacy SPA rows store human-friendly labels (e.g. "Day Shift (9:00 AM – 7:00 PM)",
+// "Patient Attendant", "Contract", "Nurse") in the same columns we now expose as
+// strict <select> dropdowns. Without normalisation those rows silently render the
+// first option and overwrite the stored value on save. Map them back to canonical
+// values so the form round-trips legacy data faithfully.
+function findOption(options, value) {
+  if (value == null) return null;
+  var target = String(value).trim();
+  if (!target) return null;
+  for (var i = 0; i < options.length; i += 1) {
+    if (options[i].value === target) return options[i];
+  }
+  var upper = target.toUpperCase();
+  for (var j = 0; j < options.length; j += 1) {
+    if (String(options[j].value).toUpperCase() === upper) return options[j];
+  }
+  return null;
+}
+
+function normaliseRoleValue(raw) {
+  if (!raw) return "NURSE";
+  var match = findOption(employeeRoleOptions, raw);
+  if (match) return match.value;
+  var lower = String(raw).trim().toLowerCase();
+  if (lower.indexOf("nurse") >= 0) return "NURSE";
+  if (lower.indexOf("attend") >= 0) return "ATTENDANT";
+  if (lower.indexOf("account") >= 0) return "ACCOUNTANT";
+  if (lower.indexOf("staff") >= 0) return "STAFF";
+  return "OTHER";
+}
+
+function normaliseDeptValue(raw) {
+  if (!raw) return "NURSING";
+  var match = findOption(departmentOptions, raw);
+  if (match) return match.value;
+  var lower = String(raw).trim().toLowerCase();
+  if (lower.indexOf("nurs") >= 0) return "NURSING";
+  if (lower.indexOf("attend") >= 0) return "ATTENDANT";
+  if (lower.indexOf("admin") >= 0) return "ADMIN";
+  if (lower.indexOf("account") >= 0) return "ACCOUNTS";
+  if (lower.indexOf("ops") >= 0 || lower.indexOf("operation") >= 0) return "OPS";
+  return "ATTENDANT";
+}
+
+function normaliseEmpTypeValue(raw) {
+  if (!raw) return "FULL_TIME";
+  var match = findOption(employeeTypeOptions, raw);
+  if (match) return match.value;
+  var upper = String(raw).trim().toUpperCase().replace(/[\s-]+/g, "_");
+  if (upper === "FULLTIME" || upper === "FULL_TIME") return "FULL_TIME";
+  if (upper === "PARTTIME" || upper === "PART_TIME") return "PART_TIME";
+  if (upper === "CONTRACT") return "CONTRACT";
+  if (upper === "INTERN") return "INTERN";
+  var lower = String(raw).trim().toLowerCase();
+  if (lower.indexOf("part") >= 0) return "PART_TIME";
+  if (lower.indexOf("contract") >= 0) return "CONTRACT";
+  if (lower.indexOf("intern") >= 0) return "INTERN";
+  return "FULL_TIME";
+}
+
+function normaliseShiftValue(raw) {
+  if (!raw) return "DAY";
+  var match = findOption(shiftOptions, raw);
+  if (match) return match.value;
+  var upper = String(raw).trim().toUpperCase();
+  if (upper === "DAY" || upper === "NIGHT" || upper === "24H" || upper === "ONE_TIME" || upper === "CUSTOM") {
+    return upper === "ONE_TIME" || upper === "CUSTOM" || upper === "24H" ? upper : upper;
+  }
+  var lower = String(raw).trim().toLowerCase();
+  if (lower.indexOf("24") >= 0) return "24H";
+  if (lower.indexOf("night") >= 0) return "NIGHT";
+  if (lower.indexOf("day") >= 0) return "DAY";
+  if (lower.indexOf("one") >= 0 || lower.indexOf("1 hour") >= 0 || lower.indexOf("1hr") >= 0) return "ONE_TIME";
+  if (lower.indexOf("custom") >= 0) return "CUSTOM";
+  return "DAY";
+}
+
+function normaliseEducationValue(raw) {
+  if (!raw) return "ILLITERATE";
+  var match = findOption(educationOptions, raw);
+  if (match) return match.value;
+  var lower = String(raw).trim().toLowerCase();
+  if (lower.indexOf("illit") >= 0) return "ILLITERATE";
+  if (lower.indexOf("graduate") >= 0) return "GRADUATE";
+  if (lower.indexOf("12") >= 0 || lower.indexOf("10") >= 0) return "PASS_10_12";
+  if (lower.indexOf("below") >= 0) return "BELOW_10";
+  return "ILLITERATE";
+}
+
+function normaliseStatusValue(raw, active) {
+  var fallback = active === false ? "Inactive" : "Active";
+  if (!raw) return fallback;
+  var match = findOption(employeeStatusOptions, raw);
+  if (match) return match.value;
+  var lower = String(raw).trim().toLowerCase();
+  if (lower.indexOf("inactive") >= 0) return "Inactive";
+  if (lower.indexOf("leave") >= 0) return "OnLeave";
+  if (lower.indexOf("suspend") >= 0) return "Suspended";
+  if (lower.indexOf("active") >= 0) return "Active";
+  return fallback;
+}
+
+// Mobile values like "7874751265(son)" pollute the input box on edit and confuse
+// duplicate detection. Strip annotations to a clean dialable form before rendering
+// (server still re-normalises on save, but we want the field to display sanely).
+function sanitiseMobileForForm(raw) {
+  if (raw == null) return "";
+  var trimmed = String(raw).trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/[^0-9+]/g, "");
+}
+
 function computeScoreTotal(form) {
   var parts = [form.score_experience, form.score_behaviour, form.score_testimonial]
     .filter(function (v) { return v != null && Number.isFinite(Number(v)); })
@@ -243,15 +355,15 @@ export default function EmployeesPage() {
       fn: row.fn || parts[0] || "",
       mn: row.mn || (parts.length > 2 ? parts.slice(1, -1).join(" ") : ""),
       ln: row.ln || (parts.length > 1 ? parts[parts.length - 1] : ""),
-      mobile: row.mobile || row.phone || "",
-      phone2: row.phone2 || "",
+      mobile: sanitiseMobileForForm(row.mobile || row.phone || ""),
+      phone2: sanitiseMobileForForm(row.phone2 || ""),
       gender: row.gender || "Female",
       dob: row.dob || "",
-      dept: row.dept || "NURSING",
-      role: row.role || row.desig || "NURSE",
-      emp_type: row.emp_type || row.etype || "FULL_TIME",
-      education: row.education || row.edu || "ILLITERATE",
-      shift_type: row.shift_type || row.shift || "DAY",
+      dept: normaliseDeptValue(row.dept || row.department),
+      role: normaliseRoleValue(row.role || row.desig),
+      emp_type: normaliseEmpTypeValue(row.emp_type || row.etype || row.employee_type),
+      education: normaliseEducationValue(row.education || row.edu),
+      shift_type: normaliseShiftValue(row.shift_type || row.shift),
       join_date: row.join_date || row.joining_date || row.join || "",
       leave_date: row.leave_date || row.leave || "",
       exp: row.exp || "",
@@ -266,7 +378,7 @@ export default function EmployeesPage() {
       district: row.district || "",
       state: row.state || "Gujarat",
       ecname: row.ecname || row.relname || "",
-      ecphone: row.ecphone || row.relphone || "",
+      ecphone: sanitiseMobileForForm(row.ecphone || row.relphone || ""),
       ecrel: row.ecrel || "",
       skills: row.skills || "",
       score_experience: row.score_experience != null ? Number(row.score_experience) : null,
@@ -280,7 +392,7 @@ export default function EmployeesPage() {
         score_behaviour: row.score_behaviour != null,
         score_testimonial: row.score_testimonial != null
       },
-      status: row.status || (row.active === false ? "Inactive" : "Active"),
+      status: normaliseStatusValue(row.status, row.active),
       expected_updated_at: row.updated_at || "",
       confirm_duplicate_name: false,
       photo: row.photo && typeof row.photo === "object" ? row.photo : null,
@@ -364,26 +476,33 @@ export default function EmployeesPage() {
         console.warn("Saving Active employee with no documents on file.");
       }
       var fullName = [form.fn, form.mn, form.ln].filter(Boolean).join(" ").trim();
+      var cleanMobile = sanitiseMobileForForm(form.mobile);
+      var cleanRole = normaliseRoleValue(form.role);
+      var cleanDept = normaliseDeptValue(form.dept);
+      var cleanEmpType = normaliseEmpTypeValue(form.emp_type);
+      var cleanEducation = normaliseEducationValue(form.education);
+      var cleanShift = normaliseShiftValue(form.shift_type);
+      var cleanStatus = normaliseStatusValue(form.status, form.status !== "Inactive");
       var payload = {
         fn: form.fn,
         mn: form.mn,
         ln: form.ln,
         name: fullName,
         full_name: fullName,
-        phone: form.mobile,
-        mobile: form.mobile,
-        phone2: form.phone2 || "",
+        phone: cleanMobile,
+        mobile: cleanMobile,
+        phone2: sanitiseMobileForForm(form.phone2 || ""),
         gender: form.gender || "",
         dob: form.dob || "",
-        dept: form.dept || "",
-        desig: form.role,
-        role: form.role,
-        emp_type: form.emp_type || "",
-        etype: form.emp_type || "",
-        edu: form.education,
-        education: form.education,
-        shift: form.shift_type,
-        shift_type: form.shift_type,
+        dept: cleanDept,
+        desig: cleanRole,
+        role: cleanRole,
+        emp_type: cleanEmpType,
+        etype: cleanEmpType,
+        edu: cleanEducation,
+        education: cleanEducation,
+        shift: cleanShift,
+        shift_type: cleanShift,
         join: form.join_date || "",
         join_date: form.join_date || "",
         joining_date: form.join_date || "",
@@ -404,13 +523,13 @@ export default function EmployeesPage() {
         district: form.district || "",
         state: form.state || "",
         ecname: form.ecname || "",
-        ecphone: form.ecphone || "",
+        ecphone: sanitiseMobileForForm(form.ecphone || ""),
         ecrel: form.ecrel || "",
         relname: form.ecname || "",
-        relphone: form.ecphone || "",
+        relphone: sanitiseMobileForForm(form.ecphone || ""),
         skills: form.skills || "",
-        status: form.status,
-        active: form.status === "Active",
+        status: cleanStatus,
+        active: cleanStatus === "Active",
         photo: form.photo || undefined,
         docs: form.documents,
         documents: form.documents
@@ -896,7 +1015,7 @@ export default function EmployeesPage() {
                 </div>
                 <div className="field">
                   <label>Joining date</label>
-                  <input type="date" value={form.join_date} onChange={function (event) { updateField("join_date", event.target.value); }} required />
+                  <input type="date" value={form.join_date} onChange={function (event) { updateField("join_date", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label>Leaving date</label>

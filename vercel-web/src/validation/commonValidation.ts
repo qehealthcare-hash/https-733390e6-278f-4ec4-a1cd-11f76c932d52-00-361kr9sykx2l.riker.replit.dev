@@ -122,12 +122,48 @@ export const extendedShiftTypeSchema = z.enum([
 ]);
 
 /**
+ * Map legacy SPA shift labels (and lowercase / spaced variants) into the
+ * canonical enum values. The old desktop CRM stored human strings like
+ * `"Day Shift (9:00 AM – 7:00 PM)"` or `"24 Hours Shift"` in the same
+ * `shift` column, so any round-trip through the React form would otherwise
+ * fail Zod's enum check on every legacy row.
+ *
+ * Returns `undefined` when the input cannot be mapped, letting the caller
+ * fall back to its own default (e.g. `"DAY"`) instead of throwing.
+ */
+export function normaliseShiftType(input: unknown): string | undefined {
+  if (input == null) return undefined;
+  const raw = String(input).trim();
+  if (!raw) return undefined;
+  const upper = raw.toUpperCase();
+  if (
+    upper === "DAY" ||
+    upper === "NIGHT" ||
+    upper === "24H" ||
+    upper === "FULL" ||
+    upper === "ONE_TIME" ||
+    upper === "CUSTOM"
+  ) {
+    return upper;
+  }
+  const lower = raw.toLowerCase();
+  if (lower.includes("24")) return "24H";
+  if (lower.startsWith("night")) return "NIGHT";
+  if (lower.startsWith("day")) return "DAY";
+  if (lower.includes("one") || lower.includes("1 hour") || lower.includes("1hr")) return "ONE_TIME";
+  if (lower.includes("custom")) return "CUSTOM";
+  if (lower.includes("full")) return "FULL";
+  return undefined;
+}
+
+/**
  * Optional shift-type field that tolerates the empty / null values the
- * React forms send back when the user hasn't set a shift yet. Uses the
- * wider enum so it accepts ONE_TIME / CUSTOM employees.
+ * React forms send back when the user hasn't set a shift yet, AND legacy
+ * SPA labels like `"Day Shift (9:00 AM – 7:00 PM)"`. Uses the wider enum
+ * so it accepts ONE_TIME / CUSTOM employees.
  */
 export const optionalShiftType = z.preprocess(
-  (v) => (v == null || v === "" ? undefined : v),
+  (v) => normaliseShiftType(v),
   extendedShiftTypeSchema.optional()
 );
 

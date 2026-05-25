@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   idSchema,
+  normaliseShiftType,
   optionalEmail,
   optionalShiftType,
   optionalText
@@ -217,7 +218,9 @@ export const employeeSchema = z
   .transform((v) => {
     const full = (v.name || v.full_name || `${v.fn || ""} ${v.ln || ""}`).trim();
     const parts = full.split(/\s+/);
-    const shift = v.shift || v.shift_type || "";
+    const rawShift = v.shift || v.shift_type || "";
+    const normalisedShift = normaliseShiftType(rawShift);
+    const shift = normalisedShift || "";
     const join = v.join || v.join_date || v.joining_date || "";
     const leave = v.leave || v.leave_date || "";
     const status: EmployeeStatus | undefined =

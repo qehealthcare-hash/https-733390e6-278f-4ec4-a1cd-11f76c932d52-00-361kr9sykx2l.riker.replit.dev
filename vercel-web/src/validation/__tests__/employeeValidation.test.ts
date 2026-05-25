@@ -74,6 +74,75 @@ describe("employeeSchema — joining vs leave date", () => {
   });
 });
 
+describe("employeeSchema — legacy shift / shift_type labels", () => {
+  const base = {
+    fn: "Anil",
+    ln: "Kumar",
+    phone: "9876543210"
+  };
+
+  it("accepts the legacy SPA label 'Day Shift (9:00 AM – 7:00 PM)'", () => {
+    const parsed = employeeSchema.parse({ ...base, shift: "Day Shift (9:00 AM – 7:00 PM)" });
+    expect(parsed.shift).toBe("DAY");
+    expect(parsed.shift_type).toBe("DAY");
+  });
+
+  it("normalises '24 Hours Shift' to 24H", () => {
+    const parsed = employeeSchema.parse({ ...base, shift: "24 Hours Shift" });
+    expect(parsed.shift_type).toBe("24H");
+  });
+
+  it("normalises 'Night Shift (8:00 PM – 8:00 AM)' to NIGHT", () => {
+    const parsed = employeeSchema.parse({ ...base, shift_type: "Night Shift (8:00 PM – 8:00 AM)" });
+    expect(parsed.shift_type).toBe("NIGHT");
+  });
+
+  it("defaults to DAY when shift is empty", () => {
+    const parsed = employeeSchema.parse({ ...base });
+    expect(parsed.shift_type).toBe("DAY");
+  });
+
+  it("accepts an unrecognised legacy label without crashing (falls back to DAY)", () => {
+    const parsed = employeeSchema.parse({ ...base, shift: "Some legacy label" });
+    expect(parsed.shift_type).toBe("DAY");
+  });
+});
+
+describe("employeeSchema — round-tripping legacy rows without join_date", () => {
+  it("accepts a record with empty join_date / leave_date", () => {
+    const parsed = employeeSchema.parse({
+      fn: "Legacy",
+      ln: "Worker",
+      phone: "9876543210",
+      join_date: "",
+      leave_date: ""
+    });
+    expect(parsed.join_date).toBe("");
+    expect(parsed.leave_date).toBe("");
+  });
+
+  it("accepts null dates round-tripped from GET responses", () => {
+    const parsed = employeeSchema.parse({
+      fn: "Legacy",
+      ln: "Worker",
+      phone: "9876543210",
+      join_date: null,
+      leave_date: null
+    });
+    expect(parsed.join_date).toBe("");
+    expect(parsed.leave_date).toBe("");
+  });
+
+  it("normalises mobile annotations like '7874751265(son)'", () => {
+    const parsed = employeeSchema.parse({
+      fn: "Legacy",
+      ln: "Worker",
+      phone: "7874751265(son)"
+    });
+    expect(parsed.phone).toBe("7874751265");
+  });
+});
+
 describe("employeeStatusSchema — status transitions", () => {
   it("accepts a status with no reason (defaults to empty)", () => {
     const parsed = employeeStatusSchema.parse({ status: "Active" });
