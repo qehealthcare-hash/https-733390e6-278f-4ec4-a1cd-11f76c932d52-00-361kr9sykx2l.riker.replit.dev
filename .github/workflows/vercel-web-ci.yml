@@ -1,4 +1,12 @@
-# Quality gate for vercel-web — typecheck + unit tests (Phase 10 matrix).
+# Quality gate for vercel-web — typecheck + unit + API integration tests.
+#
+# `npm test` runs every `src/**/*.test.ts` file with Vitest. That includes:
+#   - business / validation / service unit tests under src/{business,validation,services}
+#   - HTTP route-handler integration tests under src/integration
+#     (auth, RBAC matrix, idempotency replay, lifecycle E2E)
+#
+# All tests run hermetically with mocked Supabase + WhatsApp env (see
+# vitest.config.ts), so no live infra is required in CI.
 name: vercel-web CI
 
 on:
@@ -33,7 +41,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Unit tests (business matrix)
+      - name: Unit + integration tests (business matrix + API route handlers)
         run: npm test
         env:
           API_AUDIT_DISABLED: "true"

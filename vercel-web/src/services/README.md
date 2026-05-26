@@ -3,17 +3,20 @@
 Thin orchestration layer that composes validation, business, and database into
 `ApiResult<T>`-returning use cases.
 
+> Layering contract: see [`vercel-web/docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md). The contract is enforced by ESLint (`.eslintrc.json`) and by `src/integration/__tests__/architecture.boundaries.test.ts` in CI.
+
 ## Contract
 
 Every exported function MUST:
 
 1. Accept already-resolved input (no `NextRequest`, no `params`).
-2. Call `parseInput(schema, raw)` from `@/validation/parseValidation` before any side effect.
+2. Validate via `<name>Validation.ts` (`safeParse(input)` → `validationFailure(...)`); for shared parsers use `parseInput` from `@/validation/parseValidation`.
 3. Call business rules (`@/business/*`) for calculations or domain checks.
 4. Call repositories (`@/database/*`) for persistence — never `supabase.from(...)` directly.
 5. Return `ApiResult<T>` from `@/types/common`. Never throw on expected failures.
 6. Audit every mutation via `writeMutationAudit` / `finalizeWithAudit` (`mutationAudit.ts`). API success is withheld when audit insert fails (503 `audit_write_failed`).
 7. Refetch the persisted row after every mutation so callers can refresh state.
+8. Accept `(input, ctx: ServiceContext)` where `ServiceContext = { actor: ServiceActor, accessToken? }`. Routes build `ctx` via `toServiceContext(actor)` from `@/lib/api/serviceContext`.
 
 ## Implemented
 
@@ -71,6 +74,15 @@ All CRM domain modules now have a layered service under `src/services/`.
 Legacy `lib/api/services/*.service.ts` files are `@deprecated` shims that
 delegate to the new services via `apiResultBridge.unwrap`. API routes under
 `app/api/v1/*` should import from `@/services/*` directly.
+
+## Phase 11 complete — architecture lockdown (2026-05-26)
+
+- Migrated the last 7 unmigrated domains (doctor, vendor, settings, lookup, user/role, AI, WhatsApp) and the upload + health endpoints to the layered stack. All 93 API routes now go through `src/services/*` and `respond()`.
+- Deleted every legacy `lib/api/services/*.service.ts` shim and the `lib/api/audit.ts` re-export.
+- Consolidated actor types on `ServiceActor` / `ServiceContext` from `@/types/serviceActor`. Per-service `ActorLike` interfaces are now `@deprecated` aliases. `lib/api/serviceContext.ts` provides `toServiceContext(actor)` as the single bridge between HTTP `ActorContext` and domain `ServiceContext`.
+- Added `no-restricted-imports` ESLint rules per layer in `.eslintrc.json` so a backslide (route → Supabase, business → repo, repo → service, etc.) fails the build.
+- Added `src/integration/__tests__/architecture.boundaries.test.ts` — runs in CI and asserts no forbidden cross-layer edges, that every `<name>Service.ts` exports the canonical `<name>Service` constant, and that the barrel files stay in sync.
+- See [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) for the locked-in contract.
 
 ## Phase 6 complete — response envelope
 

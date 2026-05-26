@@ -29,6 +29,7 @@ export const newId = {
   invoice: () => `IV${timestampKey()}${rand(2)}`,
   receipt: () => `RC${timestampKey()}${rand(2)}`,
   payout: () => `PO${timestampKey().slice(2, 8)}${rand(5)}`,
+  paidTx: () => `PT${timestampKey()}${rand(3)}`,
   whatsapp: () => `WA${timestampKey()}${rand(3)}`,
   ai: () => `AI${timestampKey()}${rand(3)}`,
   aiConv: () => `AIC${timestampKey()}${rand(3)}`,

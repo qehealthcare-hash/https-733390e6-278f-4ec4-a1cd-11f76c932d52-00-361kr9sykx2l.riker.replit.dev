@@ -9,13 +9,16 @@ export default defineConfig({
       API_AUDIT_DISABLED: "true",
       SUPABASE_URL: "https://example.supabase.co",
       SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
-      SUPABASE_ANON_KEY: "test-anon-key"
+      SUPABASE_ANON_KEY: "test-anon-key",
+      WHATSAPP_VERIFY_TOKEN: "test-verify",
+      WHATSAPP_APP_SECRET: "test-secret"
     }
   },
   resolve: {
     alias: {
       "@/lib/api": path.resolve(__dirname, "lib/api"),
       "@/src": path.resolve(__dirname, "src"),
+      "@/app": path.resolve(__dirname, "app"),
       "@/database": path.resolve(__dirname, "src/database"),
       "@/services": path.resolve(__dirname, "src/services"),
       "@/business": path.resolve(__dirname, "src/business"),

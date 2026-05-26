@@ -140,6 +140,7 @@ function CalendarTotalsStripe(props) {
   var totals = props.totals;
   var patientFilter = props.patientId;
   var employeeFilter = props.employeeId;
+  var period = props.period;
   var pill = function (label, amount, tone) {
     var color = tone === "danger" ? "#b91c1c" : tone === "warn" ? "#b45309" : "#15803d";
     return (
@@ -178,11 +179,28 @@ function CalendarTotalsStripe(props) {
   if (employeeFilter && totals && totals.partner) {
     pills.push(
       pill(
-        "Partner pending payout",
+        "Partner pending" + (period ? " (" + period + ")" : ""),
         formatCurrency(totals.partner.pending),
         totals.partner.pending > 0 ? "warn" : "ok"
       )
     );
+    if (period) {
+      pills.push(
+        <a
+          key="open-in-payouts"
+          href={
+            "/payouts?employee_id=" +
+            encodeURIComponent(employeeFilter) +
+            "&period=" +
+            encodeURIComponent(period)
+          }
+          className="button secondary"
+          style={{ padding: "4px 10px", fontSize: 13 }}
+        >
+          Open in Payouts →
+        </a>
+      );
+    }
   }
 
   if (!pills.length && (patientFilter || employeeFilter)) {
@@ -378,7 +396,7 @@ export default function DutiesPage() {
     }
   }
 
-  async function loadTotals(patientId, employeeId) {
+  async function loadTotals(patientId, employeeId, period) {
     if (!auth.session?.access_token) {
       return null;
     }
@@ -388,6 +406,7 @@ export default function DutiesPage() {
     var qs = [];
     if (patientId) qs.push("patient_id=" + encodeURIComponent(patientId));
     if (employeeId) qs.push("employee_id=" + encodeURIComponent(employeeId));
+    if (employeeId && period) qs.push("period=" + encodeURIComponent(period));
     try {
       return await request("/duties/totals?" + qs.join("&"), null, auth.session);
     } catch (_e) {
@@ -396,7 +415,7 @@ export default function DutiesPage() {
   }
 
   async function refreshFormTotals() {
-    var data = await loadTotals(form.patient_id, form.employee_id);
+    var data = await loadTotals(form.patient_id, form.employee_id, viewMonth);
     setTotals(data || null);
   }
 
@@ -436,7 +455,7 @@ export default function DutiesPage() {
           var fp = filterPatientRef.current;
           var fe = filterEmployeeRef.current;
           if (fp || fe) {
-            loadTotals(fp, fe).then(function (ft) {
+            loadTotals(fp, fe, viewMonth).then(function (ft) {
               setFilterTotals(ft || null);
             });
           }
@@ -500,7 +519,7 @@ export default function DutiesPage() {
         setTotals(null);
         return;
       }
-      loadTotals(form.patient_id, form.employee_id).then(function (data) {
+      loadTotals(form.patient_id, form.employee_id, viewMonth).then(function (data) {
         setTotals(data || null);
       });
     },
@@ -513,7 +532,7 @@ export default function DutiesPage() {
         setFilterTotals(null);
         return;
       }
-      loadTotals(filterPatient, filterEmployee).then(function (data) {
+      loadTotals(filterPatient, filterEmployee, viewMonth).then(function (data) {
         setFilterTotals(data || null);
       });
     },
@@ -779,7 +798,7 @@ export default function DutiesPage() {
       await loadOutstanding(form.patient_id || filterPatient);
       await refreshFormTotals();
       if (filterPatient || filterEmployee) {
-        var ft = await loadTotals(filterPatient, filterEmployee);
+        var ft = await loadTotals(filterPatient, filterEmployee, viewMonth);
         setFilterTotals(ft || null);
       }
     } catch (err) {
@@ -953,7 +972,7 @@ export default function DutiesPage() {
         await reload();
       }
       if (filterPatient || filterEmployee) {
-        var ft = await loadTotals(filterPatient, filterEmployee);
+        var ft = await loadTotals(filterPatient, filterEmployee, viewMonth);
         setFilterTotals(ft || null);
       }
       setMessage(newEmp ? "Day entry reassigned and saved (marked manual)" : "Day entry saved (marked manual — will resist next sync)");
@@ -998,7 +1017,7 @@ export default function DutiesPage() {
       );
       await loadDiaryFor(dutyId);
       if (filterPatient || filterEmployee) {
-        var ft = await loadTotals(filterPatient, filterEmployee);
+        var ft = await loadTotals(filterPatient, filterEmployee, viewMonth);
         setFilterTotals(ft || null);
       }
       setMessage("Day entry removed");
@@ -1356,6 +1375,7 @@ export default function DutiesPage() {
               patientId={filterPatient}
               employeeId={filterEmployee}
               totals={filterTotals}
+              period={viewMonth}
             />
 
             <div className="toolbar" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>

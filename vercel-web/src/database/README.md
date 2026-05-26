@@ -9,7 +9,7 @@ Thin typed wrappers around Supabase `hh_*` tables. **No business logic.**
 - Import from `@/database` (barrel in `index.ts`).
 - Functions are named by operation: `findById`, `list`, `insert`, `update`, `remove`, etc.
 
-## Files (Phase 2)
+## Files
 
 | File | Tables / RPCs |
 |------|----------------|
@@ -25,6 +25,15 @@ Thin typed wrappers around Supabase `hh_*` tables. **No business logic.**
 | `attendanceRepository.ts` | `hh_attendance` |
 | `reportRepository.ts` | Read-only counts / aggregates |
 | `auditRepository.ts` | `hh_audit_logs` (insert + list) |
+| `doctorRepository.ts` | `hh_doctors` |
+| `vendorRepository.ts` | `hh_vendors` |
+| `settingsRepository.ts` | `hh_app_settings` |
+| `lookupRepository.ts` | `hh_patient_lookup`, `hh_employee_lookup`, `hh_roles`, fallbacks |
+| `userRepository.ts` | `hh_users` + `hh_roles` (`roleRepository`) |
+| `aiRepository.ts` | `hh_ai_conversations`, `hh_ai_messages`, context reads |
+| `whatsappRepository.ts` | `hh_whatsapp_messages` |
+| `storageRepository.ts` | Supabase Storage signed-URL + `crm_storage_path_in_use` |
+| `healthRepository.ts` | Health probe over `hh_users` |
 | `index.ts` | Barrel exports |
 
 ## Forbidden in repositories
@@ -32,7 +41,10 @@ Thin typed wrappers around Supabase `hh_*` tables. **No business logic.**
 - Status/billing/payout business rules (`if (status === "Active")`, net amount math, etc.).
 - HTTP or Next.js imports.
 - Direct `@supabase/supabase-js` outside `supabaseClient.ts`.
+- Imports from `@/services/*` or `@/validation/*` (one-way layering: services depend on repositories, never the reverse).
 
-## Next (Phase 3+)
+The boundary is enforced by `.eslintrc.json` (`no-restricted-imports` on `src/database/**`) and by `src/integration/__tests__/architecture.boundaries.test.ts`.
 
-Services in `lib/api/services/*.ts` should call these repositories instead of `supabaseAdmin().from(...)` directly.
+## See also
+
+- [`vercel-web/docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) — full layering contract.

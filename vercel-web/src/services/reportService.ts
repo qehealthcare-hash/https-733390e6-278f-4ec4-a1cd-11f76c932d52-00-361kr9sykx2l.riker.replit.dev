@@ -51,14 +51,13 @@ import { reportRepository } from "@/database/reportRepository";
 import { passFailure, success } from "@/utils/apiResponse";
 import type { JsonRow } from "@/database/types";
 
-export interface ActorLike {
-  email: string;
-  role?: string;
-  accessToken?: string;
-}
+import type { ServiceActor } from "@/types/serviceActor";
+
+/** @deprecated Import `ServiceActor` from `@/types/serviceActor`. */
+export type ActorLike = ServiceActor;
 
 export interface ReportServiceContext {
-  actor: ActorLike;
+  actor: ServiceActor;
   accessToken?: string;
 }
 

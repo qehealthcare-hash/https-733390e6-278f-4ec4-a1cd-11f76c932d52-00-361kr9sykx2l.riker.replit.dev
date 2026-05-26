@@ -67,14 +67,13 @@ import {
   success
 } from "@/utils/apiResponse";
 
-export interface ActorLike {
-  email: string;
-  role?: string;
-  accessToken?: string;
-}
+import type { ServiceActor } from "@/types/serviceActor";
+
+/** @deprecated Import `ServiceActor` from `@/types/serviceActor`. */
+export type ActorLike = ServiceActor;
 
 export interface AttendanceServiceContext {
-  actor: ActorLike;
+  actor: ServiceActor;
   /** Optional override; defaults to actor.accessToken. */
   accessToken?: string;
 }

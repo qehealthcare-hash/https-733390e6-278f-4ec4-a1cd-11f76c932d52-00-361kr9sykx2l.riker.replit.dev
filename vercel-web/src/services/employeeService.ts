@@ -63,15 +63,13 @@ export interface EmployeeListOptions {
   dept?: string;
 }
 
-/** Shape compatible with `lib/api/auth.ActorContext` and `types/common.Actor`. */
-export interface ActorLike {
-  email: string;
-  role?: string;
-  accessToken?: string;
-}
+import type { ServiceActor } from "@/types/serviceActor";
+
+/** @deprecated Import `ServiceActor` from `@/types/serviceActor`. */
+export type ActorLike = ServiceActor;
 
 export interface EmployeeServiceContext {
-  actor: ActorLike;
+  actor: ServiceActor;
   /** Optional override; defaults to actor.accessToken if present. */
   accessToken?: string;
 }

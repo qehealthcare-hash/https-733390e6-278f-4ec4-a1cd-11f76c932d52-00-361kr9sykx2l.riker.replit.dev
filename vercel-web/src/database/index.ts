@@ -1,5 +1,10 @@
 /**
  * Database layer barrel — import repositories from `@/database`.
+ *
+ * Every repository wraps Supabase access in `ApiResult<T>` via
+ * `baseRepository` / `supabaseClient`. Services orchestrate them;
+ * routes and business code never import repositories or Supabase
+ * clients directly.
  */
 
 export * from "@/database/types";
@@ -15,3 +20,14 @@ export { payoutRepository } from "@/database/payoutRepository";
 export { attendanceRepository } from "@/database/attendanceRepository";
 export { reportRepository } from "@/database/reportRepository";
 export { auditRepository } from "@/database/auditRepository";
+
+export { doctorRepository } from "@/database/doctorRepository";
+export { vendorRepository } from "@/database/vendorRepository";
+export { settingsRepository } from "@/database/settingsRepository";
+export { lookupRepository } from "@/database/lookupRepository";
+export { userRepository, roleRepository } from "@/database/userRepository";
+
+export { aiRepository } from "@/database/aiRepository";
+export { whatsappRepository } from "@/database/whatsappRepository";
+export { storageRepository } from "@/database/storageRepository";
+export { healthRepository } from "@/database/healthRepository";

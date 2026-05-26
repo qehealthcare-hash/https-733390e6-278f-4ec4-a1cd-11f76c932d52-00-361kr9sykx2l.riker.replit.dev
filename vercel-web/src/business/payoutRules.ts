@@ -87,7 +87,64 @@ export function canMarkPayoutPaid(status: string | null | undefined): ApiResult<
   if (isPayoutPaid(status)) {
     return businessFailure("Payout already paid", { status });
   }
+  if (String(status || "") !== "LOCKED") {
+    return businessFailure(
+      "Payout must be LOCKED before marking paid — lock the period after review",
+      { status }
+    );
+  }
   return businessOk();
+}
+
+/**
+ * Advance disbursements (`tx_kind = 'ADVANCE'`) may only be issued while
+ * the payout is still OPEN. Once it has been LOCKED the workflow is
+ * "Reopen → adjust → Lock → Pay" — there is no legitimate reason to record
+ * additional advances against a locked period.
+ */
+export function canPayAdvance(status: string | null | undefined): ApiResult<null> {
+  if (isPayoutPaid(status)) {
+    return businessFailure("Cannot pay advance against a PAID payout", { status });
+  }
+  if (String(status || "") === "LOCKED") {
+    return businessFailure(
+      "Cannot pay advance against a LOCKED payout — reopen, adjust, or settle in full",
+      { status }
+    );
+  }
+  return businessOk();
+}
+
+/**
+ * Reject an advance / final disbursement that would over-pay the outstanding
+ * balance for a payout. `paidSoFar` is the sum of prior `hh_paid_transactions`
+ * rows for the payout; `netAmount` is the payout's current `net_amount`.
+ *
+ * Allows a small rounding tolerance so a final 99.99 + 0.01 cleanup row
+ * doesn't fail at the boundary.
+ */
+export function ensureWithinPayoutOutstanding(
+  netAmount: number,
+  paidSoFar: number,
+  newAmount: number
+): ApiResult<null> {
+  const remaining = Math.max(0, Number(netAmount || 0) - Number(paidSoFar || 0));
+  if (Number(newAmount || 0) > remaining + 0.5) {
+    return businessFailure(
+      `Disbursement ₹${newAmount.toFixed(2)} exceeds remaining outstanding ₹${remaining.toFixed(2)}`,
+      { net_amount: netAmount, paid_so_far: paidSoFar, attempted: newAmount, remaining }
+    );
+  }
+  return businessOk();
+}
+
+/**
+ * True when total disbursements settle (or over-settle within rounding) the
+ * payout's net amount. The service uses this to auto-flip the payout's
+ * status to PAID after a `FINAL` row is inserted.
+ */
+export function isPayoutFullyPaid(netAmount: number, paidSoFar: number): boolean {
+  return Number(paidSoFar || 0) + 0.5 >= Number(netAmount || 0);
 }
 
 export function canLockPayout(
@@ -123,9 +180,9 @@ export function canPayoutTransitionTo(
   if (from === "PAID") {
     return businessFailure("PAID payouts are terminal — no further transitions allowed");
   }
-  // OPEN → LOCKED → PAID, plus LOCKED → OPEN (reopen). LOCKED → PAID OK.
+  // OPEN → LOCKED → PAID, plus LOCKED → OPEN (reopen). Final pay requires LOCKED.
   const allowed: Record<PayoutStatus, PayoutStatus[]> = {
-    OPEN: ["LOCKED", "PAID"],
+    OPEN: ["LOCKED"],
     LOCKED: ["OPEN", "PAID"],
     PAID: []
   };

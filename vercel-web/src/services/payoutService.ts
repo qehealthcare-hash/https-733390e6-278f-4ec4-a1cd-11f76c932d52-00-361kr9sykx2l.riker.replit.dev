@@ -25,18 +25,22 @@ import {
   payoutSchema,
   payoutAdjustmentSchema,
   payoutPaySchema,
+  payoutAdvanceSchema,
   payoutLockSchema,
   payoutReopenSchema,
   payoutRecomputeSchema,
   payoutListQuerySchema,
+  payoutPendingQuerySchema,
   replacePayoutChargesSchema,
   type PayoutInput,
   type PayoutAdjustmentInput,
   type PayoutPayInput,
+  type PayoutAdvanceInput,
   type PayoutLockInput,
   type PayoutReopenInput,
   type PayoutRecomputeInput,
   type PayoutListQuery,
+  type PayoutPendingQuery,
   type ReplacePayoutChargesInput
 } from "@/validation/payoutValidation";
 import { parseInput } from "@/validation/parseValidation";
@@ -45,10 +49,13 @@ import {
   canEditPayout,
   canLockPayout,
   canMarkPayoutPaid,
+  canPayAdvance,
   canPayoutTransitionTo,
   canReopenPayout,
   computePayoutNet,
   ensurePayoutHasSource,
+  ensureWithinPayoutOutstanding,
+  isPayoutFullyPaid,
   mergePayoutAdjustments,
   payoutLockRow,
   payoutPaidRow,
@@ -60,9 +67,11 @@ import {
 } from "@/business/payoutRules";
 import { assertNotStale } from "@/business/concurrencyRules";
 import { monthRangeUTC } from "@/business/dateRules";
+import { newId } from "@/business/idRules";
 import { payoutRepository } from "@/database/payoutRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { attendanceRepository } from "@/database/attendanceRepository";
+import { employeeRepository } from "@/database/employeeRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
 import {
@@ -73,15 +82,13 @@ import {
   success
 } from "@/utils/apiResponse";
 
-export interface ActorLike {
-  email: string;
-  userId?: string;
-  role?: string;
-  accessToken?: string;
-}
+import type { ServiceActor } from "@/types/serviceActor";
+
+/** @deprecated Import `ServiceActor` from `@/types/serviceActor`. */
+export type ActorLike = ServiceActor;
 
 export interface PayoutServiceContext {
-  actor: ActorLike;
+  actor: ServiceActor;
   accessToken?: string;
 }
 
@@ -150,6 +157,57 @@ export interface PayoutDetail {
   duties: JsonRow[];
   attendance: JsonRow[];
   breakdown: PayoutPatientBreakdownRow[];
+  /** All disbursements against this payout (oldest-first). */
+  paid_transactions: JsonRow[];
+  /** Sum of all disbursement amounts already recorded against this payout. */
+  paid_total: number;
+  /** Net outstanding = net_amount − paid_total (never negative). */
+  outstanding: number;
+  /** Display-friendly employee name resolved from `hh_employees`. */
+  employee_name: string;
+}
+
+/**
+ * Compose a display name from an `hh_employees` row. Mirrors the lookup
+ * view's resolution so the same name string surfaces in payouts, billing,
+ * and duty calendar.
+ */
+function composeEmployeeName(row: JsonRow | null | undefined): string {
+  if (!row) return "";
+  const direct = (row.full_name as string | undefined)?.trim();
+  if (direct) return direct;
+  const parts = [row.fn, row.mn, row.ln]
+    .map((p) => String(p || "").trim())
+    .filter(Boolean);
+  return parts.join(" ");
+}
+
+/**
+ * Resolve display names for a set of employee ids in one shot. Returns a
+ * `Map<id, displayName>` falling back to the raw id when an employee row
+ * is missing so the UI never renders an empty cell.
+ */
+async function hydrateEmployeeNames(
+  ids: string[],
+  ctx: PayoutServiceContext
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const unique = Array.from(new Set((ids || []).filter((x) => !!x)));
+  if (!unique.length) return map;
+  const rows = await employeeRepository.findByIds(unique, dbAccess(ctx));
+  if (rows.success && Array.isArray(rows.data)) {
+    for (const row of rows.data) {
+      const id = String(row.id || "");
+      if (!id) continue;
+      const name = composeEmployeeName(row);
+      map.set(id, name || id);
+    }
+  }
+  // Fill in missing ids so callers can always read from the map.
+  for (const id of unique) {
+    if (!map.has(id)) map.set(id, id);
+  }
+  return map;
 }
 
 /** Load a payout + its source duty/attendance for the breakdown widget. */
@@ -159,28 +217,54 @@ async function loadPayoutDetail(
 ): Promise<ApiResult<PayoutDetail>> {
   const employeeId = String(payout.employee_id || "");
   const period = String(payout.period_month || "");
+  const nameMap = await hydrateEmployeeNames(employeeId ? [employeeId] : [], ctx);
+  const employeeName = nameMap.get(employeeId) || employeeId;
+
   if (!employeeId || !period) {
-    return success({ payout, duties: [], attendance: [], breakdown: [] });
+    return success({
+      payout: { ...payout, employee_name: employeeName },
+      duties: [],
+      attendance: [],
+      breakdown: [],
+      paid_transactions: [],
+      paid_total: 0,
+      outstanding: Math.max(0, Number(payout.net_amount || 0)),
+      employee_name: employeeName
+    });
   }
+
   const access = dbAccess(ctx);
   const { startISO, endISO } = monthRangeUTC(period);
 
-  const [duties, attendance] = await Promise.all([
+  const [duties, attendance, paidTx] = await Promise.all([
     dutyRepository.list(
       { employeeId, from: startISO, to: endISO, limit: 500, offset: 0 },
       access
     ),
-    attendanceRepository.listForEmployeeMonth(employeeId, startISO, endISO, access)
+    attendanceRepository.listForEmployeeMonth(employeeId, startISO, endISO, access),
+    payoutRepository.listPaidTransactionsByPayout(String(payout.id || ""), access)
   ]);
   if (!duties.success) return passFailure(duties);
   if (!attendance.success) return passFailure(attendance);
+  if (!paidTx.success) return passFailure(paidTx);
 
   const dutyRows = duties.data?.rows || [];
   const attendanceRows = attendance.data || [];
+  const paidRows = paidTx.data || [];
+  const paidTotal = paidRows.reduce(
+    (sum, r) => sum + Number(r.amount || 0),
+    0
+  );
+  const outstanding = Math.max(0, Number(payout.net_amount || 0) - paidTotal);
+
   return success({
-    payout,
+    payout: { ...payout, employee_name: employeeName },
     duties: dutyRows,
     attendance: attendanceRows,
+    paid_transactions: paidRows,
+    paid_total: Math.round(paidTotal * 100) / 100,
+    outstanding: Math.round(outstanding * 100) / 100,
+    employee_name: employeeName,
     breakdown: breakdownByPatient(
       dutyRows.map((d) => ({
         id: String(d.id),
@@ -321,7 +405,19 @@ export const payoutService = {
       dbAccess(ctx)
     );
     if (!result.success) return passFailure(result);
-    return success({ rows: result.data?.rows || [], total: result.data?.total ?? 0 });
+    const rows = result.data?.rows || [];
+    // Hydrate display names in a single batch so the UI doesn't have to
+    // join against `/lookups/employees` row-by-row.
+    const names = await hydrateEmployeeNames(
+      rows.map((r) => String(r.employee_id || "")),
+      ctx
+    );
+    const hydrated = rows.map((r) => ({
+      ...r,
+      employee_name:
+        names.get(String(r.employee_id || "")) || String(r.employee_id || "")
+    }));
+    return success({ rows: hydrated, total: result.data?.total ?? 0 });
   },
 
   async getById(id: string, ctx: PayoutServiceContext): Promise<ApiResult<PayoutDetail>> {
@@ -339,6 +435,73 @@ export const payoutService = {
     ctx: PayoutServiceContext
   ): Promise<ApiResult<JsonRow | null>> {
     return payoutRepository.findByEmployeePeriod(employeeId, period, dbAccess(ctx));
+  },
+
+  /**
+   * Period-scoped "pending payout" for an employee — sourced directly from
+   * the duty calendar (`hh_payout_charges`) minus disbursements already
+   * recorded in `hh_paid_transactions`. Works even before an `hh_payouts`
+   * row exists, so the duty calendar can render the pending pill before
+   * the accountant clicks "Ensure payout".
+   *
+   * Also returns the persisted `hh_payouts` row (if any), the list of
+   * disbursements for the period, and the employee name so the UI can
+   * render the panel with one round-trip.
+   */
+  async pendingForEmployeePeriod(
+    rawQuery: unknown,
+    ctx: PayoutServiceContext
+  ): Promise<
+    ApiResult<{
+      employee_id: string;
+      employee_name: string;
+      period: string;
+      charged: number;
+      paid: number;
+      pending: number;
+      duty_count: number;
+      payout: JsonRow | null;
+      paid_transactions: JsonRow[];
+    }>
+  > {
+    const parsed = parseInput(payoutPendingQuerySchema, rawQuery);
+    if (!parsed.success) return passFailure(parsed);
+    const query = parsed.data as PayoutPendingQuery;
+    const access = dbAccess(ctx);
+
+    const [rpc, existing, paidTx, nameMap] = await Promise.all([
+      payoutRepository.pendingPayoutRpc(query.employee_id, query.period, access),
+      payoutRepository.findByEmployeePeriod(query.employee_id, query.period, access),
+      payoutRepository.listPaidTransactionsByEmployeePeriod(
+        query.employee_id,
+        query.period,
+        access
+      ),
+      hydrateEmployeeNames([query.employee_id], ctx)
+    ]);
+    if (!rpc.success) return passFailure(rpc);
+    if (!existing.success) return passFailure(existing);
+    if (!paidTx.success) return passFailure(paidTx);
+
+    const data = rpc.data || {
+      employee_id: query.employee_id,
+      period_month: query.period,
+      charged: 0,
+      paid: 0,
+      pending: 0,
+      duty_count: 0
+    };
+    return success({
+      employee_id: query.employee_id,
+      employee_name: nameMap.get(query.employee_id) || query.employee_id,
+      period: query.period,
+      charged: Number(data.charged || 0),
+      paid: Number(data.paid || 0),
+      pending: Number(data.pending || 0),
+      duty_count: Number(data.duty_count || 0),
+      payout: existing.data ?? null,
+      paid_transactions: paidTx.data || []
+    });
   },
 
   // ─────────────────────────────────────────────────────────────────────
@@ -628,7 +791,21 @@ export const payoutService = {
     );
   },
 
-  /** Mark a payout PAID + insert paid transaction. Idempotent on the natural key. */
+  /**
+   * Record the FINAL disbursement against a payout. Flips the payout to
+   * PAID once total disbursements settle the net amount.
+   *
+   * Each call creates a fresh `hh_paid_transactions` row with a unique
+   * `PTXYYYY######` serial allocated by `hh_next_paid_tx_serial()` — so a
+   * payout that was partially advanced has BOTH rows visible in audit
+   * (advance + final).
+   *
+   * `amount` is optional: if omitted, the service settles the remaining
+   * outstanding (net_amount − previously paid). `proof_bucket`/`proof_path`
+   * point at a previously-uploaded file in the `payout-proofs` Storage
+   * bucket and are mandatory for audit hygiene (the API rejects calls
+   * without them on a non-zero amount).
+   */
   async markPaid(
     rawInput: unknown,
     ctx: PayoutServiceContext
@@ -651,23 +828,94 @@ export const payoutService = {
       return failure(transition.error || "Illegal transition", transition.code, transition.details);
     }
 
+    const access = dbAccess(ctx);
+    const priorTx = await payoutRepository.listPaidTransactionsByPayout(
+      input.payout_id,
+      access
+    );
+    if (!priorTx.success) return passFailure(priorTx);
+    const paidSoFar = (priorTx.data || []).reduce(
+      (sum, r) => sum + Number(r.amount || 0),
+      0
+    );
+    const netAmount = Number(existing.data.net_amount || 0);
+    const remaining = Math.max(0, netAmount - paidSoFar);
+    const requestedAmount =
+      input.amount !== undefined ? Number(input.amount) : remaining;
+
+    if (requestedAmount <= 0) {
+      return failure(
+        "Payout has no outstanding balance — nothing to pay",
+        ErrorCodes.business,
+        { net_amount: netAmount, paid_so_far: paidSoFar }
+      );
+    }
+
+    const guardAmount = ensureWithinPayoutOutstanding(
+      netAmount,
+      paidSoFar,
+      requestedAmount
+    );
+    if (!guardAmount.success) {
+      return failure(
+        guardAmount.error || "Amount exceeds outstanding",
+        guardAmount.code,
+        guardAmount.details
+      );
+    }
+
+    if (requestedAmount > 0 && !input.proof_bucket && !input.proof_path && !input.photo) {
+      return failure(
+        "Payout proof is required — upload a receipt/photo before marking paid",
+        ErrorCodes.business
+      );
+    }
+
     const paidOnISO = input.paid_on || new Date().toISOString();
-    const patch = payoutPaidRow(ctx.actor.email, paidOnISO);
-    const updated = await payoutRepository.update(input.payout_id, patch, dbAccess(ctx));
-    if (!updated.success) return passFailure(updated);
+    const paidOnDay = paidOnISO.slice(0, 10);
+
+    const serial = await payoutRepository.nextPaidTxSerialRpc(access);
+    if (!serial.success) return passFailure(serial);
+    const serialNo = String(serial.data || "");
 
     const paidTxRow = {
-      id: input.payout_id,
+      id: newId.paidTx(),
+      serial_no: serialNo,
+      payout_id: input.payout_id,
+      tx_kind: "FINAL" as const,
       partner: existing.data.employee_id,
-      paid_on: paidOnISO.slice(0, 10),
-      amount: Number(existing.data.net_amount || 0),
-      method: input.method,
-      photo: input.photo
+      employee_id: existing.data.employee_id,
+      period_month: existing.data.period_month,
+      paid_on: paidOnDay,
+      amount: Number(requestedAmount),
+      method: input.method || "",
+      photo: input.photo || "",
+      proof_bucket: input.proof_bucket || null,
+      proof_path: input.proof_path || null,
+      remarks: input.remarks || "",
+      created_by: ctx.actor.email,
+      updated_by: ctx.actor.email
     };
-    const paidTx = await payoutRepository.upsertPaidTransaction(paidTxRow, dbAccess(ctx));
+    const paidTx = await payoutRepository.insertPaidTransaction(paidTxRow, access);
     if (!paidTx.success) return passFailure(paidTx);
 
-    const fresh = await loadFreshPayout(input.payout_id, ctx, updated.data ?? null);
+    // Flip the payout to PAID only when total disbursements settle the net.
+    const newPaidTotal = paidSoFar + Number(requestedAmount);
+    if (isPayoutFullyPaid(netAmount, newPaidTotal)) {
+      const patch = payoutPaidRow(ctx.actor.email, paidOnISO);
+      const updated = await payoutRepository.update(input.payout_id, patch, access);
+      if (!updated.success) return passFailure(updated);
+    } else {
+      // Refresh updated_by/at on the payout even on partial settle.
+      const updated = await payoutRepository.update(
+        input.payout_id,
+        { updated_by: ctx.actor.email },
+        access
+      );
+      if (!updated.success) return passFailure(updated);
+    }
+
+    const fresh = await loadFreshPayout(input.payout_id, ctx);
     if (!fresh.success) {
       return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
     }
@@ -677,8 +925,119 @@ export const payoutService = {
         entity_id: input.payout_id,
         action: "update",
         before: existing.data,
-        after: fresh.data,
-        stamp: "Marked PAID"
+        after: { payout: fresh.data, paid_tx: paidTxRow },
+        stamp: isPayoutFullyPaid(netAmount, newPaidTotal)
+          ? `Marked PAID (${serialNo}, ₹${requestedAmount.toFixed(2)})`
+          : `Final disbursement ${serialNo} ₹${requestedAmount.toFixed(2)} — partial settle pending`
+      }),
+      fresh.data
+    );
+  },
+
+  /**
+   * Record an ADVANCE disbursement against an OPEN payout. Unlike
+   * `markPaid`, this does NOT flip the payout to PAID — the payout stays
+   * in workflow so the accountant can keep recompiling charges, then issue
+   * the final disbursement later.
+   *
+   * Mirrors `markPaid` for amount validation, proof requirement, and
+   * serial allocation.
+   */
+  async payAdvance(
+    rawInput: unknown,
+    ctx: PayoutServiceContext
+  ): Promise<ApiResult<JsonRow>> {
+    const parsed = parseInput(payoutAdvanceSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const input = parsed.data as PayoutAdvanceInput;
+
+    const existing = await loadPayout(input.payout_id, ctx);
+    if (!existing.success) {
+      return failure(existing.error || "Payout not found", existing.code, existing.details);
+    }
+
+    const guard = canPayAdvance(String(existing.data.status || ""));
+    if (!guard.success) {
+      return failure(guard.error || "Cannot pay advance", guard.code, guard.details);
+    }
+
+    const access = dbAccess(ctx);
+    const priorTx = await payoutRepository.listPaidTransactionsByPayout(
+      input.payout_id,
+      access
+    );
+    if (!priorTx.success) return passFailure(priorTx);
+    const paidSoFar = (priorTx.data || []).reduce(
+      (sum, r) => sum + Number(r.amount || 0),
+      0
+    );
+    const netAmount = Number(existing.data.net_amount || 0);
+    const guardAmount = ensureWithinPayoutOutstanding(
+      netAmount,
+      paidSoFar,
+      Number(input.amount)
+    );
+    if (!guardAmount.success) {
+      return failure(
+        guardAmount.error || "Amount exceeds outstanding",
+        guardAmount.code,
+        guardAmount.details
+      );
+    }
+
+    if (!input.proof_bucket && !input.proof_path && !input.photo) {
+      return failure(
+        "Payout proof is required — upload a receipt/photo before paying advance",
+        ErrorCodes.business
+      );
+    }
+
+    const serial = await payoutRepository.nextPaidTxSerialRpc(access);
+    if (!serial.success) return passFailure(serial);
+    const serialNo = String(serial.data || "");
+
+    const paidOnISO = input.paid_on || new Date().toISOString();
+    const paidTxRow = {
+      id: newId.paidTx(),
+      serial_no: serialNo,
+      payout_id: input.payout_id,
+      tx_kind: "ADVANCE" as const,
+      partner: existing.data.employee_id,
+      employee_id: existing.data.employee_id,
+      period_month: existing.data.period_month,
+      paid_on: paidOnISO.slice(0, 10),
+      amount: Number(input.amount),
+      method: input.method || "",
+      photo: input.photo || "",
+      proof_bucket: input.proof_bucket || null,
+      proof_path: input.proof_path || null,
+      remarks: input.remarks || "",
+      created_by: ctx.actor.email,
+      updated_by: ctx.actor.email
+    };
+    const paidTx = await payoutRepository.insertPaidTransaction(paidTxRow, access);
+    if (!paidTx.success) return passFailure(paidTx);
+
+    // Refresh updated_by/at on the payout so list views reflect the change.
+    const touched = await payoutRepository.update(
+      input.payout_id,
+      { updated_by: ctx.actor.email },
+      access
+    );
+    if (!touched.success) return passFailure(touched);
+
+    const fresh = await loadFreshPayout(input.payout_id, ctx);
+    if (!fresh.success) {
+      return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
+    }
+
+    return finalizeWithAudit(
+      await fireAudit(ctx, {
+        entity_id: input.payout_id,
+        action: "update",
+        before: existing.data,
+        after: { payout: fresh.data, paid_tx: paidTxRow },
+        stamp: `Advance disbursement ${serialNo} ₹${Number(input.amount).toFixed(2)}`
       }),
       fresh.data
     );

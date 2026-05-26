@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { PAYOUT_READ_ROLES, PAYOUT_WRITE_ROLES } from "@/lib/api/payoutRoles";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { payoutService } from "@/services/payoutService";
 import { respond } from "@/lib/api/apiResultBridge";
@@ -9,6 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
+  requireRole(actor, [...PAYOUT_READ_ROLES]);
   const url = new URL(req.url);
   const query = {
     limit: url.searchParams.get("limit") ?? undefined,
@@ -24,7 +26,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Accountant"]);
+  requireRole(actor, [...PAYOUT_WRITE_ROLES]);
   return withIdempotency(req, actor, { route: "POST /payouts" }, async () => {
     const body = await parseJsonBody(req);
     const result = await payoutService.ensure(body, { actor });

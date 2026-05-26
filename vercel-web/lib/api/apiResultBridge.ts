@@ -55,7 +55,9 @@ export const respondLegacy = respond;
 /**
  * Throw `ApiError` on failure, otherwise return `result.data`.
  *
- * For legacy throw-based shims in `lib/api/services/*.ts` only.
+ * Reserved for the rare integration that must bridge an `ApiResult` to
+ * legacy throw-based callers (e.g. external scripts). New code in routes
+ * and services should use `respond()` and return ApiResult directly.
  */
 export function unwrap<T>(result: ApiResult<T>): T {
   if (result.success) return result.data as T;

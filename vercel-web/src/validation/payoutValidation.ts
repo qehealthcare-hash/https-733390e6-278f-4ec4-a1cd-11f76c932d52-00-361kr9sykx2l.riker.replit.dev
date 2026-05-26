@@ -55,11 +55,56 @@ export const payoutAdjustmentSchema = z
     { message: "At least one of advance/deduction/bonus/remarks must be set" }
   );
 
+/** Disbursement kinds tracked on `hh_paid_transactions.tx_kind`. */
+export const PAID_TX_KINDS = ["ADVANCE", "FINAL"] as const;
+export type PaidTxKind = (typeof PAID_TX_KINDS)[number];
+
+/**
+ * `POST /payouts/pay` — final disbursement (closes the payout to PAID).
+ *
+ * `amount` is optional: when omitted the service settles the entire
+ * outstanding net. `proof_bucket`/`proof_path` are filled in by the UI
+ * after the file is uploaded via `/api/v1/uploads/signed-url`.
+ */
 export const payoutPaySchema = z.object({
   payout_id: idSchema,
   paid_on: z.string().optional(),
   method: z.string().optional().default(""),
-  photo: z.string().optional().default("")
+  amount: moneySchema.optional(),
+  photo: z.string().optional().default(""),
+  proof_bucket: z.string().trim().max(64).optional(),
+  proof_path: z.string().trim().max(512).optional(),
+  remarks: z.string().trim().max(500).optional().default("")
+});
+
+/**
+ * `POST /payouts/[id]/pay-advance` — partial disbursement BEFORE the payout
+ * is locked. Records a paid transaction with `tx_kind = 'ADVANCE'`, reduces
+ * the outstanding net, and (unlike `payoutPaySchema`) does NOT flip the
+ * payout to PAID. `amount` is required.
+ */
+export const payoutAdvanceSchema = z.object({
+  payout_id: idSchema,
+  amount: moneySchema.refine((v) => v > 0, {
+    message: "Advance amount must be greater than zero"
+  }),
+  paid_on: z.string().optional(),
+  method: z.string().optional().default(""),
+  proof_bucket: z.string().trim().max(64).optional(),
+  proof_path: z.string().trim().max(512).optional(),
+  photo: z.string().optional().default(""),
+  remarks: z.string().trim().max(500).optional().default("")
+});
+
+/**
+ * `GET /payouts/pending` — period-scoped "what do we still owe this
+ * employee?" query that reads straight from the duty calendar
+ * (hh_payout_charges) minus disbursements. Works even before an
+ * hh_payouts row exists.
+ */
+export const payoutPendingQuerySchema = z.object({
+  employee_id: idSchema,
+  period: monthPeriodSchema
 });
 
 /** Lock a payout. */
@@ -91,10 +136,12 @@ export const payoutListQuerySchema = z.object({
 export type PayoutInput = z.infer<typeof payoutSchema>;
 export type PayoutAdjustmentInput = z.infer<typeof payoutAdjustmentSchema>;
 export type PayoutPayInput = z.infer<typeof payoutPaySchema>;
+export type PayoutAdvanceInput = z.infer<typeof payoutAdvanceSchema>;
 export type PayoutLockInput = z.infer<typeof payoutLockSchema>;
 export type PayoutReopenInput = z.infer<typeof payoutReopenSchema>;
 export type PayoutRecomputeInput = z.infer<typeof payoutRecomputeSchema>;
 export type PayoutListQuery = z.infer<typeof payoutListQuerySchema>;
+export type PayoutPendingQuery = z.infer<typeof payoutPendingQuerySchema>;
 
 /**
  * Payout-charge row mirrors the columns

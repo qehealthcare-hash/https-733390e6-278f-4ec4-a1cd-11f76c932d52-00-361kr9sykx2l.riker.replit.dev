@@ -3,20 +3,18 @@
  */
 
 import type { ApiResult } from "@/types/common";
+import type { ServiceActor } from "@/types/serviceActor";
 import { auditListQuerySchema, type AuditListQuery } from "@/validation/auditValidation";
 import { parseInput } from "@/validation/parseValidation";
 import { auditRepository } from "@/database/auditRepository";
 import type { JsonRow } from "@/database/types";
 import { passFailure, success } from "@/utils/apiResponse";
 
-export interface ActorLike {
-  email: string;
-  role?: string;
-  accessToken?: string;
-}
+/** @deprecated Import `ServiceActor` from `@/types/serviceActor`. */
+export type ActorLike = ServiceActor;
 
 export interface AuditServiceContext {
-  actor: ActorLike;
+  actor: ServiceActor;
   accessToken?: string;
 }
 

@@ -136,8 +136,124 @@ export const payoutRepository = {
     );
   },
 
+  /**
+   * @deprecated Use `insertPaidTransaction` — upsert on payout id prevents
+   * multiple disbursements (advance + final) per payout.
+   */
   upsertPaidTransaction(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return upsertRow(PAID_TX, row, `${SCOPE}.paidTx`, opts, "id");
+  },
+
+  /**
+   * Insert a single disbursement row. New rows must carry an `id`, a
+   * `serial_no` (allocated via `hh_next_paid_tx_serial`), and `payout_id`
+   * so the audit ledger ties cleanly back to the source payout.
+   */
+  insertPaidTransaction(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
+    return insertRow(PAID_TX, row, `${SCOPE}.insertPaidTx`, opts);
+  },
+
+  /** All disbursements (ADVANCE + FINAL) for one payout, ordered oldest-first. */
+  listPaidTransactionsByPayout(
+    payoutId: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    return listAll(PAID_TX, `${SCOPE}.listByPayout`, (q) => q.eq("payout_id", payoutId), {
+      ...opts,
+      orderBy: "created_at",
+      ascending: true
+    });
+  },
+
+  /**
+   * All disbursements for an (employee, period) pair, including legacy rows
+   * that pre-date the `payout_id` / `period_month` columns. Used by the
+   * `pending payout` query and the duty-calendar drill-through.
+   */
+  async listPaidTransactionsByEmployeePeriod(
+    employeeId: string,
+    period: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    if (!employeeId || !period) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(PAID_TX)
+          .select("*")
+          .or(`employee_id.eq.${employeeId},partner.eq.${employeeId}`)
+          .order("created_at", { ascending: true }),
+      `${SCOPE}.listByEmployeePeriod`
+    );
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        code: result.code,
+        details: result.details
+      };
+    }
+    const rows = (result.data || []).filter((row) => {
+      const pm = String(row.period_month || "").trim();
+      if (pm === period) return true;
+      if (pm) return false;
+      const paidOn = String(row.paid_on || "").trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(paidOn)) {
+        return paidOn.slice(0, 7) === period;
+      }
+      const created = String(row.created_at || "");
+      if (created) {
+        return created.slice(0, 7) === period;
+      }
+      return false;
+    });
+    return { success: true, data: rows };
+  },
+
+  /** Allocate the next `PTXYYYY######` audit-grade serial (race-safe). */
+  nextPaidTxSerialRpc(opts?: DbAccess): Promise<ApiResult<string | null>> {
+    return callRpc<string>(
+      "hh_next_paid_tx_serial",
+      {},
+      `${SCOPE}.nextPaidTxSerial`,
+      opts
+    );
+  },
+
+  /**
+   * Single-source-of-truth "pending payout" calculation for an (employee,
+   * period) pair, computed directly from the duty calendar
+   * (`hh_payout_charges`) minus any disbursements already recorded in
+   * `hh_paid_transactions`. Works even before an `hh_payouts` row exists.
+   */
+  pendingPayoutRpc(
+    employeeId: string,
+    period: string,
+    opts?: DbAccess
+  ): Promise<
+    ApiResult<{
+      employee_id: string;
+      period_month: string;
+      charged: number;
+      paid: number;
+      pending: number;
+      duty_count: number;
+    } | null>
+  > {
+    return callRpc<{
+      employee_id: string;
+      period_month: string;
+      charged: number;
+      paid: number;
+      pending: number;
+      duty_count: number;
+    }>(
+      "hh_employee_pending_payout",
+      { p_employee_id: employeeId, p_period: period },
+      `${SCOPE}.pendingPayout`,
+      opts
+    );
   },
 
   /**
@@ -211,8 +327,43 @@ export const payoutRepository = {
     return findById(PAID_TX, payoutId, `${SCOPE}.paidTx`, opts);
   },
 
-  listChargesByPayout(payoutId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
-    return listAll(CHARGES, SCOPE, (q) => q.eq("payout_id", payoutId), opts);
+  /**
+   * Period-scoped payout charges for an employee (duty calendar source rows).
+   * `hh_payout_charges` has no `payout_id` column — match partner_id / partner.
+   */
+  async listChargesByEmployeePeriod(
+    employeeId: string,
+    period: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    if (!employeeId || !period) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(CHARGES)
+          .select("*")
+          .or(
+            `partner_id.eq.${employeeId},partner.eq.${employeeId}`
+          )
+          .order("date", { ascending: true }),
+      `${SCOPE}.listChargesByEmployeePeriod`
+    );
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        code: result.code,
+        details: result.details
+      };
+    }
+    const rows = (result.data || []).filter((row) => {
+      const dateStr = String(row.date || "");
+      if (dateStr.length >= 7 && dateStr.slice(0, 7) === period) return true;
+      const created = String(row.created_at || "");
+      return created.length >= 7 && created.slice(0, 7) === period;
+    });
+    return { success: true, data: rows };
   },
 
   insertCharge(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {

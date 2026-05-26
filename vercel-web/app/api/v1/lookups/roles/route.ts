@@ -1,11 +1,12 @@
 import { withAuth } from "@/lib/api/handler";
-import { jsonOk } from "@/lib/api/errors";
-import { lookupService } from "@/lib/api/services/lookup.service";
+import { toServiceContext } from "@/lib/api/serviceContext";
+import { respond } from "@/lib/api/apiResultBridge";
+import { lookupService } from "@/services/lookupService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const GET = withAuth(async (_req, { actor }) => {
-  const data = await lookupService.roles(actor.accessToken);
-  return jsonOk(data);
+  const result = await lookupService.roles(toServiceContext(actor));
+  return respond(result);
 });

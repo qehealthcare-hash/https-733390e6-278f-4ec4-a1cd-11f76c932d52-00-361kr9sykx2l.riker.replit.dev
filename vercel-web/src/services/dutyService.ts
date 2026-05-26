@@ -69,14 +69,13 @@ import {
   success
 } from "@/utils/apiResponse";
 
-export interface ActorLike {
-  email: string;
-  role?: string;
-  accessToken?: string;
-}
+import type { ServiceActor } from "@/types/serviceActor";
+
+/** @deprecated Import `ServiceActor` from `@/types/serviceActor`. */
+export type ActorLike = ServiceActor;
 
 export interface DutyServiceContext {
-  actor: ActorLike;
+  actor: ServiceActor;
   /** Optional override; defaults to actor.accessToken. */
   accessToken?: string;
 }
@@ -437,7 +436,8 @@ export const dutyService = {
   async totalsFor(
     patientId: string | undefined,
     employeeId: string | undefined,
-    ctx: DutyServiceContext
+    ctx: DutyServiceContext,
+    options?: { period?: string }
   ): Promise<
     ApiResult<{
       patient: {
@@ -505,37 +505,58 @@ export const dutyService = {
       };
     }
 
-    let partnerSummary: { employee_id: string; charged: number; paid: number; pending: number } | null = null;
+    let partnerSummary: {
+      employee_id: string;
+      charged: number;
+      paid: number;
+      pending: number;
+      period_month?: string;
+    } | null = null;
     if (employeeId) {
-      const db = (await import("@/database/supabaseClient")).runListQuery;
-      const { resolveClient } = await import("@/database/baseRepository");
-      const client = resolveClient(access);
-      const chargesRes = await db<{ amount?: number | string | null }>(
-        () =>
-          client
-            .from("hh_payout_charges")
-            .select("amount")
-            .eq("partner_id", employeeId),
-        "dutyService.totalsFor.charges"
-      );
-      if (!chargesRes.success) return passFailure(chargesRes);
-      const paidRes = await db<{ amount?: number | string | null }>(
-        () =>
-          client
-            .from("hh_paid_transactions")
-            .select("amount")
-            .eq("employee_id", employeeId),
-        "dutyService.totalsFor.paid"
-      );
-      if (!paidRes.success) return passFailure(paidRes);
-      const charged = (chargesRes.data || []).reduce((s, r) => s + Number(r.amount || 0), 0);
-      const paid = (paidRes.data || []).reduce((s, r) => s + Number(r.amount || 0), 0);
-      partnerSummary = {
-        employee_id: employeeId,
-        charged,
-        paid,
-        pending: Math.max(0, charged - paid)
-      };
+      const period = String(options?.period || "").trim();
+      if (period) {
+        const { payoutRepository } = await import("@/database/payoutRepository");
+        const pending = await payoutRepository.pendingPayoutRpc(employeeId, period, access);
+        if (!pending.success) return passFailure(pending);
+        const data = pending.data;
+        partnerSummary = {
+          employee_id: employeeId,
+          charged: Number(data?.charged || 0),
+          paid: Number(data?.paid || 0),
+          pending: Number(data?.pending || 0),
+          period_month: period
+        };
+      } else {
+        const db = (await import("@/database/supabaseClient")).runListQuery;
+        const { resolveClient } = await import("@/database/baseRepository");
+        const client = resolveClient(access);
+        const chargesRes = await db<{ amount?: number | string | null }>(
+          () =>
+            client
+              .from("hh_payout_charges")
+              .select("amount")
+              .eq("partner_id", employeeId),
+          "dutyService.totalsFor.charges"
+        );
+        if (!chargesRes.success) return passFailure(chargesRes);
+        const paidRes = await db<{ amount?: number | string | null }>(
+          () =>
+            client
+              .from("hh_paid_transactions")
+              .select("amount")
+              .or(`employee_id.eq.${employeeId},partner.eq.${employeeId}`),
+          "dutyService.totalsFor.paid"
+        );
+        if (!paidRes.success) return passFailure(paidRes);
+        const charged = (chargesRes.data || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+        const paid = (paidRes.data || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+        partnerSummary = {
+          employee_id: employeeId,
+          charged,
+          paid,
+          pending: Math.max(0, charged - paid)
+        };
+      }
     }
 
     return success({ patient: patientSummary, partner: partnerSummary });

@@ -12,6 +12,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
   const url = new URL(req.url);
   const patientId = url.searchParams.get("patient_id") || undefined;
   const employeeId = url.searchParams.get("employee_id") || undefined;
-  const result = await dutyService.totalsFor(patientId, employeeId, { actor });
+  const period = url.searchParams.get("period") || undefined;
+  const result = await dutyService.totalsFor(patientId, employeeId, { actor }, { period });
   return respond(result);
 });

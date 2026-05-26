@@ -1,20 +1,21 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
-import { jsonOk } from "@/lib/api/errors";
-import { settingsService } from "@/lib/api/services/settings.service";
+import { toServiceContext } from "@/lib/api/serviceContext";
+import { respond } from "@/lib/api/apiResultBridge";
+import { settingsService } from "@/services/settingsService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const GET = withAuth(async (_req, { actor }) => {
-  const data = await settingsService.listAll(actor.accessToken);
-  return jsonOk(data);
+  const result = await settingsService.listAll(toServiceContext(actor));
+  return respond(result);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, ["Admin", "Manager"]);
   const body = await parseJsonBody(req);
-  const data = await settingsService.bulkSet(body, actor.accessToken);
-  return jsonOk(data);
+  const result = await settingsService.bulkSet(body, toServiceContext(actor));
+  return respond(result);
 });

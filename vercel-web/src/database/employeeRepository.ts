@@ -25,6 +25,24 @@ export const employeeRepository = {
     return findById(TABLE, id, SCOPE, opts);
   },
 
+  /**
+   * Batch fetch of employees by id — used by the payout service to hydrate
+   * `employee_name` on list / detail responses without an N+1 round-trip.
+   */
+  async findByIds(ids: string[], opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const unique = Array.from(new Set((ids || []).filter((x) => !!x)));
+    if (!unique.length) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    return runListQuery(
+      () =>
+        db
+          .from(TABLE)
+          .select("id, fn, mn, ln, phone, status, dept, desig, photo")
+          .in("id", unique),
+      `${SCOPE}.findByIds`
+    );
+  },
+
   list(filters: EmployeeListFilters = {}, opts?: DbAccess): Promise<ApiResult<ListResult<JsonRow>>> {
     return listRows(
       TABLE,

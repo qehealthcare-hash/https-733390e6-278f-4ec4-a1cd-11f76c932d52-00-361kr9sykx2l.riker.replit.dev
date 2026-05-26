@@ -39,7 +39,14 @@ export type AppRole =
   | "Account"
   | "Caretaker";
 
-/** Authenticated principal forwarded from auth middleware into services. */
+/**
+ * @deprecated Use `ServiceActor` from `@/types/serviceActor` instead.
+ *
+ * This older shape pre-dates the layered architecture and is no longer
+ * used by any service or repository — it survives only for a small number
+ * of external consumers that import the public type surface. New code
+ * must import `ServiceActor`.
+ */
 export interface Actor {
   /** Supabase auth uid */
   id: string;

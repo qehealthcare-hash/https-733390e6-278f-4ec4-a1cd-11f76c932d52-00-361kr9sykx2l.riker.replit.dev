@@ -1,8 +1,10 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
-import { jsonOk } from "@/lib/api/errors";
-import { settingsService } from "@/lib/api/services/settings.service";
+import { toServiceContext } from "@/lib/api/serviceContext";
+import { respond } from "@/lib/api/apiResultBridge";
+import { settingsService } from "@/services/settingsService";
+import { success } from "@/utils/apiResponse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,20 +12,24 @@ export const dynamic = "force-dynamic";
 type Params = { key: string };
 
 export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
-  const value = await settingsService.getKey(params.key, actor.accessToken);
-  return jsonOk({ key: params.key, value });
+  const result = await settingsService.getKey(params.key, toServiceContext(actor));
+  if (!result.success) return respond(result);
+  return respond(success({ key: params.key, value: result.data }));
 });
 
 export const PUT = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin", "Manager"]);
   const body = await parseJsonBody(req);
-  const value = body && Object.prototype.hasOwnProperty.call(body, "value") ? (body as { value: unknown }).value : body;
-  const data = await settingsService.setKey(params.key, value, actor.accessToken);
-  return jsonOk(data);
+  const value =
+    body && Object.prototype.hasOwnProperty.call(body, "value")
+      ? (body as { value: unknown }).value
+      : body;
+  const result = await settingsService.setKey(params.key, value, toServiceContext(actor));
+  return respond(result);
 });
 
 export const DELETE = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin"]);
-  const data = await settingsService.deleteKey(params.key, actor.accessToken);
-  return jsonOk(data);
+  const result = await settingsService.deleteKey(params.key, toServiceContext(actor));
+  return respond(result);
 });

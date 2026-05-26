@@ -13,5 +13,107 @@
     "@typescript-eslint/no-explicit-any": "off",
     "@typescript-eslint/no-empty-object-type": "off",
     "@typescript-eslint/ban-ts-comment": "off"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["app/api/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@/lib/api/supabase", "../../lib/api/supabase", "**/lib/api/supabase"],
+                "message": "API routes must not import Supabase directly. Call a service from `@/services/*` instead — services use repositories under `@/database/*`."
+              },
+              {
+                "group": ["@/database/*", "**/src/database/*"],
+                "message": "API routes must not import repositories directly. Go through a service in `@/services/*` (the service composes validation + business + repository)."
+              },
+              {
+                "group": ["@/lib/api/services/*", "**/lib/api/services/*"],
+                "message": "Legacy `lib/api/services/*` is deleted. Import from `@/services/*Service` instead."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/services/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@/lib/api/supabase", "**/lib/api/supabase"],
+                "message": "Services must not import Supabase directly. Go through `@/database/*Repository`."
+              },
+              {
+                "group": ["@/lib/api/services/*", "**/lib/api/services/*"],
+                "message": "Legacy services were deleted. Domain services live under `@/services/*Service`."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/business/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@/lib/api/supabase", "**/lib/api/supabase"],
+                "message": "Business rules must be pure — no Supabase access."
+              },
+              {
+                "group": ["@/database/*", "**/src/database/*"],
+                "message": "Business rules must be pure — no repository access."
+              },
+              {
+                "group": ["@/services/*", "**/src/services/*"],
+                "message": "Business rules sit BELOW services and must not import them."
+              },
+              {
+                "group": ["@/lib/api/*", "**/lib/api/*"],
+                "message": "Business rules must not depend on HTTP-layer helpers."
+              },
+              {
+                "group": ["next/*", "next"],
+                "message": "Business rules must be framework-free."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/database/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@/services/*", "**/src/services/*"],
+                "message": "Repositories must not import services (no upward dependency)."
+              },
+              {
+                "group": ["@/validation/*", "**/src/validation/*"],
+                "message": "Repositories must not import validation schemas."
+              },
+              {
+                "group": ["next/*", "next"],
+                "message": "Repositories must not import Next.js — they are framework-free."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }
