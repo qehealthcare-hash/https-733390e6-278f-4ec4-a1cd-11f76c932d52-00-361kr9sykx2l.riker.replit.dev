@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { captureServerExceptionSync } from "@/lib/observability";
 import { isProduction } from "./security";
 
 export class ApiError extends Error {
@@ -61,6 +62,7 @@ export function jsonError(err: unknown) {
     );
   }
   console.error("[api] unhandled", err);
+  captureServerExceptionSync(err, { layer: "api", production: isProduction() });
   const message = isProduction()
     ? "Internal server error"
     : err instanceof Error

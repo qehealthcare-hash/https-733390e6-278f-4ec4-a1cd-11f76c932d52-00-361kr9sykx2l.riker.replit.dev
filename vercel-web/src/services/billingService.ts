@@ -87,6 +87,7 @@ import { reportRepository } from "@/database/reportRepository";
 import { patientRepository } from "@/database/patientRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
+import { dutyDayLedger } from "@/services/dutyDayLedger";
 import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
@@ -1652,6 +1653,22 @@ export const billingService = {
       await recomputeInvoiceStatus(String(input.invoice_id), ctx);
     }
 
+    // Defensive ledger sync. When Phase 16 RPC is applied on Supabase it
+    // already links day-rows; this best-effort pass is idempotent (only
+    // touches rows where `paid_receipt_id` is null) so it stays safe.
+    await dutyDayLedger.syncReceiptCreated(
+      {
+        id,
+        billing_id: input.billing_id,
+        patient_id: input.patient_id,
+        from_date: input.from_date,
+        to_date: input.to_date,
+        paid_dates: input.paid_dates ?? null,
+      },
+      ctx.actor.email || "system",
+      access
+    );
+
     return finalizeWithAudit(
       await fireAudit(ctx, "receipt", {
         entity_id: id,
@@ -2174,6 +2191,14 @@ export const billingService = {
       await recomputeInvoiceStatus(linkedInvoiceId, ctx);
     }
 
+    // Defensive ledger release. Idempotent: only clears rows that still
+    // point at this receipt id, so it's safe alongside the Phase 16 RPC.
+    await dutyDayLedger.syncReceiptDeleted(
+      receiptId,
+      ctx.actor.email || "system",
+      access
+    );
+
     return finalizeWithAudit(
       await fireAudit(ctx, "receipt", {
         entity_id: receiptId,
@@ -2392,6 +2417,54 @@ export const billingService = {
       access
     );
     if (!replaced.success) return passFailure(replaced);
+
+    // Phase 11 — best-effort duty-day ledger sync after the legacy RPC
+    // physically rewrites the svc_entries slice. We:
+    //   1. Re-read the fresh svc rows for this (billing, service_name) slice.
+    //   2. Upsert per-day ledger rows for each fresh entry.
+    //   3. Soft-delete any orphan day-rows whose svc_entry_id is no longer
+    //      present (the RPC deletes + reinserts, so ids change).
+    try {
+      const serviceName = rows[0]?.service_name
+        ? String(rows[0].service_name)
+        : input.svc_key.includes("_")
+          ? input.svc_key.slice(input.svc_key.indexOf("_") + 1)
+          : "";
+      const fresh = await billingRepository.listSvcByBilling(billingId, access);
+      const freshRows = fresh.success
+        ? (fresh.data || []).filter(
+            (r) =>
+              !serviceName ||
+              String(r.service_name || "") === serviceName
+          )
+        : [];
+      for (const row of freshRows) {
+        await dutyDayLedger.syncSvcEntryUpsert(
+          {
+            id: String(row.id || ""),
+            svc_key: String(row.svc_key || input.svc_key),
+            billing_id: String(row.billing_id || billingId),
+            service_name: String(row.service_name || serviceName),
+            partner_id: String(row.partner_id || ""),
+            date: String(row.date || ""),
+            count: row.count as number | string | null,
+            amt: row.amt as number | string | null
+          },
+          ctx.actor.email,
+          access
+        );
+      }
+      const keepIds = freshRows.map((r) => String(r.id || "")).filter(Boolean);
+      await dutyDayLedger.syncSvcKeyReplace(
+        billingId,
+        serviceName,
+        keepIds,
+        ctx.actor.email,
+        access
+      );
+    } catch (err) {
+      console.error("[dutyDayLedger] svc-entry replace sync failed", err);
+    }
 
     return finalizeWithAudit(
       await fireAudit(ctx, "svc_entry", {

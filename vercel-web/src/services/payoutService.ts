@@ -76,6 +76,7 @@ import { patientRepository } from "@/database/patientRepository";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
 import { parseDutyDiaryRemarks } from "@/business/dutyDiaryRules";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
+import { dutyDayLedger } from "@/services/dutyDayLedger";
 import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
@@ -1591,12 +1592,41 @@ export const payoutService = {
       remarks: row.remarks || ""
     }));
 
+    const access = dbAccess(ctx);
     const replaced = await payoutRepository.replacePayoutChargesRpc(
       input.svc_key,
       rows,
-      dbAccess(ctx)
+      access
     );
     if (!replaced.success) return passFailure(replaced);
+
+    // Phase 11 — best-effort duty-day ledger sync. Look up the freshly
+    // inserted payout_charges by svc_key and link each one to its matching
+    // day-row. The legacy RPC deletes + reinserts so any "old" charges are
+    // implicitly released when their id no longer exists.
+    try {
+      const billingId = input.svc_key.split("_")[0] || "";
+      const fresh = await payoutRepository.listChargesBySvcKey(
+        input.svc_key,
+        access
+      );
+      const chargeRows = fresh.success ? fresh.data || [] : [];
+      for (const charge of chargeRows) {
+        await dutyDayLedger.syncPayoutChargeCreated(
+          {
+            id: String(charge.id || ""),
+            billing_id: String(charge.billing_id || billingId),
+            partner_id: String(charge.partner_id || ""),
+            service_name: String(charge.service_name || ""),
+            date: String(charge.date || "")
+          },
+          ctx.actor.email,
+          access
+        );
+      }
+    } catch (err) {
+      console.error("[dutyDayLedger] payout charge replace sync failed", err);
+    }
 
     return finalizeWithAudit(
       await fireAudit(ctx, {

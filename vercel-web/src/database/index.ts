@@ -17,6 +17,7 @@ export { inquiryRepository } from "@/database/inquiryRepository";
 export { dutyRepository } from "@/database/dutyRepository";
 export { billingRepository } from "@/database/billingRepository";
 export { payoutRepository } from "@/database/payoutRepository";
+export { dutyDayRepository } from "@/database/dutyDayRepository";
 export { attendanceRepository } from "@/database/attendanceRepository";
 export { reportRepository } from "@/database/reportRepository";
 export { auditRepository } from "@/database/auditRepository";

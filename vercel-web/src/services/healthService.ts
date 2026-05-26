@@ -5,6 +5,7 @@
 
 import type { ApiResult } from "@/types/common";
 import { hasOpenAI, hasWhatsApp } from "@/lib/api/env";
+import { isObservabilityEnabled } from "@/lib/observability";
 import { isProduction } from "@/lib/api/security";
 import { healthRepository } from "@/database/healthRepository";
 
@@ -16,6 +17,9 @@ export interface HealthSnapshot {
     supabase: { ok: boolean; error: string | null };
     openai: boolean;
     whatsapp: boolean;
+  };
+  monitoring: {
+    sentry: boolean;
   };
 }
 
@@ -42,6 +46,9 @@ export const healthService = {
           supabase,
           openai: hasOpenAI(),
           whatsapp: hasWhatsApp()
+        },
+        monitoring: {
+          sentry: isObservabilityEnabled()
         }
       }
     };

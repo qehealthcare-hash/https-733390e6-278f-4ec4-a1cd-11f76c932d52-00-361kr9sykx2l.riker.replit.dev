@@ -1,71 +1,40 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useMemo } from "react";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useAuth } from "@/components/providers/auth-provider";
-import { request } from "@/lib/api-client";
+import { usePaginatedResource } from "@/hooks/use-paginated-resource";
 import { formatDate } from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
+import { useState } from "react";
 
 export default function AuditsPage() {
-  var auth = useAuth();
-  var [rows, setRows] = useState([]);
-  var [total, setTotal] = useState(0);
-  var [page, setPage] = useState(1);
-  var [pageSize, setPageSize] = useState(50);
-  var [loading, setLoading] = useState(true);
-  var [error, setError] = useState("");
   var [moduleFilter, setModuleFilter] = useState("");
   var [entityFilter, setEntityFilter] = useState("");
 
-  var loadAudits = useCallback(
+  var listQuery = useMemo(
     function () {
-      if (!auth.session?.access_token) return;
-      var offset = (page - 1) * pageSize;
-      var path =
-        "/audits?limit=" +
-        pageSize +
-        "&offset=" +
-        offset;
-      if (moduleFilter) path += "&module=" + encodeURIComponent(moduleFilter);
-      if (entityFilter) path += "&entity_id=" + encodeURIComponent(entityFilter);
-      setLoading(true);
-      request(path, null, auth.session)
-        .then(function (data) {
-          setRows((data && data.rows) || []);
-          setTotal(typeof data?.total === "number" ? data.total : (data?.rows || []).length);
-          setError("");
-        })
-        .catch(function (err) {
-          setError(err.message || "Unable to load audit log");
-          setRows([]);
-          setTotal(0);
-        })
-        .finally(function () {
-          setLoading(false);
-        });
+      return {
+        module: moduleFilter || undefined,
+        entity_id: entityFilter || undefined
+      };
     },
-    [auth.session, moduleFilter, entityFilter, page, pageSize]
+    [moduleFilter, entityFilter]
   );
 
-  useEffect(
-    function () {
-      setPage(1);
-    },
-    [moduleFilter, entityFilter, pageSize]
-  );
+  var resource = usePaginatedResource({
+    basePath: "/audits",
+    table: "hh_audit_logs",
+    channel: "audits",
+    queryParams: listQuery,
+    resetKey: moduleFilter + "|" + entityFilter,
+    pageSize: 50
+  });
 
-  useEffect(
-    function () {
-      loadAudits();
-    },
-    [loadAudits]
-  );
-
+  var rows = resource.data;
   var modules = useMemo(
     function () {
       var set = {};
@@ -83,7 +52,7 @@ export default function AuditsPage() {
         <div className="page-grid">
           <ModuleShell
             title="Mutation trail"
-            description="Append-only log written by /api/v1 services on every create, update, and delete"
+            description="Append-only log written by /api/v1 services on every create, update, and delete. List refreshes on Supabase realtime events."
             actions={
               <button
                 className="button secondary"
@@ -139,20 +108,17 @@ export default function AuditsPage() {
                 />
               </div>
             </div>
-            {error ? <div className="error-text">{error}</div> : null}
+            {resource.error ? <div className="error-text">{resource.error}</div> : null}
             <PaginationBar
-              page={page}
-              pageSize={pageSize}
-              total={total}
-              onPageChange={setPage}
-              onPageSizeChange={function (next) {
-                setPageSize(next);
-                setPage(1);
-              }}
+              page={resource.page}
+              pageSize={resource.pageSize}
+              total={resource.total}
+              onPageChange={resource.setPage}
+              onPageSizeChange={resource.setPageSize}
             />
             {!rows.length ? (
               <EmptyState
-                title={loading ? "Loading audit entries…" : "No audit entries"}
+                title={resource.loading ? "Loading audit entries…" : "No audit entries"}
                 description="Mutations through the API layer record an audit row before returning success (unless API_AUDIT_DISABLED is set)."
               />
             ) : (

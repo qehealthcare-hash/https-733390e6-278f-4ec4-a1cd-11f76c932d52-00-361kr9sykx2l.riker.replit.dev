@@ -10,6 +10,9 @@ import { runListQuery } from "@/database/supabaseClient";
 
 const SCOPE = "reportRepository";
 
+/** Hard ceiling on any defensive list-row materialisation in this repo. */
+export const REPORT_ROW_CEILING = 1000;
+
 export interface ReportFilters {
   patient_id?: string;
   employee_id?: string;
@@ -376,6 +379,268 @@ export const reportRepository = {
   // ───────────────────────────────────────────────────────────────────
   // Attendance
   // ───────────────────────────────────────────────────────────────────
+
+  // ───────────────────────────────────────────────────────────────────
+  // Per-tab summary helpers (Phase 12 — server-side aggregation)
+  // ───────────────────────────────────────────────────────────────────
+
+  /**
+   * Count inquiries in the supplied [from, to) window with optional filters.
+   * Uses Supabase `count='exact', head: true` so a head-only query returns
+   * the total row count without materialising rows.
+   */
+  countInquiriesScoped(
+    fromISO: string,
+    toISO: string,
+    filters: { status?: string; source?: string; assigned_to?: string } = {},
+    opts?: DbAccess
+  ): Promise<ApiResult<number>> {
+    return countWhere(
+      "hh_inquiries",
+      `${SCOPE}.countInquiriesScoped`,
+      (q) => {
+        let query = q.gte("created_at", fromISO).lt("created_at", toISO);
+        if (filters.status) query = query.eq("status", filters.status);
+        if (filters.source) query = query.eq("source", filters.source);
+        if (filters.assigned_to) query = query.eq("assigned_to", filters.assigned_to);
+        return query;
+      },
+      opts
+    );
+  },
+
+  /**
+   * Slim list slice for the inquiry detail tab. Capped at `REPORT_ROW_CEILING`
+   * so even with `?limit=99999` the API can't be tricked into pulling every
+   * row — the aggregates above remain accurate via `count='exact'`.
+   */
+  async listInquiriesScoped(
+    fromISO: string,
+    toISO: string,
+    filters: { status?: string; source?: string; assigned_to?: string } = {},
+    paging: { limit?: number; offset?: number } = {},
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const limit = Math.max(1, Math.min(paging.limit ?? 50, REPORT_ROW_CEILING));
+    const offset = Math.max(0, paging.offset ?? 0);
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () => {
+        let q = db
+          .from("hh_inquiries")
+          .select(
+            "id, name, phone, area, city, status, potential, source, assigned_to, followup_date, created_at"
+          )
+          .gte("created_at", fromISO)
+          .lt("created_at", toISO)
+          .order("created_at", { ascending: false })
+          .range(offset, offset + limit - 1);
+        if (filters.status) q = q.eq("status", filters.status);
+        if (filters.source) q = q.eq("source", filters.source);
+        if (filters.assigned_to) q = q.eq("assigned_to", filters.assigned_to);
+        return q;
+      },
+      `${SCOPE}.listInquiriesScoped`
+    );
+  },
+
+  /**
+   * Defensive group-by slice — used to roll up free-form text fields like
+   * `source` / `potential` where the enum isn't known in advance. Capped at
+   * `REPORT_ROW_CEILING`; the page falls back to "Other" if more rows exist.
+   */
+  async listInquiriesForGroupBy(
+    fromISO: string,
+    toISO: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from("hh_inquiries")
+          .select("id, status, potential, source, followup_date, created_at")
+          .gte("created_at", fromISO)
+          .lt("created_at", toISO)
+          .range(0, REPORT_ROW_CEILING - 1),
+      `${SCOPE}.listInquiriesForGroupBy`
+    );
+  },
+
+  /** Count inquiries with a follow-up date inside the [from, to) window. */
+  countInquiriesFollowupDue(
+    fromYMD: string,
+    toYMD: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<number>> {
+    return countWhere(
+      "hh_inquiries",
+      `${SCOPE}.countInquiriesFollowupDue`,
+      (q) => q.gte("followup_date", fromYMD).lte("followup_date", toYMD),
+      opts
+    );
+  },
+
+  /** Patients created inside [from, to) — used by the patients detail tab. */
+  countPatientsScoped(
+    fromISO: string,
+    toISO: string,
+    filters: { status?: string; area?: string } = {},
+    opts?: DbAccess
+  ): Promise<ApiResult<number>> {
+    return countWhere(
+      "hh_patients",
+      `${SCOPE}.countPatientsScoped`,
+      (q) => {
+        let query = q.gte("created_at", fromISO).lt("created_at", toISO);
+        if (filters.status) query = query.eq("status", filters.status);
+        if (filters.area) {
+          const term = filters.area.replace(/%/g, "");
+          query = query.ilike("area", `%${term}%`);
+        }
+        return query;
+      },
+      opts
+    );
+  },
+
+  async listPatientsScoped(
+    fromISO: string,
+    toISO: string,
+    filters: { status?: string; area?: string } = {},
+    paging: { limit?: number; offset?: number } = {},
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const limit = Math.max(1, Math.min(paging.limit ?? 50, REPORT_ROW_CEILING));
+    const offset = Math.max(0, paging.offset ?? 0);
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () => {
+        let q = db
+          .from("hh_patients")
+          .select("id, name, phone, area, city, status, shift, created_at")
+          .gte("created_at", fromISO)
+          .lt("created_at", toISO)
+          .order("created_at", { ascending: false })
+          .range(offset, offset + limit - 1);
+        if (filters.status) q = q.eq("status", filters.status);
+        if (filters.area) {
+          const term = filters.area.replace(/%/g, "");
+          q = q.ilike("area", `%${term}%`);
+        }
+        return q;
+      },
+      `${SCOPE}.listPatientsScoped`
+    );
+  },
+
+  async listPatientsForGroupBy(
+    fromISO: string,
+    toISO: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from("hh_patients")
+          .select("id, status, area")
+          .gte("created_at", fromISO)
+          .lt("created_at", toISO)
+          .range(0, REPORT_ROW_CEILING - 1),
+      `${SCOPE}.listPatientsForGroupBy`
+    );
+  },
+
+  /**
+   * Count attendance rows inside the [from, to) window. Covers both the
+   * timestamp-anchored `check_in_at` and the no-time `work_date` rows
+   * (ABSENT / LEAVE / HOLIDAY) by running two counts and summing.
+   */
+  async countAttendanceScoped(
+    startISO: string,
+    endISO: string,
+    filters: { employee_id?: string; status?: string } = {},
+    opts?: DbAccess
+  ): Promise<ApiResult<number>> {
+    // The "timed" and "no-time" branches are mutually exclusive on the same
+    // row (a row only ever has check_in_at OR work_date filled), so we can
+    // sum the two counts without double-counting.
+    const timed = await countWhere(
+      "hh_attendance",
+      `${SCOPE}.countAttendanceScoped.timed`,
+      (q) => {
+        let query = q.gte("check_in_at", startISO).lt("check_in_at", endISO);
+        if (filters.employee_id) query = query.eq("employee_id", filters.employee_id);
+        if (filters.status) query = query.eq("status", filters.status);
+        return query;
+      },
+      opts
+    );
+    if (!timed.success) return timed;
+    const fromKey = startISO.slice(0, 10);
+    const toKey = endISO.slice(0, 10);
+    const untimed = await countWhere(
+      "hh_attendance",
+      `${SCOPE}.countAttendanceScoped.untimed`,
+      (q) => {
+        let query = q
+          .is("check_in_at", null)
+          .gte("work_date", fromKey)
+          .lt("work_date", toKey);
+        if (filters.employee_id) query = query.eq("employee_id", filters.employee_id);
+        if (filters.status) query = query.eq("status", filters.status);
+        return query;
+      },
+      opts
+    );
+    if (!untimed.success) return untimed;
+    return { success: true, data: (timed.data || 0) + (untimed.data || 0) };
+  },
+
+  /**
+   * Paginated attendance rows for the detail tab. Already covers both timed
+   * and no-time rows via `listAttendanceInRange`, but slices to `limit/offset`
+   * after the per-source merge so the caller doesn't double-pay window
+   * scanning. Capped at `REPORT_ROW_CEILING`.
+   */
+  async listAttendanceScoped(
+    startISO: string,
+    endISO: string,
+    filters: { employee_id?: string; status?: string } = {},
+    paging: { limit?: number; offset?: number } = {},
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const limit = Math.max(1, Math.min(paging.limit ?? 50, REPORT_ROW_CEILING));
+    const offset = Math.max(0, paging.offset ?? 0);
+    const rows = await this.listAttendanceInRange(
+      startISO,
+      endISO,
+      { employee_id: filters.employee_id },
+      opts
+    );
+    if (!rows.success) return rows;
+    const filtered = (rows.data || []).filter(
+      (r) => !filters.status || String(r.status || "") === filters.status
+    );
+    filtered.sort((a, b) => {
+      const ak = String(a.check_in_at || a.work_date || "");
+      const bk = String(b.check_in_at || b.work_date || "");
+      return bk.localeCompare(ak);
+    });
+    return {
+      success: true,
+      data: filtered.slice(offset, offset + limit)
+    };
+  },
+
+  /** Count billings whose period activity touches [from, to). */
+  countBillingsScoped(
+    filters: { status?: string; patientId?: string } = {},
+    opts?: DbAccess
+  ): Promise<ApiResult<number>> {
+    return this.countBillings(filters, opts);
+  },
 
   async listAttendanceInRange(
     startISO: string,

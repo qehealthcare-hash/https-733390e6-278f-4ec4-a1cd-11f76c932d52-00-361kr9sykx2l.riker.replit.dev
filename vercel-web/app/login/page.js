@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { appConfig } from "@/lib/config";
 import { useAuth } from "@/components/providers/auth-provider";
+import { BrandLogo } from "@/components/ui/brand-logo";
 
 export default function LoginPage() {
   var auth = useAuth();
@@ -48,7 +49,7 @@ export default function LoginPage() {
     <div className="login-wrap">
       <div className="panel login-card stack">
         <div style={{ textAlign: "center" }}>
-          <img src={appConfig.companyLogo} alt="" className="auth-logo" />
+          <BrandLogo src={appConfig.companyLogo} alt={appConfig.companyName} className="auth-logo" priority />
           <h1 style={{ margin: "12px 0 4px" }}>{appConfig.appName}</h1>
           <div className="mini-muted">Sign in with your CRM email (Supabase Auth)</div>
         </div>

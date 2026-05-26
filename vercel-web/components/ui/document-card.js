@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { getDocumentSignedUrl, isImageDocument, isPdfDocument } from "@/lib/uploads";
 
 function badgeStyle(kind) {
@@ -145,9 +146,12 @@ export function DocumentCard(props) {
             background: "#f8fafc"
           }}
         >
-          <img
+          <Image
             src={previewUrl}
             alt={doc.file_name || "preview"}
+            width={220}
+            height={160}
+            unoptimized
             style={{
               maxWidth: 220,
               maxHeight: 160,

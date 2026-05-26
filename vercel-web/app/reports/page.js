@@ -39,11 +39,17 @@ export default function ReportsPage() {
   var [error, setError] = useState("");
   var [loading, setLoading] = useState(false);
 
-  // additional datasets
-  var [inquiries, setInquiries] = useState([]);
-  var [patients, setPatients] = useState([]);
-  var [attendance, setAttendance] = useState([]);
-  var [billings, setBillings] = useState([]);
+  // Phase 12: detail tabs are now driven by server-side aggregation endpoints
+  // — `/reports/{inquiries,patients,attendance,billings}` — so totals are
+  // accurate for the entire period regardless of the paginated row slice.
+  var [inquirySummary, setInquirySummary] = useState(null);
+  var [inquiryRows, setInquiryRows] = useState([]);
+  var [patientSummary, setPatientSummary] = useState(null);
+  var [patientRows, setPatientRows] = useState([]);
+  var [attendanceSummary, setAttendanceSummary] = useState(null);
+  var [attendanceRows, setAttendanceRows] = useState([]);
+  var [billingSummary, setBillingSummary] = useState(null);
+  var [billingRows, setBillingRows] = useState([]);
 
   useEffect(
     function () {
@@ -77,42 +83,34 @@ export default function ReportsPage() {
     function () {
       if (!auth.session?.access_token) return;
       var p = periodFromMonthInput(period);
-      var from = p + "-01";
-      var ymParts = p.split("-");
-      var year = Number(ymParts[0]);
-      var month = Number(ymParts[1]);
-      var endDay = new Date(year, month, 0).getDate();
-      var to = p + "-" + String(endDay).padStart(2, "0");
+      var qs = "?period=" + encodeURIComponent(p) + "&limit=200";
       var datasetErrors = [];
-      var periodQs = "&from=" + from + "&to=" + to;
       Promise.all([
-        request("/inquiries?limit=100" + periodQs, null, auth.session).catch(function (e) {
+        request("/reports/inquiries" + qs, null, auth.session).catch(function (e) {
           datasetErrors.push("inquiries: " + (e.message || "load failed"));
-          return [];
+          return null;
         }),
-        request("/patients?limit=100" + periodQs, null, auth.session).catch(function (e) {
+        request("/reports/patients" + qs, null, auth.session).catch(function (e) {
           datasetErrors.push("patients: " + (e.message || "load failed"));
-          return [];
+          return null;
         }),
-        request("/attendance?limit=100" + periodQs, null, auth.session).catch(function (e) {
+        request("/reports/attendance" + qs, null, auth.session).catch(function (e) {
           datasetErrors.push("attendance: " + (e.message || "load failed"));
-          return [];
+          return null;
         }),
-        request("/billings?limit=100&period=" + p, null, auth.session).catch(function (e) {
+        request("/reports/billings" + qs, null, auth.session).catch(function (e) {
           datasetErrors.push("billings: " + (e.message || "load failed"));
           return null;
         })
       ]).then(function (result) {
-        // API now scopes inquiries + patients to created_at within from/to,
-        // so we can trust the returned rows without a second client pass.
-        var inqs = Array.isArray(result[0]) ? result[0] : (result[0] && result[0].rows) || [];
-        var pats = Array.isArray(result[1]) ? result[1] : (result[1] && result[1].rows) || [];
-        var atts = Array.isArray(result[2]) ? result[2] : (result[2] && result[2].rows) || [];
-        var bills = result[3] && Array.isArray(result[3].rows) ? result[3].rows : [];
-        setInquiries(inqs);
-        setPatients(pats);
-        setAttendance(atts);
-        setBillings(bills);
+        setInquirySummary(result[0] ? result[0].summary : null);
+        setInquiryRows(result[0] && Array.isArray(result[0].rows) ? result[0].rows : []);
+        setPatientSummary(result[1] ? result[1].summary : null);
+        setPatientRows(result[1] && Array.isArray(result[1].rows) ? result[1].rows : []);
+        setAttendanceSummary(result[2] ? result[2].summary : null);
+        setAttendanceRows(result[2] && Array.isArray(result[2].rows) ? result[2].rows : []);
+        setBillingSummary(result[3] ? result[3].summary : null);
+        setBillingRows(result[3] && Array.isArray(result[3].rows) ? result[3].rows : []);
         if (datasetErrors.length) {
           setError("Some datasets failed to load — " + datasetErrors.join("; "));
         }
@@ -123,49 +121,59 @@ export default function ReportsPage() {
 
   var payrollRows = useMemo(function () { return (payroll && payroll.rows) || []; }, [payroll]);
 
+  // Server-side totals (always accurate) with safe defaults for the empty
+  // state. The page used to compute these from a 100-row sample; now the
+  // numbers come from Supabase `count='exact'` aggregates.
   var inquiryStats = useMemo(
     function () {
-      var by = { New: 0, Contacted: 0, FollowUp: 0, Negotiating: 0, Converted: 0, Closed: 0, Lost: 0 };
-      var hot = 0, warm = 0, cold = 0;
-      inquiries.forEach(function (r) {
-        if (by[r.status] !== undefined) by[r.status] += 1;
-        if (r.potential === "HOT") hot += 1;
-        else if (r.potential === "WARM") warm += 1;
-        else if (r.potential === "COLD") cold += 1;
-      });
-      return { by: by, hot: hot, warm: warm, cold: cold, total: inquiries.length };
+      var defaults = {
+        New: 0, Contacted: 0, FollowUp: 0, Negotiating: 0, Converted: 0, Closed: 0, Lost: 0
+      };
+      var by = Object.assign({}, defaults, (inquirySummary && inquirySummary.by_status) || {});
+      var pot = (inquirySummary && inquirySummary.by_potential) || {};
+      return {
+        by: by,
+        hot: pot.HOT || 0,
+        warm: pot.WARM || 0,
+        cold: pot.COLD || 0,
+        total: inquirySummary ? inquirySummary.total : 0,
+        followup_due: inquirySummary ? inquirySummary.followup_due : 0
+      };
     },
-    [inquiries]
+    [inquirySummary]
   );
 
   var attendanceStats = useMemo(
     function () {
-      var by = { PRESENT: 0, ABSENT: 0, LATE: 0, HALF_DAY: 0, LEAVE: 0, HOLIDAY: 0 };
-      var byEmployee = {};
-      attendance.forEach(function (r) {
-        if (by[r.status] !== undefined) by[r.status] += 1;
-        var emp = r.employee_id || "—";
-        byEmployee[emp] = byEmployee[emp] || { employee_id: emp, present: 0, absent: 0, late: 0, leave: 0 };
-        if (r.status === "PRESENT") byEmployee[emp].present += 1;
-        else if (r.status === "ABSENT") byEmployee[emp].absent += 1;
-        else if (r.status === "LATE") byEmployee[emp].late += 1;
-        else if (r.status === "LEAVE" || r.status === "HOLIDAY") byEmployee[emp].leave += 1;
-      });
-      return { by: by, byEmployee: Object.values(byEmployee), total: attendance.length };
+      var defaults = { PRESENT: 0, ABSENT: 0, LATE: 0, HALF_DAY: 0, LEAVE: 0, HOLIDAY: 0 };
+      var by = Object.assign({}, defaults, (attendanceSummary && attendanceSummary.by_status) || {});
+      var byEmployee = (attendanceSummary && attendanceSummary.by_employee) || [];
+      return {
+        by: by,
+        byEmployee: byEmployee.map(function (e) {
+          return {
+            employee_id: e.employee_id,
+            present: e.present || 0,
+            absent: e.absent || 0,
+            late: e.late || 0,
+            leave: (e.leave || 0) + (e.holiday || 0)
+          };
+        }),
+        total: attendanceSummary ? attendanceSummary.total : 0
+      };
     },
-    [attendance]
+    [attendanceSummary]
   );
 
   var patientStats = useMemo(
     function () {
-      var byStatus = {};
-      patients.forEach(function (p) {
-        var s = p.status || "Unknown";
-        byStatus[s] = (byStatus[s] || 0) + 1;
-      });
-      return { byStatus: byStatus, total: patients.length };
+      var byStatus = (patientSummary && patientSummary.by_status) || {};
+      return {
+        byStatus: byStatus,
+        total: patientSummary ? patientSummary.total : 0
+      };
     },
-    [patients]
+    [patientSummary]
   );
 
   function exportCsv(name, rows) {
@@ -214,7 +222,7 @@ export default function ReportsPage() {
             />
           </section>
 
-          <ModuleShell title="Period" description="Audited monthly aggregates from /api/v1/reports + client-side analytics for inquiries, patients, attendance and billing.">
+          <ModuleShell title="Period" description="Server-side aggregates from /api/v1/reports covering billing, payout, payroll, attendance, inquiries and patients. Totals are accurate for the entire period — detail tables paginate.">
             <div className="toolbar">
               <div className="field">
                 <label>Month</label>
@@ -298,7 +306,7 @@ export default function ReportsPage() {
                     onClick={function () {
                       exportCsv(
                         "billings-" + period + ".csv",
-                        billings.map(function (b) {
+                        billingRows.map(function (b) {
                           return {
                             billing_id: b.id,
                             patient_name: b.patient_name || "",
@@ -333,7 +341,7 @@ export default function ReportsPage() {
                     className="button secondary"
                     type="button"
                     onClick={function () {
-                      printSection("Billings " + period, billings, [
+                      printSection("Billings " + period, billingRows, [
                         { key: "id", label: "Bill" },
                         { key: "patient_name", label: "Patient" },
                         { key: "status", label: "Status" },
@@ -354,7 +362,19 @@ export default function ReportsPage() {
                 </div>
               }
             >
-              {!billings.length ? (
+              {billingSummary ? (
+                <div className="helper-box">
+                  Billed {formatCurrency(billingSummary.service_total)} ·
+                  Received {formatCurrency(billingSummary.collected)} ·
+                  Outstanding {formatCurrency(billingSummary.pending)} ·
+                  {billingSummary.billings_count} billing
+                  {billingSummary.billings_count === 1 ? "" : "s"}
+                  {billingSummary.billings_count > billingRows.length
+                    ? " (showing top " + billingRows.length + ")"
+                    : ""}
+                </div>
+              ) : null}
+              {!billingRows.length ? (
                 <EmptyState title="No billings" description="No billings open in this period." />
               ) : (
                 <div className="table-wrap">
@@ -363,7 +383,7 @@ export default function ReportsPage() {
                       <tr><th>Bill</th><th>Patient</th><th>Status</th><th>Outstanding</th><th>Sec Dep</th><th>Created</th></tr>
                     </thead>
                     <tbody>
-                      {billings.map(function (b) {
+                      {billingRows.map(function (b) {
                         return (
                           <tr key={b.id}>
                             <td>{b.id}</td>
@@ -572,11 +592,11 @@ export default function ReportsPage() {
                     className="button secondary"
                     type="button"
                     onClick={function () {
-                      exportCsv("inquiries-" + period + ".csv", inquiries.map(function (i) {
+                      exportCsv("inquiries-" + period + ".csv", inquiryRows.map(function (i) {
                         return {
                           id: i.id,
-                          name: i.patient_name || i.name,
-                          phone: i.mobile || i.phone,
+                          name: i.name,
+                          phone: i.phone,
                           area: i.area,
                           status: i.status,
                           potential: i.potential,
@@ -592,7 +612,11 @@ export default function ReportsPage() {
               }
             >
               <div className="helper-box">
-                Total {inquiryStats.total} · Hot {inquiryStats.hot} · Warm {inquiryStats.warm} · Cold {inquiryStats.cold}
+                Total {inquiryStats.total} · Hot {inquiryStats.hot} · Warm {inquiryStats.warm} · Cold {inquiryStats.cold} ·
+                Follow-ups due {inquiryStats.followup_due}
+                {inquiryRows.length < inquiryStats.total
+                  ? " (showing " + inquiryRows.length + " of " + inquiryStats.total + ")"
+                  : ""}
               </div>
               <div className="kpi-grid">
                 {Object.keys(inquiryStats.by).map(function (k) {
@@ -611,11 +635,11 @@ export default function ReportsPage() {
                     className="button secondary"
                     type="button"
                     onClick={function () {
-                      exportCsv("patients-" + period + ".csv", patients.map(function (p) {
+                      exportCsv("patients-" + period + ".csv", patientRows.map(function (p) {
                         return {
                           id: p.id,
-                          name: p.full_name || p.name,
-                          phone: p.mobile || p.phone,
+                          name: p.name,
+                          phone: p.phone,
                           area: p.area,
                           status: p.status,
                           created: p.created_at || p.created
@@ -628,7 +652,12 @@ export default function ReportsPage() {
                 </div>
               }
             >
-              <div className="helper-box">Total patients: {patientStats.total}</div>
+              <div className="helper-box">
+                Total patients: {patientStats.total}
+                {patientRows.length < patientStats.total
+                  ? " (showing " + patientRows.length + " of " + patientStats.total + ")"
+                  : ""}
+              </div>
               <div className="kpi-grid">
                 {Object.keys(patientStats.byStatus).map(function (k) {
                   return <StatCard key={k} label={k} value={String(patientStats.byStatus[k])} detail="" />;

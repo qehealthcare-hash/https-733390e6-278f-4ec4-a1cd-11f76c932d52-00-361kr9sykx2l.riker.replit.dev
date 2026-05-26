@@ -389,3 +389,272 @@ export function receiptInYmdRange(
 
 /** Re-export for services computing adjustment preview. */
 export { computePayoutNet };
+
+// ───────────────────────────────────────────────────────────────────────────
+// Per-tab summary builders (Phase 12 — server-side aggregation)
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Canonical inquiry status buckets surfaced on the Reports → Inquiries tab.
+ * Mirrors the keys the legacy client-side aggregator used so the UI doesn't
+ * have to special-case any new bucket name from the server.
+ */
+export const INQUIRY_STATUS_BUCKETS = [
+  "New",
+  "Contacted",
+  "FollowUp",
+  "Negotiating",
+  "Converted",
+  "Closed",
+  "Lost"
+] as const;
+
+export const INQUIRY_POTENTIAL_BUCKETS = ["HOT", "WARM", "COLD"] as const;
+
+export interface InquirySummaryGroupRow {
+  status?: string | null;
+  potential?: string | null;
+  source?: string | null;
+  followup_date?: string | null;
+}
+
+export interface InquirySummary {
+  period: string;
+  range: { from: string; to: string };
+  total: number;
+  followup_due: number;
+  by_status: Record<string, number>;
+  by_potential: Record<string, number>;
+  by_source: Record<string, number>;
+  /** True when the defensive group-by slice (capped at 1000) was full. */
+  grouping_truncated: boolean;
+}
+
+/**
+ * Build an inquiry summary from:
+ *   - `total`: SQL `count='exact'` over the entire window (always accurate)
+ *   - `groupRows`: a single defensive fetch capped at REPORT_ROW_CEILING used
+ *     to bucket free-form columns (`source`, `potential`).
+ *   - `byStatusOverrides`: SQL counts for canonical status buckets so the
+ *     enum'd values stay exact even when the group-by slice is truncated.
+ */
+export function buildInquirySummary(
+  period: string,
+  range: { from: string; to: string },
+  args: {
+    total: number;
+    followup_due: number;
+    groupRows: InquirySummaryGroupRow[];
+    byStatusOverrides?: Partial<Record<string, number>>;
+    groupingTruncated: boolean;
+  }
+): InquirySummary {
+  const by_status: Record<string, number> = {};
+  const by_potential: Record<string, number> = {};
+  const by_source: Record<string, number> = {};
+  for (const k of INQUIRY_STATUS_BUCKETS) by_status[k] = 0;
+  for (const k of INQUIRY_POTENTIAL_BUCKETS) by_potential[k] = 0;
+  for (const r of args.groupRows) {
+    const s = String(r.status || "").trim();
+    if (s) by_status[s] = (by_status[s] ?? 0) + 1;
+    const p = String(r.potential || "").trim().toUpperCase();
+    if (p) by_potential[p] = (by_potential[p] ?? 0) + 1;
+    const src = String(r.source || "").trim() || "Unknown";
+    by_source[src] = (by_source[src] ?? 0) + 1;
+  }
+  // Prefer SQL-derived bucket counts so enum buckets stay accurate even when
+  // the group-by slice was truncated at REPORT_ROW_CEILING.
+  if (args.byStatusOverrides) {
+    for (const [k, v] of Object.entries(args.byStatusOverrides)) {
+      if (typeof v === "number") by_status[k] = v;
+    }
+  }
+  return {
+    period,
+    range,
+    total: args.total,
+    followup_due: args.followup_due,
+    by_status,
+    by_potential,
+    by_source,
+    grouping_truncated: args.groupingTruncated
+  };
+}
+
+export interface PatientSummaryGroupRow {
+  status?: string | null;
+  area?: string | null;
+}
+
+export interface PatientSummary {
+  period: string;
+  range: { from: string; to: string };
+  total: number;
+  by_status: Record<string, number>;
+  by_area: Record<string, number>;
+  grouping_truncated: boolean;
+}
+
+export function buildPatientSummary(
+  period: string,
+  range: { from: string; to: string },
+  args: {
+    total: number;
+    groupRows: PatientSummaryGroupRow[];
+    byStatusOverrides?: Partial<Record<string, number>>;
+    groupingTruncated: boolean;
+  }
+): PatientSummary {
+  const by_status: Record<string, number> = {};
+  const by_area: Record<string, number> = {};
+  for (const r of args.groupRows) {
+    const s = String(r.status || "").trim() || "Unknown";
+    by_status[s] = (by_status[s] ?? 0) + 1;
+    const area = String(r.area || "").trim() || "Unknown";
+    by_area[area] = (by_area[area] ?? 0) + 1;
+  }
+  if (args.byStatusOverrides) {
+    for (const [k, v] of Object.entries(args.byStatusOverrides)) {
+      if (typeof v === "number") by_status[k] = v;
+    }
+  }
+  return {
+    period,
+    range,
+    total: args.total,
+    by_status,
+    by_area,
+    grouping_truncated: args.groupingTruncated
+  };
+}
+
+export const ATTENDANCE_STATUS_BUCKETS = [
+  "PRESENT",
+  "ABSENT",
+  "LATE",
+  "HALF_DAY",
+  "LEAVE",
+  "HOLIDAY"
+] as const;
+
+export interface AttendanceSummaryRow {
+  employee_id?: string | null;
+  status?: string | null;
+  shift_type?: string | null;
+  hours?: number | string | null;
+}
+
+export interface AttendanceSummaryByEmployee {
+  employee_id: string;
+  present: number;
+  absent: number;
+  late: number;
+  half_day: number;
+  leave: number;
+  holiday: number;
+  hours: number;
+}
+
+export interface AttendanceSummary {
+  period: string;
+  range: { from: string; to: string };
+  total: number;
+  by_status: Record<string, number>;
+  by_shift: Record<string, number>;
+  by_employee: AttendanceSummaryByEmployee[];
+}
+
+function bumpEmployee(
+  map: Map<string, AttendanceSummaryByEmployee>,
+  empId: string
+): AttendanceSummaryByEmployee {
+  let row = map.get(empId);
+  if (!row) {
+    row = {
+      employee_id: empId,
+      present: 0,
+      absent: 0,
+      late: 0,
+      half_day: 0,
+      leave: 0,
+      holiday: 0,
+      hours: 0
+    };
+    map.set(empId, row);
+  }
+  return row;
+}
+
+export function buildAttendanceSummary(
+  period: string,
+  range: { from: string; to: string },
+  rows: AttendanceSummaryRow[]
+): AttendanceSummary {
+  const by_status: Record<string, number> = {};
+  const by_shift: Record<string, number> = {};
+  const empMap = new Map<string, AttendanceSummaryByEmployee>();
+  for (const k of ATTENDANCE_STATUS_BUCKETS) by_status[k] = 0;
+  for (const r of rows) {
+    const status = String(r.status || "").toUpperCase();
+    if (status) by_status[status] = (by_status[status] ?? 0) + 1;
+    const shift = String(r.shift_type || "").trim() || "Unknown";
+    by_shift[shift] = (by_shift[shift] ?? 0) + 1;
+    const empId = String(r.employee_id || "").trim() || "—";
+    const emp = bumpEmployee(empMap, empId);
+    emp.hours += Number(r.hours || 0);
+    if (status === "PRESENT") emp.present += 1;
+    else if (status === "ABSENT") emp.absent += 1;
+    else if (status === "LATE") emp.late += 1;
+    else if (status === "HALF_DAY") emp.half_day += 1;
+    else if (status === "LEAVE") emp.leave += 1;
+    else if (status === "HOLIDAY") emp.holiday += 1;
+  }
+  return {
+    period,
+    range,
+    total: rows.length,
+    by_status,
+    by_shift,
+    by_employee: Array.from(empMap.values()).sort((a, b) =>
+      a.employee_id.localeCompare(b.employee_id)
+    )
+  };
+}
+
+export interface BillingSummaryRow {
+  billing_id: string;
+  status: string | null;
+  patient_id: string | null;
+  patient_name?: string;
+  patient_phone?: string;
+  sec_dep: number;
+  totals: { services: number; receipts: number; outstanding: number };
+  paid_status: string;
+  created_at?: string | null;
+}
+
+export interface BillingSummary extends BillingTotalsReport {
+  total_received: number;
+  outstanding: number;
+}
+
+/**
+ * Extend `buildBillingTotals` with `total_received` and `outstanding` aliases
+ * the Billing detail tab CSV / table consume.
+ */
+export function buildBillingSummary(
+  period: string,
+  range: { from: string; to: string },
+  args: {
+    billings: Array<{ id?: string | null; status?: string | null }>;
+    services: Array<{ total?: number | string | null; billing_id?: string | null }>;
+    receipts: Array<{ amount?: number | string | null; billing_id?: string | null }>;
+  }
+): BillingSummary {
+  const base = buildBillingTotals(period, range, args);
+  return {
+    ...base,
+    total_received: base.collected,
+    outstanding: base.pending
+  };
+}

@@ -25,11 +25,19 @@ import {
   billingTotalsQuerySchema,
   payoutTotalsQuerySchema,
   profitLossQuerySchema,
+  inquiriesSummaryQuerySchema,
+  patientsSummaryQuerySchema,
+  attendanceSummaryQuerySchema,
+  billingsSummaryQuerySchema,
   type DashboardQuery,
   type PayrollQuery,
   type BillingTotalsQuery,
   type PayoutTotalsQuery,
-  type ProfitLossQuery
+  type ProfitLossQuery,
+  type InquiriesSummaryQuery,
+  type PatientsSummaryQuery,
+  type AttendanceSummaryQuery,
+  type BillingsSummaryQuery
 } from "@/validation/reportValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
@@ -39,15 +47,30 @@ import {
   buildDashboardKpis,
   buildPayoutTotals,
   buildProfitLoss,
+  buildInquirySummary,
+  buildPatientSummary,
+  buildAttendanceSummary,
+  buildBillingSummary,
+  INQUIRY_STATUS_BUCKETS,
   monthRangeUTC,
   type BillingTotalsReport,
   type DashboardKpis,
   type DashboardRawCounts,
   type PayoutTotalsReport,
   type ProfitLossReport,
-  type PayrollTotals
+  type PayrollTotals,
+  type InquirySummary,
+  type PatientSummary,
+  type AttendanceSummary,
+  type BillingSummary
 } from "@/business/reportRules";
-import { reportRepository } from "@/database/reportRepository";
+import {
+  reportRepository,
+  REPORT_ROW_CEILING
+} from "@/database/reportRepository";
+import { billingRepository } from "@/database/billingRepository";
+import { patientRepository } from "@/database/patientRepository";
+import { computeBillingTotals, derivePaidStatus } from "@/business/billingRules";
 import { passFailure, success } from "@/utils/apiResponse";
 import type { JsonRow } from "@/database/types";
 
@@ -423,6 +446,364 @@ export const reportService = {
       rows,
       totals: aggregatePayrollTotals(rows)
     });
+  },
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Per-tab summaries (Phase 12 — server-side aggregation)
+  // ─────────────────────────────────────────────────────────────────────
+  //
+  // Each summary method returns a `{ summary, rows, rows_total, limit, offset }`
+  // envelope. The headline `summary.total` and `rows_total` always come from
+  // Supabase `count='exact'` so they are accurate for the entire window,
+  // independent of the paginated `rows` slice.
+
+  async inquiriesSummary(
+    rawQuery: unknown,
+    ctx: ReportServiceContext
+  ): Promise<ApiResult<SummaryEnvelope<InquirySummary, JsonRow>>> {
+    const parsed = parseInput(inquiriesSummaryQuerySchema, rawQuery ?? {});
+    if (!parsed.success) return passFailure(parsed);
+    const query = parsed.data as InquiriesSummaryQuery;
+    const w = resolveWindow(query);
+    const access = dbAccess(ctx);
+
+    const statusCountTasks = INQUIRY_STATUS_BUCKETS.map((s) =>
+      reportRepository.countInquiriesScoped(
+        w.startISO,
+        w.endISO,
+        {
+          status: query.status || s,
+          source: query.source,
+          assigned_to: query.assigned_to
+        },
+        access
+      )
+    );
+
+    const [total, followupDue, groupRows, rows, ...statusCounts] = await Promise.all([
+      reportRepository.countInquiriesScoped(
+        w.startISO,
+        w.endISO,
+        {
+          status: query.status,
+          source: query.source,
+          assigned_to: query.assigned_to
+        },
+        access
+      ),
+      reportRepository.countInquiriesFollowupDue(w.startYMD, w.endYMD, access),
+      reportRepository.listInquiriesForGroupBy(w.startISO, w.endISO, access),
+      reportRepository.listInquiriesScoped(
+        w.startISO,
+        w.endISO,
+        {
+          status: query.status,
+          source: query.source,
+          assigned_to: query.assigned_to
+        },
+        { limit: query.limit, offset: query.offset },
+        access
+      ),
+      ...statusCountTasks
+    ]);
+    if (!total.success) return passFailure(total);
+    if (!followupDue.success) return passFailure(followupDue);
+    if (!groupRows.success) return passFailure(groupRows);
+    if (!rows.success) return passFailure(rows);
+
+    const byStatusOverrides: Record<string, number> = {};
+    INQUIRY_STATUS_BUCKETS.forEach((s, i) => {
+      const r = statusCounts[i] as ApiResult<number> | undefined;
+      if (!r || !r.success) return;
+      if (query.status) {
+        byStatusOverrides[s] = s === query.status ? r.data || 0 : 0;
+      } else {
+        byStatusOverrides[s] = r.data || 0;
+      }
+    });
+
+    const summary = buildInquirySummary(
+      w.period,
+      { from: w.startISO, to: w.endISO },
+      {
+        total: total.data || 0,
+        followup_due: followupDue.data || 0,
+        groupRows: (groupRows.data || []) as Parameters<typeof buildInquirySummary>[2]["groupRows"],
+        byStatusOverrides,
+        groupingTruncated: (groupRows.data || []).length >= REPORT_ROW_CEILING
+      }
+    );
+
+    return success({
+      summary,
+      rows: rows.data || [],
+      rows_total: total.data || 0,
+      limit: query.limit,
+      offset: query.offset
+    });
+  },
+
+  async patientsSummary(
+    rawQuery: unknown,
+    ctx: ReportServiceContext
+  ): Promise<ApiResult<SummaryEnvelope<PatientSummary, JsonRow>>> {
+    const parsed = parseInput(patientsSummaryQuerySchema, rawQuery ?? {});
+    if (!parsed.success) return passFailure(parsed);
+    const query = parsed.data as PatientsSummaryQuery;
+    const w = resolveWindow(query);
+    const access = dbAccess(ctx);
+
+    const [total, activeCount, inactiveCount, groupRows, rows] = await Promise.all([
+      reportRepository.countPatientsScoped(
+        w.startISO,
+        w.endISO,
+        { status: query.status, area: query.area },
+        access
+      ),
+      reportRepository.countPatientsScoped(
+        w.startISO,
+        w.endISO,
+        { status: "Active", area: query.area },
+        access
+      ),
+      reportRepository.countPatientsScoped(
+        w.startISO,
+        w.endISO,
+        { status: "Inactive", area: query.area },
+        access
+      ),
+      reportRepository.listPatientsForGroupBy(w.startISO, w.endISO, access),
+      reportRepository.listPatientsScoped(
+        w.startISO,
+        w.endISO,
+        { status: query.status, area: query.area },
+        { limit: query.limit, offset: query.offset },
+        access
+      )
+    ]);
+    if (!total.success) return passFailure(total);
+    if (!activeCount.success) return passFailure(activeCount);
+    if (!inactiveCount.success) return passFailure(inactiveCount);
+    if (!groupRows.success) return passFailure(groupRows);
+    if (!rows.success) return passFailure(rows);
+
+    const byStatusOverrides: Record<string, number> = query.status
+      ? { [query.status]: total.data || 0 }
+      : { Active: activeCount.data || 0, Inactive: inactiveCount.data || 0 };
+
+    const summary = buildPatientSummary(
+      w.period,
+      { from: w.startISO, to: w.endISO },
+      {
+        total: total.data || 0,
+        groupRows: (groupRows.data || []) as Parameters<typeof buildPatientSummary>[2]["groupRows"],
+        byStatusOverrides,
+        groupingTruncated: (groupRows.data || []).length >= REPORT_ROW_CEILING
+      }
+    );
+
+    return success({
+      summary,
+      rows: rows.data || [],
+      rows_total: total.data || 0,
+      limit: query.limit,
+      offset: query.offset
+    });
+  },
+
+  async attendanceSummary(
+    rawQuery: unknown,
+    ctx: ReportServiceContext
+  ): Promise<ApiResult<SummaryEnvelope<AttendanceSummary, JsonRow>>> {
+    const parsed = parseInput(attendanceSummaryQuerySchema, rawQuery ?? {});
+    if (!parsed.success) return passFailure(parsed);
+    const query = parsed.data as AttendanceSummaryQuery;
+    const w = resolveWindow(query);
+    const access = dbAccess(ctx);
+
+    const [total, allRows, sliceRows] = await Promise.all([
+      reportRepository.countAttendanceScoped(
+        w.startISO,
+        w.endISO,
+        { employee_id: query.employee_id, status: query.status },
+        access
+      ),
+      // The rollup needs every row in the window (status / shift / per-
+      // employee breakdowns can't be done with a single SQL count). Capped
+      // defensively below at REPORT_ROW_CEILING via listAttendanceScoped.
+      reportRepository.listAttendanceInRange(
+        w.startISO,
+        w.endISO,
+        { employee_id: query.employee_id },
+        access
+      ),
+      reportRepository.listAttendanceScoped(
+        w.startISO,
+        w.endISO,
+        { employee_id: query.employee_id, status: query.status },
+        { limit: query.limit, offset: query.offset },
+        access
+      )
+    ]);
+    if (!total.success) return passFailure(total);
+    if (!allRows.success) return passFailure(allRows);
+    if (!sliceRows.success) return passFailure(sliceRows);
+
+    const rollupSource = (allRows.data || []).filter(
+      (r) => !query.status || String(r.status || "") === query.status
+    );
+    const summary = buildAttendanceSummary(
+      w.period,
+      { from: w.startISO, to: w.endISO },
+      rollupSource.map((r) => ({
+        employee_id: (r.employee_id as string) ?? null,
+        status: (r.status as string) ?? null,
+        shift_type: (r.shift_type as string) ?? null,
+        hours: (r.hours as number | string | null) ?? null
+      }))
+    );
+    summary.total = total.data || rollupSource.length;
+
+    return success({
+      summary,
+      rows: sliceRows.data || [],
+      rows_total: total.data || 0,
+      limit: query.limit,
+      offset: query.offset
+    });
+  },
+
+  async billingsSummary(
+    rawQuery: unknown,
+    ctx: ReportServiceContext
+  ): Promise<ApiResult<SummaryEnvelope<BillingSummary, JsonRow>>> {
+    const parsed = parseInput(billingsSummaryQuerySchema, rawQuery ?? {});
+    if (!parsed.success) return passFailure(parsed);
+    const query = parsed.data as BillingsSummaryQuery;
+    const w = resolveWindow(query);
+    const access = dbAccess(ctx);
+
+    const [svcRes, rcptRes] = await Promise.all([
+      reportRepository.listServicesInRange(
+        w.startYMD,
+        w.endYMD,
+        { patient_id: query.patient_id },
+        access
+      ),
+      reportRepository.listReceiptsInRange(
+        w.startISO,
+        w.endISO,
+        { patient_id: query.patient_id },
+        access
+      )
+    ]);
+    if (!svcRes.success) return passFailure(svcRes);
+    if (!rcptRes.success) return passFailure(rcptRes);
+
+    const serviceRows = svcRes.data || [];
+    const receiptRows = rcptRes.data || [];
+    const activeIds = new Set<string>();
+    for (const s of serviceRows) {
+      const id = String(s.billing_id || "");
+      if (id) activeIds.add(id);
+    }
+    for (const r of receiptRows) {
+      const id = String(r.billing_id || "");
+      if (id) activeIds.add(id);
+    }
+
+    const billings = activeIds.size
+      ? await billingRepository.listBillingsByIds([...activeIds], access)
+      : ({ success: true, data: [] as JsonRow[] } as ApiResult<JsonRow[]>);
+    if (!billings.success) return passFailure(billings);
+
+    const summary = buildBillingSummary(
+      w.period,
+      { from: w.startISO, to: w.endISO },
+      {
+        billings: (billings.data || []).map((b) => ({
+          id: b.id as string | null,
+          status: b.status as string | null
+        })),
+        services: serviceRows,
+        receipts: receiptRows
+      }
+    );
+
+    // Build per-billing rows for the paginated slice.
+    const billingMap = new Map<string, JsonRow>();
+    for (const b of billings.data || []) billingMap.set(String(b.id || ""), b);
+    const svcByBilling = new Map<string, JsonRow[]>();
+    for (const s of serviceRows) {
+      const bid = String(s.billing_id || "");
+      if (!bid) continue;
+      if (!svcByBilling.has(bid)) svcByBilling.set(bid, []);
+      svcByBilling.get(bid)!.push(s);
+    }
+    const rcptByBilling = new Map<string, JsonRow[]>();
+    for (const r of receiptRows) {
+      const bid = String(r.billing_id || "");
+      if (!bid) continue;
+      if (!rcptByBilling.has(bid)) rcptByBilling.set(bid, []);
+      rcptByBilling.get(bid)!.push(r);
+    }
+
+    const patientIds = Array.from(
+      new Set(
+        (billings.data || [])
+          .map((b) => String(b.patient_id || ""))
+          .filter(Boolean)
+      )
+    );
+    const patientsRes = await patientRepository.findByIds(patientIds, access);
+    if (!patientsRes.success) return passFailure(patientsRes);
+    const patientMap = new Map<string, { name: string; phone: string }>();
+    for (const p of patientsRes.data || []) {
+      patientMap.set(String(p.id || ""), {
+        name: String(p.name || "").trim(),
+        phone: String(p.phone || "").trim()
+      });
+    }
+
+    const enrichedAll: JsonRow[] = [];
+    for (const id of activeIds) {
+      const b =
+        billingMap.get(id) ||
+        ({ id, status: "Unknown", patient_id: "", sec_dep: 0 } as JsonRow);
+      const totals = computeBillingTotals({
+        services: (svcByBilling.get(id) || []) as { total?: number | string | null }[],
+        receipts: (rcptByBilling.get(id) || []) as { amount?: number | string | null }[],
+        secDep: Number(b.sec_dep || 0)
+      });
+      const patient = patientMap.get(String(b.patient_id || "")) || null;
+      enrichedAll.push({
+        ...b,
+        patient_name: patient?.name || "",
+        patient_phone: patient?.phone || "",
+        totals,
+        paid_status: (b.paid_status as string | null) || derivePaidStatus(totals)
+      });
+    }
+
+    const filtered = enrichedAll.filter((b) => {
+      if (query.status && String(b.status || "") !== query.status) return false;
+      if (query.patient_id && String(b.patient_id || "") !== query.patient_id) return false;
+      return true;
+    });
+    filtered.sort((a, b) =>
+      String(b.created_at || "").localeCompare(String(a.created_at || ""))
+    );
+    const offset = query.offset;
+    const limit = Math.min(query.limit, REPORT_ROW_CEILING);
+    const sliceRows = filtered.slice(offset, offset + limit);
+
+    return success({
+      summary,
+      rows: sliceRows,
+      rows_total: filtered.length,
+      limit,
+      offset
+    });
   }
 };
 
@@ -435,4 +816,21 @@ function castRows<T = JsonRow>(result: ApiResult<JsonRow[]>): T[] {
   return ((result.data as JsonRow[]) || []) as T[];
 }
 
-export type { DashboardKpis, BillingTotalsReport, PayoutTotalsReport, ProfitLossReport };
+export interface SummaryEnvelope<TSummary, TRow> {
+  summary: TSummary;
+  rows: TRow[];
+  rows_total: number;
+  limit: number;
+  offset: number;
+}
+
+export type {
+  DashboardKpis,
+  BillingTotalsReport,
+  PayoutTotalsReport,
+  ProfitLossReport,
+  InquirySummary,
+  PatientSummary,
+  AttendanceSummary,
+  BillingSummary
+};

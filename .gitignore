@@ -21,3 +21,7 @@ whatsapp-ai-chatbot/config.php
 
 # Generated archives
 *.zip
+
+# Playwright artifacts
+vercel-web/playwright-report/
+vercel-web/test-results/

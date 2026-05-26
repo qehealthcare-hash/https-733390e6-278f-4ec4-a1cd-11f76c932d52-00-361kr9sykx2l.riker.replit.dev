@@ -378,6 +378,24 @@ export const payoutRepository = {
     return findById(PAID_TX, payoutId, `${SCOPE}.paidTx`, opts);
   },
 
+  /** All payout-charge rows for a `svc_key` (used by ledger sync). */
+  async listChargesBySvcKey(
+    svcKey: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    if (!svcKey) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from(CHARGES)
+          .select("*")
+          .eq("svc_key", svcKey)
+          .order("date", { ascending: true }),
+      `${SCOPE}.listChargesBySvcKey`
+    );
+  },
+
   /**
    * Period-scoped payout charges for an employee (duty calendar source rows).
    * `hh_payout_charges` has no `payout_id` column — match partner_id / partner.

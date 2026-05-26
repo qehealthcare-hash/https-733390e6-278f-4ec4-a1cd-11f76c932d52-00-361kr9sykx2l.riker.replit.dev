@@ -6,6 +6,7 @@ import { appConfig } from "@/lib/config";
 import { modules } from "@/lib/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { hasPermission } from "@/lib/permissions";
+import { BrandLogo } from "@/components/ui/brand-logo";
 
 export function Sidebar({ open = false, onNavigate }) {
   const pathname = usePathname();
@@ -23,7 +24,13 @@ export function Sidebar({ open = false, onNavigate }) {
       aria-label="Primary navigation"
     >
       <div className="crm-brand">
-        <img src={appConfig.companyLogo} alt={appConfig.companyName + " logo"} className="crm-brand-logo" />
+        <BrandLogo
+          src={appConfig.companyLogo}
+          alt={appConfig.companyName + " logo"}
+          className="crm-brand-logo"
+          width={140}
+          height={42}
+        />
         <div className="crm-logo">{appConfig.companyName}</div>
       </div>
       <div className="crm-tagline">{appConfig.companyTagline}</div>

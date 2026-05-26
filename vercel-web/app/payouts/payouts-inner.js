@@ -1671,7 +1671,7 @@ function PayoutsPageContent() {
                         className={"record-card" + (isSelected ? " selected" : "")}
                         role="button"
                         tabIndex={0}
-                        aria-selected={isSelected}
+                        aria-current={isSelected ? "true" : undefined}
                         onClick={function () {
                           openPayout(row.id);
                         }}

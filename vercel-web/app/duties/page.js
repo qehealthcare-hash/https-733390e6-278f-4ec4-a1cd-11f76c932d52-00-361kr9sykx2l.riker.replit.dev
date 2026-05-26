@@ -334,6 +334,140 @@ export default function DutiesPage() {
   );
 
   var reloadRef = useRef(function () {});
+  var diaryByDutyRef = useRef(diaryByDuty);
+  var viewMonthRef = useRef(viewMonth);
+
+  useEffect(
+    function () {
+      diaryByDutyRef.current = diaryByDuty;
+    },
+    [diaryByDuty]
+  );
+  useEffect(
+    function () {
+      viewMonthRef.current = viewMonth;
+    },
+    [viewMonth]
+  );
+
+  var loadDiaryFor = useCallback(
+    async function loadDiaryFor(dutyId) {
+      if (!dutyId || !auth.session?.access_token) return;
+      try {
+        var data = await request("/duties/" + encodeURIComponent(dutyId) + "/diary", null, auth.session);
+        setDiaryByDuty(function (cur) {
+          var next = { ...cur };
+          next[dutyId] = Array.isArray(data?.entries) ? data.entries : [];
+          return next;
+        });
+      } catch (err) {
+        setError(err.message || "Unable to load day-wise entries");
+      }
+    },
+    [auth.session]
+  );
+
+  var loadDiariesForVisible = useCallback(
+    async function loadDiariesForVisible(rowList) {
+      if (!auth.session?.access_token || !rowList || !rowList.length) return;
+      var ids = rowList.map(function (r) {
+        return r.id;
+      }).filter(Boolean);
+      if (!ids.length) return;
+      try {
+        var data = await request(
+          "/duties/diary/batch",
+          { method: "POST", body: { duty_ids: ids } },
+          auth.session
+        );
+        var map = data && typeof data === "object" ? data : {};
+        setDiaryByDuty(function (cur) {
+          var next = { ...cur };
+          ids.forEach(function (id) {
+            var entry = map[id];
+            if (entry && Array.isArray(entry.entries)) {
+              next[id] = entry.entries;
+            } else if (!next[id]) {
+              next[id] = [];
+            }
+          });
+          return next;
+        });
+      } catch (_e) {
+        var pairs = await Promise.all(
+          ids.map(async function (id) {
+            try {
+              var d = await request("/duties/" + encodeURIComponent(id) + "/diary", null, auth.session);
+              return [id, Array.isArray(d?.entries) ? d.entries : []];
+            } catch (_err) {
+              return [id, []];
+            }
+          })
+        );
+        setDiaryByDuty(function (cur) {
+          var next = { ...cur };
+          pairs.forEach(function (p) {
+            next[p[0]] = p[1];
+          });
+          return next;
+        });
+      }
+    },
+    [auth.session]
+  );
+
+  var loadOutstanding = useCallback(
+    async function loadOutstanding(patientId) {
+      if (!patientId || !auth.session?.access_token) {
+        setOutstanding(null);
+        return;
+      }
+      try {
+        var list = await request(
+          "/billings?limit=20&patient_id=" + encodeURIComponent(patientId) + "&status=Active",
+          null,
+          auth.session
+        );
+        var billRows = Array.isArray(list?.rows) ? list.rows : [];
+        var active = billRows.find(function (b) {
+          return b.status === "Active";
+        });
+        if (!active) {
+          setOutstanding(null);
+          return;
+        }
+        var bundle = await request("/billings/" + encodeURIComponent(active.id), null, auth.session);
+        setOutstanding({
+          billing_id: active.id,
+          totals: bundle.totals || null
+        });
+      } catch (_e) {
+        setOutstanding(null);
+      }
+    },
+    [auth.session]
+  );
+
+  var loadTotals = useCallback(
+    async function loadTotals(patientId, employeeId, period) {
+      if (!auth.session?.access_token) {
+        return null;
+      }
+      if (!patientId && !employeeId) {
+        return null;
+      }
+      var qs = [];
+      if (patientId) qs.push("patient_id=" + encodeURIComponent(patientId));
+      if (employeeId) qs.push("employee_id=" + encodeURIComponent(employeeId));
+      if (employeeId && period) qs.push("period=" + encodeURIComponent(period));
+      try {
+        return await request("/duties/totals?" + qs.join("&"), null, auth.session);
+      } catch (_e) {
+        return null;
+      }
+    },
+    [auth.session]
+  );
 
   var reload = useCallback(async function reload() {
     if (!auth.session?.access_token) return;
@@ -361,58 +495,20 @@ export default function DutiesPage() {
     } finally {
       setLoading(false);
     }
-  }, [auth.session, viewMonth, ym.year, ym.monthIndex, statusFilter, filterPatient, filterEmployee]);
+  }, [
+    auth.session,
+    viewMonth,
+    ym.year,
+    ym.monthIndex,
+    statusFilter,
+    filterPatient,
+    filterEmployee,
+    loadDiariesForVisible
+  ]);
 
   useEffect(function () {
     reloadRef.current = reload;
   }, [reload]);
-
-  async function loadOutstanding(patientId) {
-    if (!patientId || !auth.session?.access_token) {
-      setOutstanding(null);
-      return;
-    }
-    try {
-      var list = await request(
-        "/billings?limit=20&patient_id=" + encodeURIComponent(patientId) + "&status=Active",
-        null,
-        auth.session
-      );
-      var billRows = Array.isArray(list?.rows) ? list.rows : [];
-      var active = billRows.find(function (b) {
-        return b.status === "Active";
-      });
-      if (!active) {
-        setOutstanding(null);
-        return;
-      }
-      var bundle = await request("/billings/" + encodeURIComponent(active.id), null, auth.session);
-      setOutstanding({
-        billing_id: active.id,
-        totals: bundle.totals || null
-      });
-    } catch (_e) {
-      setOutstanding(null);
-    }
-  }
-
-  async function loadTotals(patientId, employeeId, period) {
-    if (!auth.session?.access_token) {
-      return null;
-    }
-    if (!patientId && !employeeId) {
-      return null;
-    }
-    var qs = [];
-    if (patientId) qs.push("patient_id=" + encodeURIComponent(patientId));
-    if (employeeId) qs.push("employee_id=" + encodeURIComponent(employeeId));
-    if (employeeId && period) qs.push("period=" + encodeURIComponent(period));
-    try {
-      return await request("/duties/totals?" + qs.join("&"), null, auth.session);
-    } catch (_e) {
-      return null;
-    }
-  }
 
   async function refreshFormTotals() {
     var data = await loadTotals(form.patient_id, form.employee_id, viewMonth);
@@ -455,7 +551,7 @@ export default function DutiesPage() {
           var fp = filterPatientRef.current;
           var fe = filterEmployeeRef.current;
           if (fp || fe) {
-            loadTotals(fp, fe, viewMonth).then(function (ft) {
+            loadTotals(fp, fe, viewMonthRef.current).then(function (ft) {
               setFilterTotals(ft || null);
             });
           }
@@ -478,7 +574,7 @@ export default function DutiesPage() {
         auth.supabase.removeChannel(channel);
       };
     },
-    [auth.session, auth.supabase]
+    [auth.session, auth.supabase, loadOutstanding, loadTotals]
   );
 
   useEffect(
@@ -510,7 +606,7 @@ export default function DutiesPage() {
     function () {
       loadOutstanding(form.patient_id || filterPatient);
     },
-    [form.patient_id, filterPatient, auth.session]
+    [form.patient_id, filterPatient, loadOutstanding]
   );
 
   useEffect(
@@ -523,7 +619,7 @@ export default function DutiesPage() {
         setTotals(data || null);
       });
     },
-    [form.patient_id, form.employee_id, auth.session]
+    [form.patient_id, form.employee_id, viewMonth, loadTotals]
   );
 
   useEffect(
@@ -536,7 +632,7 @@ export default function DutiesPage() {
         setFilterTotals(data || null);
       });
     },
-    [filterPatient, filterEmployee, auth.session]
+    [filterPatient, filterEmployee, viewMonth, loadTotals]
   );
 
   var patientNameById = useMemo(
@@ -575,10 +671,10 @@ export default function DutiesPage() {
     function () {
       if (!selectedDay) return;
       dayDuties.forEach(function (d) {
-        if (!diaryByDuty[d.id]) loadDiaryFor(d.id);
+        if (!diaryByDutyRef.current[d.id]) loadDiaryFor(d.id);
       });
     },
-    [selectedDay, dayDuties]
+    [selectedDay, dayDuties, loadDiaryFor]
   );
 
   function updateField(name, value) {
@@ -844,66 +940,6 @@ export default function DutiesPage() {
       setError(err.message || "Delete failed");
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function loadDiaryFor(dutyId) {
-    if (!dutyId || !auth.session?.access_token) return;
-    try {
-      var data = await request("/duties/" + encodeURIComponent(dutyId) + "/diary", null, auth.session);
-      setDiaryByDuty(function (cur) {
-        var next = { ...cur };
-        next[dutyId] = Array.isArray(data?.entries) ? data.entries : [];
-        return next;
-      });
-    } catch (err) {
-      setError(err.message || "Unable to load day-wise entries");
-    }
-  }
-
-  async function loadDiariesForVisible(rowList) {
-    if (!auth.session?.access_token || !rowList || !rowList.length) return;
-    var ids = rowList.map(function (r) { return r.id; }).filter(Boolean);
-    if (!ids.length) return;
-    try {
-      // Single round-trip — replaces the previous N+1 fan-out which
-      // could fire up to 500 requests on a busy calendar.
-      var data = await request(
-        "/duties/diary/batch",
-        { method: "POST", body: { duty_ids: ids } },
-        auth.session
-      );
-      var map = (data && typeof data === "object") ? data : {};
-      setDiaryByDuty(function (cur) {
-        var next = { ...cur };
-        ids.forEach(function (id) {
-          var entry = map[id];
-          if (entry && Array.isArray(entry.entries)) {
-            next[id] = entry.entries;
-          } else if (!next[id]) {
-            next[id] = [];
-          }
-        });
-        return next;
-      });
-    } catch (_e) {
-      // Fall back to per-duty fetch only for the few visible duties on
-      // failure — preserves the previous behaviour as a safety net.
-      var pairs = await Promise.all(
-        ids.map(async function (id) {
-          try {
-            var d = await request("/duties/" + encodeURIComponent(id) + "/diary", null, auth.session);
-            return [id, Array.isArray(d?.entries) ? d.entries : []];
-          } catch (_err) {
-            return [id, []];
-          }
-        })
-      );
-      setDiaryByDuty(function (cur) {
-        var next = { ...cur };
-        pairs.forEach(function (p) { next[p[0]] = p[1]; });
-        return next;
-      });
     }
   }
 
