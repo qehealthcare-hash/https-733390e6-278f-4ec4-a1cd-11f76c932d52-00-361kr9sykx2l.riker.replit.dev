@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { withoutAuth } from "@/lib/api/handler";
+import { timingSafeEqualString } from "@/lib/api/security";
 import { dutyService } from "@/services/dutyService";
 import { respond } from "@/lib/api/apiResultBridge";
 import { failure, success } from "@/utils/apiResponse";
@@ -45,7 +46,10 @@ export const GET = withoutAuth(async (req: NextRequest) => {
   } else {
     const header = req.headers.get("authorization") || "";
     const legacy = req.headers.get("x-cron-secret") || "";
-    const ok = header === `Bearer ${secret}` || legacy === secret;
+    const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const ok =
+      (bearer && timingSafeEqualString(bearer, secret)) ||
+      (legacy && timingSafeEqualString(legacy, secret));
     if (!ok) {
       return respond(failure("Cron token missing or invalid", ErrorCodes.forbidden));
     }

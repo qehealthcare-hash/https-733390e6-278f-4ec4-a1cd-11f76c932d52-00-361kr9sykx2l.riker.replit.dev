@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { USER_ADMIN_ROLES } from "@/lib/api/crmRoles";
 import { toServiceContext } from "@/lib/api/serviceContext";
 import { respond } from "@/lib/api/apiResultBridge";
 import { userService } from "@/services/userService";
@@ -9,6 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
+  requireRole(actor, [...USER_ADMIN_ROLES]);
   requireRole(actor, ["Admin", "Manager"]);
   const url = new URL(req.url);
   const result = await userService.listUsers(

@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { inquiryService } from "@/services/inquiryService";
+import { patientRepository } from "@/database/patientRepository";
 
 type Row = Record<string, unknown>;
 
@@ -17,6 +18,12 @@ const OPEN_INQUIRY_STATUSES = ["New", "Contacted", "FollowUp", "Negotiating"];
 function nowIso() {
   return new Date().toISOString();
 }
+
+vi.mock("@/database/patientRepository", () => ({
+  patientRepository: {
+    update: vi.fn().mockResolvedValue({ success: true, data: { id: "PID_FROM_INQ" } })
+  }
+}));
 
 vi.mock("@/database/inquiryRepository", () => ({
   inquiryRepository: {
@@ -146,6 +153,46 @@ describe("inquiry lifecycle", () => {
     expect(result.code).toBe("conflict");
   });
 
+  it("blocks status change via update PATCH (must go through setStatus)", async () => {
+    const created = await inquiryService.create(
+      { name: "Status Guard", phone: "9876500099", status: "New" },
+      { actor: ACTOR }
+    );
+    const id = (created.data as { id: string }).id;
+
+    const result = await inquiryService.update(
+      id,
+      { name: "Status Guard", phone: "9876500099", status: "Closed" },
+      { actor: ACTOR }
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("business_rule_violation");
+    expect(inquiries[0].status).toBe("New");
+  });
+
+  it("setStatus requires followup_date when moving to FollowUp/Negotiating", async () => {
+    const created = await inquiryService.create(
+      { name: "Followup Lead", phone: "9876500077", status: "New" },
+      { actor: ACTOR }
+    );
+    const id = (created.data as { id: string }).id;
+
+    const missing = await inquiryService.setStatus(
+      id,
+      { status: "FollowUp" },
+      { actor: ACTOR }
+    );
+    expect(missing.success).toBe(false);
+    expect(missing.code).toBe("validation_error");
+
+    const okay = await inquiryService.setStatus(
+      id,
+      { status: "FollowUp", followup_date: "2026-01-15" },
+      { actor: ACTOR }
+    );
+    expect(okay.success).toBe(true);
+  });
+
   it("setStatus to Lost requires reason when reopening from Closed", async () => {
     const created = await inquiryService.create(
       { name: "Status Flow", phone: "9876500001", status: "New" },
@@ -176,15 +223,34 @@ describe("inquiry lifecycle", () => {
     expect(inquiries[0].status).toBe("New");
   });
 
-  it("convert marks inquiry Converted and is idempotent", async () => {
+  it("convert marks inquiry Converted and patches patient fields", async () => {
     const created = await inquiryService.create(
-      { name: "Convert Me", phone: "9876500002", status: "New" },
+      {
+        name: "Convert Me",
+        phone: "9876500002",
+        status: "New",
+        age: "72",
+        gender: "Female",
+        email: "lead@test.com",
+        service: "24hr care",
+        remarks: "Urgent"
+      },
       { actor: ACTOR }
     );
     const id = (created.data as { id: string }).id;
     const converted = await inquiryService.convertToPatient(id, { notes: "Ready" }, { actor: ACTOR });
     expect(converted.success).toBe(true);
     expect(inquiries[0].status).toBe("Converted");
+    expect(patientRepository.update).toHaveBeenCalledWith(
+      "PID_FROM_INQ",
+      expect.objectContaining({
+        age: "72",
+        gender: "Female",
+        email: "lead@test.com",
+        disease_condition: "24hr care — Urgent"
+      }),
+      undefined
+    );
 
     const again = await inquiryService.convertToPatient(id, {}, { actor: ACTOR });
     expect(again.success).toBe(true);

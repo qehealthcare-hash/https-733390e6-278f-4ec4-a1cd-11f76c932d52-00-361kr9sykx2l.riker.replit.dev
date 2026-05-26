@@ -164,7 +164,17 @@ export const aiService = {
     const chunks = context.data ?? [];
 
     const conversationId = parsed.data.conversation_id || newId.aiConv();
-    if (!parsed.data.conversation_id) {
+    if (parsed.data.conversation_id) {
+      const existing = await aiRepository.findConversation(parsed.data.conversation_id);
+      if (!existing.success) return passFailure(existing);
+      if (!existing.data) return notFoundFailure("Conversation", parsed.data.conversation_id);
+      const owner = String(existing.data.actor || existing.data.user_email || "").toLowerCase();
+      const caller = String(ctx.actor.email || "").toLowerCase();
+      const role = String(ctx.actor.role || "").toLowerCase();
+      if (owner && caller && owner !== caller && role !== "admin" && role !== "manager") {
+        return failure("Conversation not found", ErrorCodes.forbidden);
+      }
+    } else {
       const created = await aiRepository.insertConversation({
         id: conversationId,
         actor: ctx.actor.email,
@@ -235,7 +245,8 @@ export const aiService = {
   },
 
   async getConversation(
-    id: string
+    id: string,
+    ctx: ServiceContext
   ): Promise<
     ApiResult<{
       conversation: Record<string, unknown> | null;
@@ -248,6 +259,12 @@ export const aiService = {
     ]);
     if (!conv.success) return passFailure(conv);
     if (!conv.data) return notFoundFailure("Conversation", id);
+    const owner = String(conv.data.actor || conv.data.user_email || "").toLowerCase();
+    const caller = String(ctx.actor.email || "").toLowerCase();
+    const role = String(ctx.actor.role || "").toLowerCase();
+    if (owner && caller && owner !== caller && role !== "admin" && role !== "manager") {
+      return failure("Conversation not found", ErrorCodes.forbidden);
+    }
     if (!msgs.success) return passFailure(msgs);
     return success({ conversation: conv.data, messages: msgs.data ?? [] });
   }

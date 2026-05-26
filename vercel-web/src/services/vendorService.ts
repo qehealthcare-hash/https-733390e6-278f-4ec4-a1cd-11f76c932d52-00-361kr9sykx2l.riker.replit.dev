@@ -20,6 +20,7 @@ import {
   type VendorCreateInput,
   type VendorPatchInput
 } from "@/validation/vendorValidation";
+import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 
 const ALLOWED_FIELDS = [
   "name",
@@ -103,7 +104,14 @@ export const vendorService = {
     const inserted = await vendorRepository.insert(row, { accessToken: ctx.accessToken });
     if (!inserted.success) return passFailure(inserted);
     if (!inserted.data) return failure("Failed to create vendor", ErrorCodes.internal);
-    return success(inserted.data);
+    const audit = await writeMutationAudit({ accessToken: ctx.accessToken }, ctx.actor, {
+      module: "vendors",
+      entity_id: String(inserted.data.id ?? row.id),
+      action: "create",
+      after: inserted.data,
+      stamp: `Created vendor ${row.id}`
+    });
+    return finalizeWithAudit(audit, inserted.data);
   },
 
   async update(
@@ -117,15 +125,32 @@ export const vendorService = {
     if (Object.keys(payload).length === 0) {
       return failure("No editable fields supplied", ErrorCodes.badRequest);
     }
+    const before = await vendorRepository.findById(id, { accessToken: ctx.accessToken });
     const updated = await vendorRepository.update(id, payload, { accessToken: ctx.accessToken });
     if (!updated.success) return passFailure(updated);
     if (!updated.data) return notFoundFailure("Vendor", id);
-    return success(updated.data);
+    const audit = await writeMutationAudit({ accessToken: ctx.accessToken }, ctx.actor, {
+      module: "vendors",
+      entity_id: id,
+      action: "update",
+      before: before.success ? before.data ?? null : null,
+      after: updated.data,
+      stamp: `Updated vendor ${id}`
+    });
+    return finalizeWithAudit(audit, updated.data);
   },
 
   async remove(id: string, ctx: ServiceContext): Promise<ApiResult<{ id: string; deleted: true }>> {
+    const before = await vendorRepository.findById(id, { accessToken: ctx.accessToken });
     const removed = await vendorRepository.remove(id, { accessToken: ctx.accessToken });
     if (!removed.success) return passFailure(removed);
-    return success({ id, deleted: true });
+    const audit = await writeMutationAudit({ accessToken: ctx.accessToken }, ctx.actor, {
+      module: "vendors",
+      entity_id: id,
+      action: "delete",
+      before: before.success ? before.data ?? null : null,
+      stamp: `Deleted vendor ${id}`
+    });
+    return finalizeWithAudit(audit, { id, deleted: true as const });
   }
 };

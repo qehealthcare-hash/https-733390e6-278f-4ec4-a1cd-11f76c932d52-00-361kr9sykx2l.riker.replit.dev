@@ -79,8 +79,11 @@ import {
 } from "@/business/billingRules";
 import { assertNotStale } from "@/business/concurrencyRules";
 import { businessFailure, businessOk } from "@/business/businessResult";
+import { monthRangeUTC } from "@/business/dateRules";
+import { receiptInYmdRange } from "@/business/reportRules";
 import { newId } from "@/business/idRules";
 import { billingRepository } from "@/database/billingRepository";
+import { reportRepository } from "@/database/reportRepository";
 import { patientRepository } from "@/database/patientRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
@@ -602,18 +605,76 @@ export const billingService = {
     const query = parsed.data as BillingListQuery;
 
     const access = dbAccess(ctx);
-    const result = await billingRepository.listBillings(
-      {
-        limit: query.limit,
-        offset: query.offset,
-        q: query.q,
-        patient_id: query.patient_id,
-        status: query.status
-      },
-      access
-    );
-    if (!result.success) return passFailure(result);
-    const rows = result.data?.rows || [];
+
+    let periodWindow: { startYMD: string; endYMD: string; startISO: string; endISO: string } | null =
+      null;
+    let rows: JsonRow[] = [];
+    let listTotal = 0;
+
+    if (query.period) {
+      const w = monthRangeUTC(query.period);
+      periodWindow = {
+        startYMD: w.startISO.slice(0, 10),
+        endYMD: w.endISO.slice(0, 10),
+        startISO: w.startISO,
+        endISO: w.endISO
+      };
+      const [svcRes, rcptRes] = await Promise.all([
+        reportRepository.listServicesInRange(
+          periodWindow.startYMD,
+          periodWindow.endYMD,
+          { patient_id: query.patient_id },
+          access
+        ),
+        reportRepository.listReceiptsInRange(
+          periodWindow.startISO,
+          periodWindow.endISO,
+          { patient_id: query.patient_id },
+          access
+        )
+      ]);
+      if (!svcRes.success) return passFailure(svcRes);
+      if (!rcptRes.success) return passFailure(rcptRes);
+      const activeIds = new Set<string>();
+      for (const s of svcRes.data || []) {
+        const id = String(s.billing_id || "");
+        if (id) activeIds.add(id);
+      }
+      for (const r of rcptRes.data || []) {
+        const id = String(r.billing_id || "");
+        if (id) activeIds.add(id);
+      }
+      if (!activeIds.size) return success({ rows: [], total: 0 });
+      const byIds = await billingRepository.listBillingsByIds([...activeIds], access);
+      if (!byIds.success) return passFailure(byIds);
+      const term = (query.q || "").trim().toLowerCase();
+      rows = (byIds.data || []).filter((b) => {
+        if (query.patient_id && String(b.patient_id || "") !== query.patient_id) return false;
+        if (query.status && String(b.status || "") !== query.status) return false;
+        if (!term) return true;
+        const hay = [b.id, b.patient_id, b.status]
+          .map((v) => String(v || "").toLowerCase())
+          .join(" ");
+        return hay.includes(term);
+      });
+      listTotal = rows.length;
+      rows = rows.slice(query.offset, query.offset + query.limit);
+    } else {
+      const result = await billingRepository.listBillings(
+        {
+          limit: query.limit,
+          offset: query.offset,
+          q: query.q,
+          patient_id: query.patient_id,
+          status: query.status
+        },
+        access
+      );
+      if (!result.success) return passFailure(result);
+      rows = result.data?.rows || [];
+      listTotal = result.data?.total ?? 0;
+    }
+
     const billingIds = rows.map((r) => String(r.id));
     const patientIds = Array.from(
       new Set(rows.map((r) => String(r.patient_id || "")).filter(Boolean))
@@ -650,29 +711,45 @@ export const billingService = {
     }
 
     const enriched = rows.map((b) => {
-      const id = String(b.id);
-      const services = svcByBilling.get(id) || [];
-      const receipts = receiptsByBilling.get(id) || [];
-      const totals = computeBillingTotals({
-        services,
-        receipts,
-        secDep: Number(b.sec_dep || 0)
+        const id = String(b.id);
+        let services = svcByBilling.get(id) || [];
+        let receipts = receiptsByBilling.get(id) || [];
+        if (periodWindow) {
+          services = services.filter(
+            (s) =>
+              String(s.date || "") >= periodWindow!.startYMD &&
+              String(s.date || "") < periodWindow!.endYMD
+          );
+          receipts = receipts.filter((r) =>
+            receiptInYmdRange(
+              r,
+              periodWindow!.startYMD,
+              periodWindow!.endYMD,
+              periodWindow!.startISO,
+              periodWindow!.endISO
+            )
+          );
+        }
+        const totals = computeBillingTotals({
+          services,
+          receipts,
+          secDep: Number(b.sec_dep || 0)
+        });
+        const patient = patientMap.get(String(b.patient_id || "")) || null;
+        return {
+          ...b,
+          patient_name: patient?.name || "",
+          patient_phone: patient?.phone || "",
+          totals,
+          paid_status:
+            (b.paid_status as string | null) ||
+            derivePaidStatus(totals)
+        };
       });
-      const patient = patientMap.get(String(b.patient_id || "")) || null;
-      return {
-        ...b,
-        patient_name: patient?.name || "",
-        patient_phone: patient?.phone || "",
-        totals,
-        paid_status:
-          (b.paid_status as string | null) ||
-          derivePaidStatus(totals)
-      };
-    });
 
     return success({
       rows: enriched,
-      total: result.data?.total ?? 0
+      total: listTotal
     });
   },
 
@@ -1494,6 +1571,21 @@ export const billingService = {
         editGuard.error || "Bill is closed — cannot accept new receipts",
         editGuard.code,
         editGuard.details
+      );
+    }
+
+    const bundle = await loadBundleWithTotals(input.billing_id, ctx);
+    if (!bundle.success) return passFailure(bundle);
+    const billingOutstanding = bundle.data.totals.outstanding;
+    if (Number(input.amount) > billingOutstanding + 0.005) {
+      return failure(
+        `Receipt amount ₹${input.amount} exceeds bill outstanding ₹${billingOutstanding}`,
+        ErrorCodes.business,
+        {
+          outstanding: billingOutstanding,
+          amount: input.amount,
+          billing_id: input.billing_id
+        }
       );
     }
 

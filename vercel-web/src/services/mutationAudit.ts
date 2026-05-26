@@ -37,6 +37,8 @@ export async function writeMutationAudit(
 
   const { email, userId } = resolveActor(actor);
 
+  // Audit rows are written with the service-role client so RLS does not allow
+  // authenticated users to forge arbitrary audit entries via PostgREST.
   const result = await auditRepository.insert(
     {
       ...entry,
@@ -44,7 +46,7 @@ export async function writeMutationAudit(
       user_id: userId ?? null,
       stamp: entry.stamp || `${entry.action} by ${email} at ${new Date().toISOString()}`
     },
-    access
+    undefined
   );
 
   if (!result.success) {

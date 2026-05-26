@@ -47,11 +47,19 @@ export function withoutAuth<P = Record<string, string>>(handler: RawHandler<P>) 
 }
 
 import { badRequest } from "./errors";
+import { MAX_JSON_BODY_BYTES } from "./security";
 
 export async function parseJsonBody<T extends Record<string, unknown> = Record<string, unknown>>(
   req: NextRequest
 ): Promise<T> {
+  const contentLength = Number(req.headers.get("content-length") || 0);
+  if (contentLength > MAX_JSON_BODY_BYTES) {
+    throw badRequest(`Request body too large (max ${MAX_JSON_BODY_BYTES} bytes)`);
+  }
   const text = await req.text();
+  if (text.length > MAX_JSON_BODY_BYTES) {
+    throw badRequest(`Request body too large (max ${MAX_JSON_BODY_BYTES} bytes)`);
+  }
   if (!text) return {} as T;
   let parsed: unknown;
   try {

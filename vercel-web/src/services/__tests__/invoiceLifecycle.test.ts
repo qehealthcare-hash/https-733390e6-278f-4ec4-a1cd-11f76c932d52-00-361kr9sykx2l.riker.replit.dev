@@ -42,6 +42,22 @@ describe("billingService — invoices", () => {
       success: true,
       data: { id: "BILL1", status: "Active", patient_id: "PAT1" }
     });
+    vi.mocked(billingRepository.loadBillingBundle).mockResolvedValue({
+      success: true,
+      data: {
+        billing: { id: "BILL1", status: "Active", patient_id: "PAT1", sec_dep: 0 },
+        services: [{ total: 2000 }],
+        receipts: [{ amount: 400 }]
+      }
+    });
+    vi.mocked(patientRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "PAT1", name: "Test Patient" }
+    });
+    vi.mocked(billingRepository.listInvoicesByBilling).mockResolvedValue({
+      success: true,
+      data: []
+    });
     vi.mocked(billingRepository.findInvoiceById).mockResolvedValue({
       success: true,
       data: {

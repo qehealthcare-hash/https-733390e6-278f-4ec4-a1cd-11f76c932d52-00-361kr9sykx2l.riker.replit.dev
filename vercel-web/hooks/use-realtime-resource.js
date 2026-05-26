@@ -15,14 +15,22 @@ function resolveTables(options) {
 }
 
 function normalizeListPayload(response) {
-  if (Array.isArray(response)) return response;
-  if (response && Array.isArray(response.rows)) return response.rows;
-  return [];
+  if (Array.isArray(response)) {
+    return { rows: response, total: response.length };
+  }
+  if (response && Array.isArray(response.rows)) {
+    return {
+      rows: response.rows,
+      total: typeof response.total === "number" ? response.total : response.rows.length
+    };
+  }
+  return { rows: [], total: 0 };
 }
 
 export function useRealtimeResource(options) {
   const auth = useAuth();
   const [data, setData] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   // Keep the latest apiPath in a ref so the realtime channel callback always
@@ -47,7 +55,9 @@ export function useRealtimeResource(options) {
       setLoading(true);
       try {
         const response = await request(currentPath, null, session);
-        setData(normalizeListPayload(response));
+        const payload = normalizeListPayload(response);
+        setData(payload.rows);
+        setTotal(payload.total);
         setError("");
       } catch (err) {
         // Surface a friendly message; never throw out of the hook.
@@ -130,6 +140,7 @@ export function useRealtimeResource(options) {
 
   return {
     data,
+    total,
     loading,
     error,
     reload: function reload() {

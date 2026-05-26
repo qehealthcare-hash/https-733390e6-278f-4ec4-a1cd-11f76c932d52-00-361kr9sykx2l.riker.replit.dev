@@ -11,6 +11,7 @@ import { request } from "@/lib/api-client";
 import { downloadCsv } from "@/lib/csv";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { openPrintWindow } from "@/lib/print";
+import { useNotify } from "@/components/ui/confirm-dialog";
 
 function currentPeriod() {
   var now = new Date();
@@ -28,6 +29,7 @@ function tabClass(active) {
 
 export default function ReportsPage() {
   var auth = useAuth();
+  var notify = useNotify();
   var [period, setPeriod] = useState(currentPeriod());
   var [tab, setTab] = useState("overview");
   var [billing, setBilling] = useState(null);
@@ -84,19 +86,19 @@ export default function ReportsPage() {
       var datasetErrors = [];
       var periodQs = "&from=" + from + "&to=" + to;
       Promise.all([
-        request("/inquiries?limit=500" + periodQs, null, auth.session).catch(function (e) {
+        request("/inquiries?limit=100" + periodQs, null, auth.session).catch(function (e) {
           datasetErrors.push("inquiries: " + (e.message || "load failed"));
           return [];
         }),
-        request("/patients?limit=1000" + periodQs, null, auth.session).catch(function (e) {
+        request("/patients?limit=100" + periodQs, null, auth.session).catch(function (e) {
           datasetErrors.push("patients: " + (e.message || "load failed"));
           return [];
         }),
-        request("/attendance?limit=2000" + periodQs, null, auth.session).catch(function (e) {
+        request("/attendance?limit=100" + periodQs, null, auth.session).catch(function (e) {
           datasetErrors.push("attendance: " + (e.message || "load failed"));
           return [];
         }),
-        request("/billings?limit=500&period=" + p, null, auth.session).catch(function (e) {
+        request("/billings?limit=100&period=" + p, null, auth.session).catch(function (e) {
           datasetErrors.push("billings: " + (e.message || "load failed"));
           return null;
         })
@@ -173,7 +175,7 @@ export default function ReportsPage() {
 
   function printSection(title, rows, columns) {
     if (!rows || !rows.length) {
-      window.alert("Nothing to print");
+      notify({ title: "Nothing to print", description: "There are no rows for the current selection." });
       return;
     }
     var thead = "<tr>" + columns.map(function (c) { return "<th>" + c.label + "</th>"; }).join("") + "</tr>";
@@ -259,6 +261,9 @@ export default function ReportsPage() {
                     <div>Net: {formatCurrency(payout.net)}</div>
                     <div>Paid: {formatCurrency(payout.paid)}</div>
                     <div>Pending: {formatCurrency(payout.pending)}</div>
+                    {payout.partner_charge_ledger ? (
+                      <div>Partner charges: {formatCurrency(payout.partner_charge_ledger)}</div>
+                    ) : null}
                   </div>
                 ) : (
                   <EmptyState title="No payout data" description="No payouts yet for this period." />
@@ -270,6 +275,9 @@ export default function ReportsPage() {
                     <div>Revenue: {formatCurrency(profitLoss.revenue)}</div>
                     <div>Payouts paid: {formatCurrency(profitLoss.payouts_paid)}</div>
                     <div>Payouts pending: {formatCurrency(profitLoss.payouts_pending)}</div>
+                    {profitLoss.partner_charge_ledger ? (
+                      <div>Partner charges: {formatCurrency(profitLoss.partner_charge_ledger)}</div>
+                    ) : null}
                     <div><strong>Net profit: {formatCurrency(profitLoss.net_profit)}</strong></div>
                   </div>
                 ) : (
@@ -288,15 +296,35 @@ export default function ReportsPage() {
                     className="button secondary"
                     type="button"
                     onClick={function () {
-                      exportCsv("billings-" + period + ".csv", billings.map(function (b) {
-                        return {
-                          id: b.id,
-                          patient_id: b.patient_id,
-                          status: b.status,
-                          sec_dep: b.sec_dep,
-                          created: b.created_at || b.created || ""
-                        };
-                      }));
+                      exportCsv(
+                        "billings-" + period + ".csv",
+                        billings.map(function (b) {
+                          return {
+                            billing_id: b.id,
+                            patient_name: b.patient_name || "",
+                            patient_phone: b.patient_phone || "",
+                            status: b.status,
+                            service_total: b.totals ? b.totals.services : "",
+                            collected: b.totals ? b.totals.receipts : "",
+                            outstanding: b.totals ? b.totals.outstanding : "",
+                            sec_dep: b.sec_dep,
+                            paid_status: b.paid_status || "",
+                            created: b.created_at || b.created || ""
+                          };
+                        }),
+                        [
+                          "billing_id",
+                          "patient_name",
+                          "patient_phone",
+                          "status",
+                          "service_total",
+                          "collected",
+                          "outstanding",
+                          "sec_dep",
+                          "paid_status",
+                          "created"
+                        ]
+                      );
                     }}
                   >
                     CSV
@@ -306,9 +334,16 @@ export default function ReportsPage() {
                     type="button"
                     onClick={function () {
                       printSection("Billings " + period, billings, [
-                        { key: "id", label: "ID" },
-                        { key: "patient_id", label: "Patient" },
+                        { key: "id", label: "Bill" },
+                        { key: "patient_name", label: "Patient" },
                         { key: "status", label: "Status" },
+                        {
+                          key: "totals",
+                          label: "Outstanding",
+                          format: function (r) {
+                            return r.totals ? formatCurrency(r.totals.outstanding) : "—";
+                          }
+                        },
                         { key: "sec_dep", label: "Sec Dep", format: function (r) { return formatCurrency(r.sec_dep); } },
                         { key: "created_at", label: "Created", format: function (r) { return formatDate(r.created_at || r.created); } }
                       ]);
@@ -325,15 +360,16 @@ export default function ReportsPage() {
                 <div className="table-wrap">
                   <table>
                     <thead>
-                      <tr><th>Bill</th><th>Patient</th><th>Status</th><th>Sec Dep</th><th>Created</th></tr>
+                      <tr><th>Bill</th><th>Patient</th><th>Status</th><th>Outstanding</th><th>Sec Dep</th><th>Created</th></tr>
                     </thead>
                     <tbody>
                       {billings.map(function (b) {
                         return (
                           <tr key={b.id}>
                             <td>{b.id}</td>
-                            <td>{b.patient_id}</td>
+                            <td>{b.patient_name || b.patient_id}</td>
                             <td>{b.status}</td>
+                            <td>{b.totals ? formatCurrency(b.totals.outstanding) : "—"}</td>
                             <td>{formatCurrency(b.sec_dep)}</td>
                             <td>{formatDate(b.created_at || b.created)}</td>
                           </tr>
@@ -353,6 +389,9 @@ export default function ReportsPage() {
                   <div className="helper-box">
                     Gross {formatCurrency(payout.gross)} · Net {formatCurrency(payout.net)} ·
                     Paid {formatCurrency(payout.paid)} · Pending {formatCurrency(payout.pending)}
+                    {payout.partner_charge_ledger
+                      ? " · Partner charges " + formatCurrency(payout.partner_charge_ledger)
+                      : ""}
                   </div>
                 </div>
               ) : (
@@ -370,16 +409,41 @@ export default function ReportsPage() {
                     className="button secondary"
                     type="button"
                     onClick={function () {
-                      exportCsv("payroll-" + period + ".csv", payrollRows.map(function (row) {
-                        return {
-                          employee_id: row.employee_id,
-                          gross: row.gross_amount,
-                          net: row.net_amount,
-                          status: row.status,
-                          present: row.attendance && row.attendance.present,
-                          absent: row.attendance && row.attendance.absent
-                        };
-                      }));
+                      exportCsv(
+                        "payroll-" + period + ".csv",
+                        payrollRows.map(function (row) {
+                          return {
+                            employee_id: row.employee_id,
+                            gross: row.gross_amount,
+                            net: row.net_amount,
+                            advance: row.advance,
+                            deduction: row.deduction,
+                            bonus: row.bonus,
+                            duty_count: row.duty_count,
+                            hours: row.hours,
+                            status: row.status,
+                            present: row.attendance ? row.attendance.present : "",
+                            absent: row.attendance ? row.attendance.absent : "",
+                            late: row.attendance ? row.attendance.late : "",
+                            attendance_hours: row.attendance ? row.attendance.hours : ""
+                          };
+                        }),
+                        [
+                          "employee_id",
+                          "gross",
+                          "net",
+                          "advance",
+                          "deduction",
+                          "bonus",
+                          "duty_count",
+                          "hours",
+                          "status",
+                          "present",
+                          "absent",
+                          "late",
+                          "attendance_hours"
+                        ]
+                      );
                     }}
                   >
                     CSV

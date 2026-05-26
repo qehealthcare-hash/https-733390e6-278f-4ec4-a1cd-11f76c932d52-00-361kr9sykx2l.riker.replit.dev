@@ -7,6 +7,7 @@ import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 function emptyForm() {
   return {
@@ -31,6 +32,7 @@ function emptyForm() {
 
 export default function DoctorsPage() {
   var auth = useAuth();
+  var confirm = useConfirm();
   var [rows, setRows] = useState([]);
   var [loading, setLoading] = useState(true);
   var [search, setSearch] = useState("");
@@ -161,7 +163,13 @@ export default function DoctorsPage() {
   }
 
   async function handleDelete(id) {
-    if (!window.confirm("Delete this doctor?")) return;
+    var ok = await confirm({
+      title: "Delete this doctor?",
+      description: "The directory entry will be removed. This action cannot be undone.",
+      confirmLabel: "Delete",
+      tone: "danger"
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {

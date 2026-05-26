@@ -233,6 +233,9 @@ export const whatsappService = {
         .flatMap((e) => e.changes || []) as Array<{ value?: Record<string, unknown> }>;
     const verifiedFlag = opts?.verified === false ? "UNVERIFIED" : "DELIVERED";
 
+    let statusUpdates = 0;
+    let inboundInserts = 0;
+
     for (const change of events) {
       const value = change.value || {};
       const statuses = (value.statuses as Array<{ id?: string; status?: string }>) || [];
@@ -244,6 +247,7 @@ export const whatsappService = {
           status: next
         });
         if (!updated.success) return passFailure(updated);
+        statusUpdates += 1;
       }
       const incoming = (value.messages as Array<{ from?: string }>) || [];
       for (const msg of incoming) {
@@ -257,7 +261,22 @@ export const whatsappService = {
           status: verifiedFlag
         });
         if (!inserted.success) return passFailure(inserted);
+        inboundInserts += 1;
       }
+    }
+
+    if (statusUpdates || inboundInserts) {
+      await writeMutationAudit(undefined, "whatsapp-webhook", {
+        module: "whatsapp",
+        entity_id: null,
+        action: "webhook",
+        after: {
+          verified: opts?.verified !== false,
+          status_updates: statusUpdates,
+          inbound_inserts: inboundInserts
+        },
+        stamp: `WhatsApp webhook → ${statusUpdates} status, ${inboundInserts} inbound`
+      });
     }
 
     return success({ ok: true, verified: opts?.verified !== false });

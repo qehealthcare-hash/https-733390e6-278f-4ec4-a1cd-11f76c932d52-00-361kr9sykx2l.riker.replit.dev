@@ -342,7 +342,7 @@ export default function DutiesPage() {
       var from = viewMonth + "-01T00:00:00.000Z";
       var endDate = new Date(ym.year, ym.monthIndex + 1, 0);
       var to = endDate.toISOString().slice(0, 10) + "T23:59:59.999Z";
-      var path = "/duties?limit=500&from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to);
+      var path = "/duties?limit=150&from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to);
       if (statusFilter) path += "&status=" + encodeURIComponent(statusFilter);
       if (filterPatient) path += "&patient_id=" + encodeURIComponent(filterPatient);
       if (filterEmployee) path += "&employee_id=" + encodeURIComponent(filterEmployee);

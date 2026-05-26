@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { REGISTRY_READ_ROLES } from "@/lib/api/crmRoles";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { patientService } from "@/services/patientService";
 import { respond } from "@/lib/api/apiResultBridge";
@@ -9,12 +10,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
+  requireRole(actor, [...REGISTRY_READ_ROLES]);
   const url = new URL(req.url);
   const query = {
     limit: url.searchParams.get("limit") ?? undefined,
     offset: url.searchParams.get("offset") ?? undefined,
     q: url.searchParams.get("q") ?? undefined,
     status: url.searchParams.get("status") ?? undefined,
+    gender: url.searchParams.get("gender") ?? undefined,
+    area: url.searchParams.get("area") ?? undefined,
+    pin: url.searchParams.get("pin") ?? undefined,
+    shift: url.searchParams.get("shift") ?? undefined,
     caretaker_id: url.searchParams.get("caretaker_id") ?? undefined,
     from: url.searchParams.get("from") ?? undefined,
     to: url.searchParams.get("to") ?? undefined

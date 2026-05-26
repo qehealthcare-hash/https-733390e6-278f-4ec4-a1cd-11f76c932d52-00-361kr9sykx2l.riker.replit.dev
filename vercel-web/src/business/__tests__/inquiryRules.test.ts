@@ -4,6 +4,7 @@ import {
   canEditInquiry,
   canTransitionInquiryTo,
   findOpenInquiryDuplicate,
+  inquiryToPatientPatch,
   isOpenInquiry,
   isOverdueFollowup
 } from "@/business/inquiryRules";
@@ -11,6 +12,22 @@ import { ErrorCodes } from "@/types/common";
 import { expectFail, expectOk } from "@/test/assertions";
 
 describe("inquiryRules — test matrix", () => {
+  it("inquiryToPatientPatch maps clinical + contact fields", () => {
+    const patch = inquiryToPatientPatch({
+      age: "70",
+      gender: "Male",
+      email: "a@b.com",
+      service: "Night care",
+      remarks: "Needs oxygen"
+    });
+    expect(patch).toEqual({
+      age: "70",
+      gender: "Male",
+      email: "a@b.com",
+      disease_condition: "Night care — Needs oxygen"
+    });
+  });
+
   it("treats Converted / Closed / Lost as not open", () => {
     expect(isOpenInquiry("New")).toBe(true);
     expect(isOpenInquiry("Converted")).toBe(false);

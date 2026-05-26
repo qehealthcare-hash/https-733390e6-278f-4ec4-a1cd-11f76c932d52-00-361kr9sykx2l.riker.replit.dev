@@ -174,16 +174,28 @@ export function buildBillingTotals(
 ): BillingTotalsReport {
   const serviceTotal = sumServiceTotals(args.services);
   const collected = sumReceiptAmounts(args.receipts);
+  const activeBillingIds = new Set<string>();
+  for (const s of args.services) {
+    const id = String(s.billing_id || "");
+    if (id) activeBillingIds.add(id);
+  }
+  for (const r of args.receipts) {
+    const id = String(r.billing_id || "");
+    if (id) activeBillingIds.add(id);
+  }
+  const statusById = new Map(
+    args.billings.map((b) => [String(b.id || ""), String(b.status || "Unknown")])
+  );
   const byStatus: Record<string, { count: number }> = {};
-  for (const b of args.billings) {
-    const key = String(b.status || "Unknown");
+  for (const id of activeBillingIds) {
+    const key = statusById.get(id) || "Unknown";
     byStatus[key] = byStatus[key] || { count: 0 };
     byStatus[key].count += 1;
   }
   return {
     period,
     range,
-    billings_count: args.billings.length,
+    billings_count: activeBillingIds.size,
     service_total: round2(serviceTotal),
     collected: round2(collected),
     pending: round2(Math.max(0, serviceTotal - collected)),
@@ -203,6 +215,8 @@ export interface PayoutTotalsReport {
   net: number;
   paid: number;
   pending: number;
+  /** Partner diary charge ledger in the period (matches dashboard KPIs). */
+  partner_charge_ledger: number;
   advance: number;
   deduction: number;
   bonus: number;
@@ -218,7 +232,8 @@ export function buildPayoutTotals(
     deduction?: number | string | null;
     bonus?: number | string | null;
     status?: string;
-  }>
+  }>,
+  payoutChargeRows: Array<{ amount?: number | string | null }> = []
 ): PayoutTotalsReport {
   const gross = rows.reduce((s, r) => s + Number(r.gross_amount || 0), 0);
   const net = rows.reduce((s, r) => s + Number(r.net_amount || 0), 0);
@@ -228,6 +243,7 @@ export function buildPayoutTotals(
   const paid = rows
     .filter((r) => String(r.status || "").toUpperCase() === "PAID")
     .reduce((s, r) => s + Number(r.net_amount || 0), 0);
+  const partnerChargeLedger = sumReceiptAmounts(payoutChargeRows);
   return {
     period,
     range,
@@ -235,7 +251,8 @@ export function buildPayoutTotals(
     gross: round2(gross),
     net: round2(net),
     paid: round2(paid),
-    pending: round2(payoutOutstanding(net, paid)),
+    pending: round2(payoutOutstanding(net, paid) + partnerChargeLedger),
+    partner_charge_ledger: round2(partnerChargeLedger),
     advance: round2(advance),
     deduction: round2(deduction),
     bonus: round2(bonus)
@@ -344,6 +361,30 @@ export function attachAttendanceToPayrollRows<T extends PayrollPayoutRow>(
 
 function round2(n: number): number {
   return Math.round(Number(n || 0) * 100) / 100;
+}
+
+/** Business date for receipts: `date` when YYYY-MM-DD, else `created_at` day. */
+export function receiptBusinessYmd(row: {
+  date?: string | null;
+  created_at?: string | null;
+}): string {
+  const d = String(row.date || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  const created = String(row.created_at || "");
+  return created ? created.slice(0, 10) : "";
+}
+
+export function receiptInYmdRange(
+  row: { date?: string | null; created_at?: string | null },
+  fromYMD: string,
+  toYMD: string,
+  fromISO: string,
+  toISO: string
+): boolean {
+  const ymd = receiptBusinessYmd(row);
+  if (ymd) return ymd >= fromYMD && ymd < toYMD;
+  const created = String(row.created_at || "");
+  return created >= fromISO && created < toISO;
 }
 
 /** Re-export for services computing adjustment preview. */

@@ -307,6 +307,17 @@ export const employeeService = {
     const stale = assertNotStale("Employee", existing.data.updated_at, input.expected_updated_at);
     if (!stale.success) return passFailure(stale);
 
+    // Status transitions must go through POST /employees/:id/status so the
+    // reason / audit / leave_date workflow is always invoked.
+    const existingStatus = String(existing.data.status || "Active");
+    if (input.status && input.status !== existingStatus) {
+      return failure(
+        `Use the Change Status action to change employee status (current: ${existingStatus})`,
+        ErrorCodes.business,
+        { current: existingStatus, requested: input.status }
+      );
+    }
+
     const previousPhone = (existing.data.phone as string | undefined) ?? "";
     if (input.phone && input.phone !== previousPhone) {
       const dups = await loadDuplicateCandidates(input.phone, ctx);

@@ -105,7 +105,15 @@ export function AuthProvider({ children }) {
       return result.data;
     },
     async signOut() {
+      try {
+        localStorage.removeItem("hhcrm-offline-queue");
+      } catch (_err) {
+        /* ignore */
+      }
       await supabase.auth.signOut();
+      setProfile(null);
+      setSession(null);
+      setSyncLabel("Signed out");
     }
   };
 

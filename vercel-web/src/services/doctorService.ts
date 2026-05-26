@@ -21,6 +21,7 @@ import {
   type DoctorCreateInput,
   type DoctorPatchInput
 } from "@/validation/doctorValidation";
+import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 
 const ALLOWED_FIELDS = [
   "fn",
@@ -137,7 +138,14 @@ export const doctorService = {
     if (!decorated) {
       return failure("Failed to create doctor", ErrorCodes.internal);
     }
-    return success(decorated);
+    const audit = await writeMutationAudit({ accessToken: ctx.accessToken }, ctx.actor, {
+      module: "doctors",
+      entity_id: String(inserted.data?.id ?? row.id),
+      action: "create",
+      after: inserted.data,
+      stamp: `Created doctor ${row.id}`
+    });
+    return finalizeWithAudit(audit, decorated);
   },
 
   async update(
@@ -151,16 +159,33 @@ export const doctorService = {
     if (Object.keys(payload).length === 0) {
       return failure("No editable fields supplied", ErrorCodes.badRequest);
     }
+    const before = await doctorRepository.findById(id, { accessToken: ctx.accessToken });
     const updated = await doctorRepository.update(id, payload, { accessToken: ctx.accessToken });
     if (!updated.success) return passFailure(updated);
     const row = decorate(updated.data);
     if (!row) return notFoundFailure("Doctor", id);
-    return success(row);
+    const audit = await writeMutationAudit({ accessToken: ctx.accessToken }, ctx.actor, {
+      module: "doctors",
+      entity_id: id,
+      action: "update",
+      before: before.success ? before.data ?? null : null,
+      after: updated.data,
+      stamp: `Updated doctor ${id}`
+    });
+    return finalizeWithAudit(audit, row);
   },
 
   async remove(id: string, ctx: ServiceContext): Promise<ApiResult<{ id: string; deleted: true }>> {
+    const before = await doctorRepository.findById(id, { accessToken: ctx.accessToken });
     const removed = await doctorRepository.remove(id, { accessToken: ctx.accessToken });
     if (!removed.success) return passFailure(removed);
-    return success({ id, deleted: true });
+    const audit = await writeMutationAudit({ accessToken: ctx.accessToken }, ctx.actor, {
+      module: "doctors",
+      entity_id: id,
+      action: "delete",
+      before: before.success ? before.data ?? null : null,
+      stamp: `Deleted doctor ${id}`
+    });
+    return finalizeWithAudit(audit, { id, deleted: true as const });
   }
 };

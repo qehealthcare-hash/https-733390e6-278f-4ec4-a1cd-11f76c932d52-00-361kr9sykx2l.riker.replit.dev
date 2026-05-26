@@ -5,7 +5,8 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useRealtimeResource } from "@/hooks/use-realtime-resource";
+import { usePaginatedResource } from "@/hooks/use-paginated-resource";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import {
@@ -17,7 +18,7 @@ import { formatDate, slugToText } from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
 import { openPrintWindow } from "@/lib/print";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
-import { CameraCaptureModal } from "@/components/ui/camera-capture";
+import { CameraCaptureModal } from "@/components/ui/camera-capture-lazy";
 import { DocumentCard, DocumentList } from "@/components/ui/document-card";
 
 function emptyRelative() {
@@ -66,8 +67,12 @@ export default function PatientsPage() {
   var auth = useAuth();
   var [search, setSearch] = useState("");
   var [debouncedSearch, setDebouncedSearch] = useState("");
-  var [pageSize, setPageSize] = useState(500);
-
+  var [statusFilter, setStatusFilter] = useState("");
+  var [genderFilter, setGenderFilter] = useState("");
+  var [areaFilter, setAreaFilter] = useState("");
+  var [pinFilter, setPinFilter] = useState("");
+  var [shiftFilter, setShiftFilter] = useState("");
+  var [sortOrder, setSortOrder] = useState("desc");
   useEffect(
     function () {
       var handle = setTimeout(function () {
@@ -78,19 +83,38 @@ export default function PatientsPage() {
     [search]
   );
 
-  var apiPath = useMemo(
+  var listQuery = useMemo(
     function () {
-      var params = ["limit=" + pageSize];
-      if (debouncedSearch) params.push("q=" + encodeURIComponent(debouncedSearch));
-      return "/patients?" + params.join("&");
+      return {
+        q: debouncedSearch || undefined,
+        status: statusFilter || undefined,
+        gender: genderFilter || undefined,
+        area: areaFilter || undefined,
+        pin: pinFilter || undefined,
+        shift: shiftFilter || undefined
+      };
     },
-    [debouncedSearch, pageSize]
+    [debouncedSearch, statusFilter, genderFilter, areaFilter, pinFilter, shiftFilter]
   );
 
-  var resource = useRealtimeResource({
-    apiPath: apiPath,
+  var resource = usePaginatedResource({
+    basePath: "/patients",
     table: "hh_patients",
-    channel: "hh_patients"
+    channel: "hh_patients",
+    queryParams: listQuery,
+    resetKey:
+      debouncedSearch +
+      "|" +
+      statusFilter +
+      "|" +
+      genderFilter +
+      "|" +
+      areaFilter +
+      "|" +
+      pinFilter +
+      "|" +
+      shiftFilter,
+    pageSize: 50
   });
   var [employees, setEmployees] = useState([]);
   var [form, setForm] = useState(createInitialForm());
@@ -99,13 +123,6 @@ export default function PatientsPage() {
   var [error, setError] = useState("");
   var [conflictPrompt, setConflictPrompt] = useState(null); // { actual, action }
   var [duplicatePrompt, setDuplicatePrompt] = useState(null); // { message }
-  var [statusFilter, setStatusFilter] = useState("");
-  var [genderFilter, setGenderFilter] = useState("");
-  var [areaFilter, setAreaFilter] = useState("");
-  var [pinFilter, setPinFilter] = useState("");
-  var [shiftFilter, setShiftFilter] = useState("");
-  var [sortOrder, setSortOrder] = useState("desc");
-
   // Inline modals: close-reason dialog and full patient history viewer.
   var [closeDialog, setCloseDialog] = useState(null); // { id, name, reason, reason_other }
   var [reopenDialog, setReopenDialog] = useState(null); // { id, name, note }
@@ -134,33 +151,9 @@ export default function PatientsPage() {
     [auth.session]
   );
 
-  var filtered = useMemo(
+  var rows = useMemo(
     function () {
       return resource.data
-        .filter(function (row) {
-          var hay = [row.full_name || row.name, row.mobile || row.phone, row.address || row.addr, row.area, row.pincode || row.pin]
-            .filter(Boolean)
-            .join(" ")
-            .toLowerCase();
-          var matchesSearch = !debouncedSearch || hay.indexOf(debouncedSearch.toLowerCase()) >= 0;
-          var matchesStatus = !statusFilter || row.status === statusFilter;
-          var matchesGender = !genderFilter || row.gender === genderFilter;
-          var matchesArea =
-            !areaFilter ||
-            String(row.area || "").toLowerCase().indexOf(areaFilter.toLowerCase()) >= 0;
-          var matchesPin =
-            !pinFilter ||
-            String(row.pincode || row.pin || "").indexOf(pinFilter) >= 0;
-          var matchesShift = !shiftFilter || (row.shift_type || row.shift) === shiftFilter;
-          return (
-            matchesSearch &&
-            matchesStatus &&
-            matchesGender &&
-            matchesArea &&
-            matchesPin &&
-            matchesShift
-          );
-        })
         .slice()
         .sort(function (left, right) {
           var leftTime = new Date(left.registered_at || left.created_at || left.created || 0).getTime();
@@ -168,7 +161,7 @@ export default function PatientsPage() {
           return sortOrder === "asc" ? leftTime - rightTime : rightTime - leftTime;
         });
     },
-    [resource.data, debouncedSearch, statusFilter, genderFilter, areaFilter, pinFilter, shiftFilter, sortOrder]
+    [resource.data, sortOrder]
   );
 
   function caretakerLabel(employeeId) {
@@ -200,7 +193,7 @@ export default function PatientsPage() {
   function exportPatientsCsv() {
     downloadCsv(
       "patients.csv",
-      filtered.map(function (row) {
+      rows.map(function (row) {
         return {
           patient_id: row.id,
           name: row.full_name || row.name,
@@ -1027,18 +1020,6 @@ export default function PatientsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>Rows per page</label>
-                  <select
-                    value={String(pageSize)}
-                    onChange={function (event) { setPageSize(parseInt(event.target.value, 10) || 500); }}
-                  >
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                    <option value="200">200</option>
-                    <option value="500">All (up to 500)</option>
-                  </select>
-                </div>
-                <div className="field">
                   <label>Status</label>
                   <select value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
                     <option value="">All</option>
@@ -1090,14 +1071,19 @@ export default function PatientsPage() {
                   </select>
                 </div>
               </div>
+              <PaginationBar
+                page={resource.page}
+                pageSize={resource.pageSize}
+                total={resource.total}
+                onPageChange={resource.setPage}
+                onPageSizeChange={resource.setPageSize}
+              />
               <div className="mini-muted" style={{ margin: "0.25rem 0 0.75rem" }}>
-                {debouncedSearch
-                  ? "Server search: \"" + debouncedSearch + "\" — "
-                  : ""}
-                Showing {filtered.length} of {resource.data.length} loaded
+                {debouncedSearch ? "Search: \"" + debouncedSearch + "\" — " : ""}
+                {resource.total} patient{resource.total === 1 ? "" : "s"} total
                 {resource.loading ? " (loading...)" : ""}
               </div>
-              {!filtered.length ? (
+              {!rows.length ? (
                 <EmptyState
                   title={resource.loading ? "Loading patients..." : "No matching patients"}
                   description={
@@ -1123,10 +1109,11 @@ export default function PatientsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filtered.map(function (row, index) {
+                      {rows.map(function (row, index) {
+                        var rowNum = (resource.page - 1) * resource.pageSize + index + 1;
                         return (
                           <tr key={row.id}>
-                            <td>{index + 1}</td>
+                            <td>{rowNum}</td>
                             <td>{row.id}</td>
                             <td>
                               <div className="table-primary">{row.full_name || row.name}</div>

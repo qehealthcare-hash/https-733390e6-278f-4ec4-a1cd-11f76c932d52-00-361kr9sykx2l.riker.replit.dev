@@ -146,6 +146,16 @@ export const reportRepository = {
   },
 
   /** List billing rows in window with optional patient filter — used for groupBy. */
+  listBillingsByIds(ids: string[], opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const unique = Array.from(new Set((ids || []).filter(Boolean)));
+    if (!unique.length) return Promise.resolve({ success: true, data: [] });
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () => db.from("hh_billings").select("id, patient_id, status, sec_dep, created_at").in("id", unique),
+      `${SCOPE}.listBillingsByIds`
+    );
+  },
+
   listBillingsInRange(
     filters: ReportFilters & { status?: string } = {},
     opts?: DbAccess
@@ -175,13 +185,20 @@ export const reportRepository = {
    * `hh_svc_entries.date` is a plain text yyyy-mm-dd, so the caller must
    * pass YYYY-MM-DD-style boundaries (not ISO timestamps).
    */
-  listServicesInRange(
+  async listServicesInRange(
     fromDate: string,
     toDate: string,
     filters: { patient_id?: string; billing_id?: string } = {},
     opts?: DbAccess
   ): Promise<ApiResult<JsonRow[]>> {
     const db = resolveClient(opts);
+    let billingIds: string[] | null = null;
+    if (filters.patient_id) {
+      const billings = await this.listBillingsByPatient(filters.patient_id, opts);
+      if (!billings.success) return billings;
+      billingIds = (billings.data || []).map((b) => String(b.id || "")).filter(Boolean);
+      if (!billingIds.length) return { success: true, data: [] };
+    }
     return runListQuery<JsonRow>(
       () => {
         let q = db
@@ -190,6 +207,7 @@ export const reportRepository = {
           .gte("date", fromDate)
           .lt("date", toDate);
         if (filters.billing_id) q = q.eq("billing_id", filters.billing_id);
+        else if (billingIds) q = q.in("billing_id", billingIds);
         return q;
       },
       `${SCOPE}.listServicesInRange`
@@ -219,28 +237,75 @@ export const reportRepository = {
   },
 
   /**
-   * Active (non-soft-deleted) receipts within an ISO `created_at` window.
-   * Used for "collected revenue" and "profit/loss".
+   * Active (non-soft-deleted) receipts for a period window.
+   * Uses business `date` (YYYY-MM-DD) when set; otherwise `created_at`.
    */
-  listReceiptsInRange(
+  async listReceiptsInRange(
     fromISO: string,
     toISO: string,
     filters: { patient_id?: string; billing_id?: string } = {},
     opts?: DbAccess
   ): Promise<ApiResult<JsonRow[]>> {
+    const fromYMD = fromISO.slice(0, 10);
+    const toYMD = toISO.slice(0, 10);
     const db = resolveClient(opts);
-    return runListQuery<JsonRow>(
+    let billingIds: string[] | null = null;
+    if (filters.patient_id) {
+      const billings = await this.listBillingsByPatient(filters.patient_id, opts);
+      if (!billings.success) return billings;
+      billingIds = (billings.data || []).map((b) => String(b.id || "")).filter(Boolean);
+      if (!billingIds.length) return { success: true, data: [] };
+    }
+
+    const byBusinessDate = await runListQuery<JsonRow>(
       () => {
         let q = db
           .from("hh_receipts")
           .select("id, billing_id, amount, method, date, created_at, deleted_at")
           .is("deleted_at", null)
+          .gte("date", fromYMD)
+          .lt("date", toYMD);
+        if (filters.billing_id) q = q.eq("billing_id", filters.billing_id);
+        else if (billingIds) q = q.in("billing_id", billingIds);
+        return q;
+      },
+      `${SCOPE}.listReceiptsInRange.byDate`
+    );
+    if (!byBusinessDate.success) return byBusinessDate;
+
+    const undated = await runListQuery<JsonRow>(
+      () => {
+        let q = db
+          .from("hh_receipts")
+          .select("id, billing_id, amount, method, date, created_at, deleted_at")
+          .is("deleted_at", null)
+          .or("date.is.null,date.eq.")
           .gte("created_at", fromISO)
           .lt("created_at", toISO);
         if (filters.billing_id) q = q.eq("billing_id", filters.billing_id);
+        else if (billingIds) q = q.in("billing_id", billingIds);
         return q;
       },
-      `${SCOPE}.listReceiptsInRange`
+      `${SCOPE}.listReceiptsInRange.undated`
+    );
+    if (!undated.success) return undated;
+
+    const seen = new Set<string>();
+    const merged: JsonRow[] = [];
+    for (const row of [...(byBusinessDate.data || []), ...(undated.data || [])]) {
+      const id = String(row.id || "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      merged.push(row);
+    }
+    return { success: true, data: merged };
+  },
+
+  listBillingsByPatient(patientId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () => db.from("hh_billings").select("id").eq("patient_id", patientId),
+      `${SCOPE}.listBillingsByPatient`
     );
   },
 
@@ -312,25 +377,53 @@ export const reportRepository = {
   // Attendance
   // ───────────────────────────────────────────────────────────────────
 
-  listAttendanceInRange(
+  async listAttendanceInRange(
     startISO: string,
     endISO: string,
     filters: { employee_id?: string } = {},
     opts?: DbAccess
   ): Promise<ApiResult<JsonRow[]>> {
     const db = resolveClient(opts);
-    return runListQuery<JsonRow>(
+    const timed = await runListQuery<JsonRow>(
       () => {
         let q = db
           .from("hh_attendance")
-          .select("employee_id, status, hours, check_in_at")
+          .select("id, employee_id, status, hours, check_in_at, work_date")
           .gte("check_in_at", startISO)
           .lt("check_in_at", endISO);
         if (filters.employee_id) q = q.eq("employee_id", filters.employee_id);
         return q;
       },
-      `${SCOPE}.listAttendanceInRange`
+      `${SCOPE}.listAttendanceInRange.timed`
     );
+    if (!timed.success) return timed;
+
+    const fromKey = startISO.slice(0, 10);
+    const toKey = endISO.slice(0, 10);
+    const noTime = await runListQuery<JsonRow>(
+      () => {
+        let q = db
+          .from("hh_attendance")
+          .select("id, employee_id, status, hours, check_in_at, work_date")
+          .gte("work_date", fromKey)
+          .lt("work_date", toKey);
+        if (filters.employee_id) q = q.eq("employee_id", filters.employee_id);
+        return q;
+      },
+      `${SCOPE}.listAttendanceInRange.noTime`
+    );
+    if (!noTime.success) return noTime;
+
+    const seen = new Set<string>();
+    const merged: JsonRow[] = [];
+    for (const row of [...(timed.data || []), ...(noTime.data || [])]) {
+      const id = String(row.id || "");
+      if (!id) continue;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      merged.push(row);
+    }
+    return { success: true, data: merged };
   }
 };
 

@@ -1,5 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
+import { requireRole } from "@/lib/api/auth";
+import { BILLING_READ_ROLES } from "@/lib/api/billingRoles";
 import { billingService } from "@/services/billingService";
 import { respond } from "@/lib/api/apiResultBridge";
 import { ErrorCodes, type ApiResult } from "@/types/common";
@@ -15,6 +17,7 @@ export const dynamic = "force-dynamic";
  * value on the invoice screen byte-for-byte.
  */
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
+  requireRole(actor, [...BILLING_READ_ROLES]);
   const period = new URL(req.url).searchParams.get("period") || "";
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
     const result: ApiResult<never> = {

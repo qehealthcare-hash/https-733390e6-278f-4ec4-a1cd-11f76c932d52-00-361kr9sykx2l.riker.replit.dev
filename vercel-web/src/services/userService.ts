@@ -32,6 +32,7 @@ import {
   type UserCreateInput,
   type UserPatchInput
 } from "@/validation/userValidation";
+import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 
 const USER_FIELDS = ["username", "email", "phone", "role", "is_active"] as const;
 
@@ -84,7 +85,7 @@ export const userService = {
     return success(result.data);
   },
 
-  async createUser(input: unknown, _ctx: ServiceContext): Promise<ApiResult<JsonRow>> {
+  async createUser(input: unknown, ctx: ServiceContext): Promise<ApiResult<JsonRow>> {
     const parsed = userCreateSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
     const payload = buildUserPayload(parsed.data);
@@ -118,13 +119,20 @@ export const userService = {
     const inserted = await userRepository.insert(row);
     if (!inserted.success) return passFailure(inserted);
     if (!inserted.data) return failure("Failed to create user", ErrorCodes.internal);
-    return success(inserted.data);
+    const audit = await writeMutationAudit(undefined, ctx.actor, {
+      module: "users",
+      entity_id: String(inserted.data.id ?? row.id),
+      action: "create",
+      after: inserted.data,
+      stamp: `Created user ${row.id}`
+    });
+    return finalizeWithAudit(audit, inserted.data);
   },
 
   async updateUser(
     id: string,
     input: unknown,
-    _ctx: ServiceContext
+    ctx: ServiceContext
   ): Promise<ApiResult<JsonRow>> {
     const parsed = userPatchSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
@@ -132,20 +140,38 @@ export const userService = {
     if (Object.keys(payload).length === 0) {
       return failure("No editable fields supplied", ErrorCodes.badRequest);
     }
+    const before = await userRepository.findById(id);
     const updated = await userRepository.update(id, payload);
     if (!updated.success) return passFailure(updated);
     if (!updated.data) return notFoundFailure("User", id);
-    return success(updated.data);
+    const audit = await writeMutationAudit(undefined, ctx.actor, {
+      module: "users",
+      entity_id: id,
+      action: "update",
+      before: before.success ? before.data ?? null : null,
+      after: updated.data,
+      stamp: `Updated user ${id}`
+    });
+    return finalizeWithAudit(audit, updated.data);
   },
 
   async deactivateUser(
     id: string,
-    _ctx: ServiceContext
+    ctx: ServiceContext
   ): Promise<ApiResult<{ id: string; deactivated: true }>> {
+    const before = await userRepository.findById(id);
     const updated = await userRepository.update(id, { is_active: false });
     if (!updated.success) return passFailure(updated);
     if (!updated.data) return notFoundFailure("User", id);
-    return success({ id, deactivated: true });
+    const audit = await writeMutationAudit(undefined, ctx.actor, {
+      module: "users",
+      entity_id: id,
+      action: "deactivate",
+      before: before.success ? before.data ?? null : null,
+      after: updated.data,
+      stamp: `Deactivated user ${id}`
+    });
+    return finalizeWithAudit(audit, { id, deactivated: true as const });
   },
 
   /* --------------------------------- Roles -------------------------------- */
@@ -166,7 +192,7 @@ export const userService = {
     return success(result.data);
   },
 
-  async createRole(input: unknown, _ctx: ServiceContext): Promise<ApiResult<JsonRow>> {
+  async createRole(input: unknown, ctx: ServiceContext): Promise<ApiResult<JsonRow>> {
     const parsed = roleCreateSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
 
@@ -188,13 +214,20 @@ export const userService = {
     const inserted = await roleRepository.insert(row);
     if (!inserted.success) return passFailure(inserted);
     if (!inserted.data) return failure("Failed to create role", ErrorCodes.internal);
-    return success(inserted.data);
+    const audit = await writeMutationAudit(undefined, ctx.actor, {
+      module: "roles",
+      entity_id: String(inserted.data.id ?? row.id),
+      action: "create",
+      after: inserted.data,
+      stamp: `Created role ${row.name}`
+    });
+    return finalizeWithAudit(audit, inserted.data);
   },
 
   async updateRole(
     id: string,
     input: unknown,
-    _ctx: ServiceContext
+    ctx: ServiceContext
   ): Promise<ApiResult<JsonRow>> {
     const parsed = rolePatchSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
@@ -204,15 +237,24 @@ export const userService = {
     if (Object.keys(payload).length === 0) {
       return failure("No editable fields supplied", ErrorCodes.badRequest);
     }
+    const before = await roleRepository.findById(id);
     const updated = await roleRepository.update(id, payload);
     if (!updated.success) return passFailure(updated);
     if (!updated.data) return notFoundFailure("Role", id);
-    return success(updated.data);
+    const audit = await writeMutationAudit(undefined, ctx.actor, {
+      module: "roles",
+      entity_id: id,
+      action: "update",
+      before: before.success ? before.data ?? null : null,
+      after: updated.data,
+      stamp: `Updated role ${id}`
+    });
+    return finalizeWithAudit(audit, updated.data);
   },
 
   async deleteRole(
     id: string,
-    _ctx: ServiceContext
+    ctx: ServiceContext
   ): Promise<ApiResult<{ id: string; deleted: true }>> {
     const inUse = await roleRepository.countUsersForRole(id);
     if (!inUse.success) return passFailure(inUse);
@@ -223,8 +265,16 @@ export const userService = {
         { id, in_use: inUse.data }
       );
     }
+    const before = await roleRepository.findById(id);
     const removed = await roleRepository.remove(id);
     if (!removed.success) return passFailure(removed);
-    return success({ id, deleted: true });
+    const audit = await writeMutationAudit(undefined, ctx.actor, {
+      module: "roles",
+      entity_id: id,
+      action: "delete",
+      before: before.success ? before.data ?? null : null,
+      stamp: `Deleted role ${id}`
+    });
+    return finalizeWithAudit(audit, { id, deleted: true as const });
   }
 };

@@ -7,6 +7,7 @@ import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 function emptyForm() {
   return {
@@ -24,6 +25,7 @@ function emptyForm() {
 
 export default function VendorsPage() {
   var auth = useAuth();
+  var confirm = useConfirm();
   var [rows, setRows] = useState([]);
   var [loading, setLoading] = useState(true);
   var [search, setSearch] = useState("");
@@ -139,7 +141,13 @@ export default function VendorsPage() {
   }
 
   async function handleDelete(id) {
-    if (!window.confirm("Delete this vendor?")) return;
+    var ok = await confirm({
+      title: "Delete this vendor?",
+      description: "The vendor record will be removed.",
+      confirmLabel: "Delete",
+      tone: "danger"
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {

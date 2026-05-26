@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { isProduction } from "./security";
 
 export class ApiError extends Error {
   status: number;
@@ -59,8 +60,12 @@ export function jsonError(err: unknown) {
       { status: err.status }
     );
   }
-  const message = err instanceof Error ? err.message : "Internal server error";
   console.error("[api] unhandled", err);
+  const message = isProduction()
+    ? "Internal server error"
+    : err instanceof Error
+      ? err.message
+      : "Internal server error";
   return NextResponse.json(
     { success: false, error: message, code: "internal_error" },
     { status: 500 }

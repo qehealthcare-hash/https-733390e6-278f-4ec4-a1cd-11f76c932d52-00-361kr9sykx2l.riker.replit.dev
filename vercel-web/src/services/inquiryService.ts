@@ -42,9 +42,11 @@ import {
   inquiryConvertPatch,
   inquiryStatusPatch,
   inquiryToApi,
+  inquiryToPatientPatch,
   inquiryToRow,
   isConvertedInquiry
 } from "@/business/inquiryRules";
+import { patientRepository } from "@/database/patientRepository";
 import { assertNotStale } from "@/business/concurrencyRules";
 import { newId } from "@/business/idRules";
 import { inquiryRepository } from "@/database/inquiryRepository";
@@ -299,6 +301,17 @@ export const inquiryService = {
 
     const stale = assertNotStale("Inquiry", existing.data.updated_at, input.expected_updated_at);
     if (!stale.success) return passFailure(stale);
+
+    // Status transitions must use POST /inquiries/:id/status so canTransition
+    // + reason capture + reopen rules are always enforced.
+    const existingStatus = String(existing.data.status || "New");
+    if (input.status && input.status !== existingStatus) {
+      return failure(
+        `Use the Change Status action to change inquiry status (current: ${existingStatus})`,
+        ErrorCodes.business,
+        { current: existingStatus, requested: input.status }
+      );
+    }
 
     // Phone change → re-run the active-duplicate guard, excluding this id.
     const prevPhone = (existing.data.phone as string | null) || "";
@@ -596,6 +609,17 @@ export const inquiryService = {
         ErrorCodes.internal,
         { rpc: rpc.data }
       );
+    }
+
+    const patientPatch = inquiryToPatientPatch(existing.data);
+    if (Object.keys(patientPatch).length > 0) {
+      const stamped = {
+        ...patientPatch,
+        updated_by: ctx.actor.email,
+        updated_at: new Date().toISOString()
+      };
+      const patched = await patientRepository.update(String(patientId), stamped, access);
+      if (!patched.success) return passFailure(patched);
     }
 
     // Apply optional notes patch on top of the RPC's status flip.

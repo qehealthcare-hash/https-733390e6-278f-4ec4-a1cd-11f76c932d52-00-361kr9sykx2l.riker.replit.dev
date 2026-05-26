@@ -5,7 +5,8 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useRealtimeResource } from "@/hooks/use-realtime-resource";
+import { usePaginatedResource } from "@/hooks/use-paginated-resource";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import {
@@ -18,7 +19,7 @@ import {
 } from "@/lib/crm-options";
 import { formatCurrency, formatDate, slugToText } from "@/lib/formatters";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
-import { CameraCaptureModal } from "@/components/ui/camera-capture";
+import { CameraCaptureModal } from "@/components/ui/camera-capture-lazy";
 import { DocumentCard, DocumentList } from "@/components/ui/document-card";
 import { openPrintWindow } from "@/lib/print";
 
@@ -214,8 +215,6 @@ export default function EmployeesPage() {
   var canManage = isAdmin || ["MANAGER"].includes(String(auth.profile?.role || "").trim().toUpperCase());
   var [search, setSearch] = useState("");
   var [debouncedSearch, setDebouncedSearch] = useState("");
-  var [pageSize, setPageSize] = useState(500);
-
   useEffect(
     function () {
       var handle = setTimeout(function () {
@@ -226,20 +225,6 @@ export default function EmployeesPage() {
     [search]
   );
 
-  var apiPath = useMemo(
-    function () {
-      var params = ["limit=" + pageSize];
-      if (debouncedSearch) params.push("q=" + encodeURIComponent(debouncedSearch));
-      return "/employees?" + params.join("&");
-    },
-    [debouncedSearch, pageSize]
-  );
-
-  var resource = useRealtimeResource({
-    apiPath: apiPath,
-    table: "hh_employees",
-    channel: "employees"
-  });
   var [form, setForm] = useState(createInitialForm());
   var [busy, setBusy] = useState(false);
   var [roleFilter, setRoleFilter] = useState("");
@@ -264,6 +249,26 @@ export default function EmployeesPage() {
   var [historyData, setHistoryData] = useState(null);
   var [historyLoading, setHistoryLoading] = useState(false);
   var [historyError, setHistoryError] = useState("");
+
+  var listQuery = useMemo(
+    function () {
+      return {
+        q: debouncedSearch || undefined,
+        status: statusFilter || undefined,
+        dept: deptFilter || undefined
+      };
+    },
+    [debouncedSearch, statusFilter, deptFilter]
+  );
+
+  var resource = usePaginatedResource({
+    basePath: "/employees",
+    table: "hh_employees",
+    channel: "employees",
+    queryParams: listQuery,
+    resetKey: debouncedSearch + "|" + statusFilter + "|" + deptFilter,
+    pageSize: 50
+  });
 
   async function openHistory(row) {
     var name = (row.full_name || row.name || ((row.fn || "") + " " + (row.ln || ""))).trim() || row.id;
@@ -300,10 +305,9 @@ export default function EmployeesPage() {
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
-        var matchesSearch = !search || hay.indexOf(search.toLowerCase()) >= 0;
         var matchesRole = !roleFilter || (row.role || row.desig) === roleFilter;
-        var matchesStatus = !statusFilter || row.status === statusFilter;
-        var matchesDept = !deptFilter || (row.dept || row.department) === deptFilter;
+        var matchesStatus = true;
+        var matchesDept = true;
         var matchesType = !typeFilter || (row.emp_type || row.etype || row.employee_type) === typeFilter;
         var matchesGender = !genderFilter || row.gender === genderFilter;
         var matchesEdu = !eduFilter || (row.education || row.edu) === eduFilter;
@@ -317,7 +321,6 @@ export default function EmployeesPage() {
           else if (scoreFilter === "unset") matchesScore = s == null;
         }
         return (
-          matchesSearch &&
           matchesRole &&
           matchesStatus &&
           matchesDept &&
@@ -329,7 +332,7 @@ export default function EmployeesPage() {
         );
       });
     },
-    [resource.data, search, roleFilter, statusFilter, deptFilter, typeFilter, genderFilter, eduFilter, shiftFilter, scoreFilter]
+    [resource.data, roleFilter, typeFilter, genderFilter, eduFilter, shiftFilter, scoreFilter]
   );
 
   function updateField(name, value) {
@@ -896,6 +899,16 @@ export default function EmployeesPage() {
             title={form.id ? "Edit employee" : "Add employee"}
             description="Full HR profile: personal, ID, address, job, skills, emergency contact, photo and documents."
           >
+            {!canManage ? (
+              <div className="info-text" role="status">
+                You have read-only access. Only Admin/Manager can add or edit employees.
+              </div>
+            ) : null}
+            <fieldset
+              className="stack"
+              style={{ border: 0, padding: 0, margin: 0 }}
+              disabled={!canManage}
+            >
             <form className="stack" onSubmit={handleSubmit}>
               <strong>Personal</strong>
               <div className="grid-3">
@@ -1279,7 +1292,7 @@ export default function EmployeesPage() {
               ) : null}
               {message ? <div className="success-text">{message}</div> : null}
               <div className="button-row">
-                <button className="button primary" type="submit" disabled={busy}>
+                <button className="button primary" type="submit" disabled={busy || !canManage}>
                   {busy ? "Saving..." : form.id ? "Update employee" : "Create employee"}
                 </button>
                 <button className="button secondary" type="button" onClick={resetForm}>
@@ -1287,6 +1300,7 @@ export default function EmployeesPage() {
                 </button>
               </div>
             </form>
+            </fieldset>
           </ModuleShell>
 
           <div className="page-grid">
@@ -1312,18 +1326,6 @@ export default function EmployeesPage() {
                     onChange={function (event) { setSearch(event.target.value); }}
                     placeholder="Name, role, mobile, skills"
                   />
-                </div>
-                <div className="field">
-                  <label>Rows per page</label>
-                  <select
-                    value={String(pageSize)}
-                    onChange={function (event) { setPageSize(parseInt(event.target.value, 10) || 500); }}
-                  >
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                    <option value="200">200</option>
-                    <option value="500">All (up to 500)</option>
-                  </select>
                 </div>
                 <div className="field">
                   <label>Role</label>
@@ -1399,11 +1401,19 @@ export default function EmployeesPage() {
                   </select>
                 </div>
               </div>
+              <PaginationBar
+                page={resource.page}
+                pageSize={resource.pageSize}
+                total={resource.total}
+                onPageChange={resource.setPage}
+                onPageSizeChange={resource.setPageSize}
+              />
               <div className="mini-muted" style={{ margin: "0.25rem 0 0.75rem" }}>
-                {debouncedSearch
-                  ? "Server search: \"" + debouncedSearch + "\" — "
+                {debouncedSearch ? "Search: \"" + debouncedSearch + "\" — " : ""}
+                {resource.total} employee{resource.total === 1 ? "" : "s"} total
+                {roleFilter || typeFilter || genderFilter || eduFilter || shiftFilter || scoreFilter
+                  ? " · extra filters apply to this page only"
                   : ""}
-                Showing {filtered.length} of {resource.data.length} loaded
                 {resource.loading ? " (loading...)" : ""}
               </div>
               {!filtered.length ? (
@@ -1418,6 +1428,7 @@ export default function EmployeesPage() {
               ) : (
                 <div className="record-list">
                   {filtered.map(function (row, index) {
+                    var rowNum = (resource.page - 1) * resource.pageSize + index + 1;
                     var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
                     var isActive = row.status ? row.status === "Active" : row.active !== false;
                     var score = rowScoreTotal(row);

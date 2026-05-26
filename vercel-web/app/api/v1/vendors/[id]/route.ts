@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { DIRECTORY_READ_ROLES } from "@/lib/api/crmRoles";
 import { toServiceContext } from "@/lib/api/serviceContext";
 import { respond } from "@/lib/api/apiResultBridge";
 import { vendorService } from "@/services/vendorService";
@@ -11,6 +12,7 @@ export const dynamic = "force-dynamic";
 type Params = { id: string };
 
 export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
+  requireRole(actor, [...DIRECTORY_READ_ROLES]);
   const result = await vendorService.get(params.id, toServiceContext(actor));
   return respond(result);
 });

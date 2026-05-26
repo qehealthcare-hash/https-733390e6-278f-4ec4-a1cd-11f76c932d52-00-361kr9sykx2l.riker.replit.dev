@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
  * through `employeeService.syncLegacy` (audited, RLS-scoped).
  */
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff"]);
+  requireRole(actor, ["Admin", "Manager"]);
   return withIdempotency(req, actor, { route: "POST /employees/sync" }, async () => {
     const body = await parseJsonBody(req);
     const result = await employeeService.syncLegacy(body, { actor });

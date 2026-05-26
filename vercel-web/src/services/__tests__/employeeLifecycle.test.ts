@@ -210,6 +210,22 @@ describe("employee lifecycle", () => {
     expect(employees.length).toBe(2);
   });
 
+  it("blocks status change via update PATCH (must use setStatus)", async () => {
+    const created = await employeeService.create(
+      { fn: "Status", ln: "Guard", phone: "9876500009", status: "Active" },
+      { actor: ACTOR }
+    );
+    const id = (created.data as { id: string }).id;
+    const result = await employeeService.update(
+      id,
+      { fn: "Status", ln: "Guard", phone: "9876500009", status: "Inactive" },
+      { actor: ACTOR }
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("business_rule_violation");
+    expect(employees[0].status).toBe("Active");
+  });
+
   it("returns conflict when expected_updated_at is stale", async () => {
     const created = await employeeService.create(
       { fn: "Stale", ln: "Edit", phone: "9876512345", status: "Active" },

@@ -168,11 +168,21 @@ export const inquirySchema = z
 export type InquiryInput = z.infer<typeof inquirySchema>;
 
 /** Stand-alone status change endpoint. */
-export const inquiryStatusSchema = z.object({
-  status: z.enum(INQUIRY_STATUSES),
-  reason: z.string().trim().max(500).optional().default(""),
-  followup_date: followupDateSchema
-});
+export const inquiryStatusSchema = z
+  .object({
+    status: z.enum(INQUIRY_STATUSES),
+    reason: z.string().trim().max(500).optional().default(""),
+    followup_date: followupDateSchema
+  })
+  .superRefine((v, ctx) => {
+    if ((v.status === "FollowUp" || v.status === "Negotiating") && !v.followup_date) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `followup_date is required when status is ${v.status}`,
+        path: ["followup_date"]
+      });
+    }
+  });
 export type InquiryStatusInput = z.infer<typeof inquiryStatusSchema>;
 
 /** Convert payload. Lets the actor force-link to an explicit existing patient. */

@@ -196,6 +196,10 @@ export const patientService = {
         offset: query.offset,
         q: query.q,
         status: query.status,
+        gender: query.gender,
+        area: query.area,
+        pin: query.pin,
+        shift: query.shift,
         caretaker_id: query.caretaker_id,
         created_from: query.from,
         created_to: query.to
@@ -288,6 +292,17 @@ export const patientService = {
       input.expected_updated_at
     );
     if (!stale.success) return passFailure(stale);
+
+    // Status transitions must go through DELETE (close) or /reopen so the
+    // close-reason / audit-stamp workflow is always invoked.
+    const existingStatus = String(existing.data.status || "Active");
+    if (input.status && input.status !== existingStatus) {
+      return failure(
+        `Use the close or reopen action to change patient status (current: ${existingStatus})`,
+        ErrorCodes.business,
+        { current: existingStatus, requested: input.status }
+      );
+    }
 
     const prevPhone = String(existing.data.phone || "");
     if (input.phone && input.phone !== prevPhone) {

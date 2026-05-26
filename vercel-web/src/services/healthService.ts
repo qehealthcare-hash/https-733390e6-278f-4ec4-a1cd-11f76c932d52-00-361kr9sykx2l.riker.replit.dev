@@ -5,6 +5,7 @@
 
 import type { ApiResult } from "@/types/common";
 import { hasOpenAI, hasWhatsApp } from "@/lib/api/env";
+import { isProduction } from "@/lib/api/security";
 import { healthRepository } from "@/database/healthRepository";
 
 export interface HealthSnapshot {
@@ -23,8 +24,14 @@ export const healthService = {
     const probe = await healthRepository.probeSupabase();
     const supabase =
       probe.success && probe.data
-        ? { ok: probe.data.ok, error: probe.data.error ?? null }
-        : { ok: false, error: probe.success ? null : probe.error || null };
+        ? {
+            ok: probe.data.ok,
+            error: isProduction() ? (probe.data.ok ? null : "unavailable") : probe.data.error ?? null
+          }
+        : {
+            ok: false,
+            error: isProduction() ? "unavailable" : probe.success ? null : probe.error || null
+          };
     return {
       success: true,
       data: {

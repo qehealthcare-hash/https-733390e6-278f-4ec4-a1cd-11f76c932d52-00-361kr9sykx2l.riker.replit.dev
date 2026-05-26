@@ -21,6 +21,10 @@ const SCOPE = "patientRepository";
 export interface PatientListFilters extends ListQuery {
   q?: string;
   status?: string;
+  gender?: string;
+  area?: string;
+  pin?: string;
+  shift?: string;
   caretaker_id?: string;
   /** Inclusive YYYY-MM-DD created_at bounds (Reports period scoping). */
   created_from?: string;
@@ -45,6 +49,16 @@ export const patientRepository = {
       (q) => {
         let query = q;
         if (filters.status) query = query.eq("status", filters.status);
+        if (filters.gender) query = query.eq("gender", filters.gender);
+        if (filters.shift) query = query.eq("shift", filters.shift);
+        if (filters.area) {
+          const area = filters.area.replace(/%/g, "");
+          query = query.ilike("area", `%${area}%`);
+        }
+        if (filters.pin) {
+          const pin = filters.pin.replace(/%/g, "");
+          query = query.ilike("pin", `%${pin}%`);
+        }
         if (filters.caretaker_id) query = query.eq("caretaker_id", filters.caretaker_id);
         if (filters.created_from) query = query.gte("created_at", filters.created_from);
         if (filters.created_to) {

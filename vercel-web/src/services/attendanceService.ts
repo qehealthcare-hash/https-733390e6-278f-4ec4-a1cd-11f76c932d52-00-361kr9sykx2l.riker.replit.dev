@@ -468,14 +468,26 @@ export const attendanceService = {
   },
 
   /** Quick toggles surfaced by the legacy UI ("Mark Present", "Mark Absent"). */
-  markPresent(
+  async markPresent(
     rawInput: unknown,
     ctx: AttendanceServiceContext
   ): Promise<ApiResult<AttendanceApiRow>> {
-    return attendanceService.mark(
-      { ...(rawInput as object), status: "PRESENT" },
+    const input = rawInput as Record<string, unknown>;
+    const marked = await attendanceService.mark(
+      { ...input, status: "PRESENT" },
       ctx
     );
+    if (!marked.success) return marked;
+    const dutyId = String(input.duty_id || "");
+    if (dutyId) {
+      const checkIn =
+        String(input.check_in_at || "") ||
+        String((marked.data as { check_in_at?: string })?.check_in_at || "");
+      if (checkIn) {
+        await syncScheduledDutyCheckIn(dutyId, checkIn, ctx);
+      }
+    }
+    return marked;
   },
 
   markAbsent(
@@ -1448,11 +1460,11 @@ export const attendanceService = {
 
   /**
    * Day-board quick mark. Wraps `mark` but:
-   *   - Synthesises check_in_at = `${date}T09:00:00.000Z` when not provided
-   *     and the status needs a clock-in.
-   *   - When `sync_duty: true` (the default for duty-backed marks) and the
-   *     associated duty is still SCHEDULED, also flips the duty to
-   *     IN_PROGRESS via `dutyService.checkIn` so the calendar stays in sync.
+   *   - Synthesises check_in_at at 09:00 IST when not provided and the status
+   *     needs a clock-in (same default as the attendance UI).
+   *   - When `sync_duty: true` (default) and the duty is still SCHEDULED,
+   *     flips the duty to IN_PROGRESS via `dutyService.checkIn` for
+   *     PRESENT / LATE / HALF_DAY so day-board marks match duty check-in.
    */
   async dayMark(
     rawInput: unknown,
@@ -1473,31 +1485,38 @@ export const attendanceService = {
       shift_type: input.shift_type || undefined,
       notes: input.notes ?? ""
     };
+    const defaultCheckIn = `${date}T09:00:00.000+05:30`;
     if (!noTime) {
-      payload.check_in_at = input.check_in_at || `${date}T09:00:00.000+05:30`;
+      payload.check_in_at = input.check_in_at || defaultCheckIn;
       if (input.check_out_at) payload.check_out_at = input.check_out_at;
     }
 
     const marked = await attendanceService.mark(payload, ctx);
     if (!marked.success) return marked;
 
-    if (input.sync_duty !== false && input.duty_id && status === "PRESENT") {
-      // Only advance SCHEDULED → IN_PROGRESS; never re-touch a COMPLETED duty.
-      const duty = await dutyRepository.findById(input.duty_id, dbAccess(ctx));
-      if (duty.success && duty.data) {
-        const dutyStatus = String(duty.data.status || "").toUpperCase();
-        if (dutyStatus === "SCHEDULED") {
-          // Use the attendance's check-in time so the duty's first
-          // check-in audit reflects the operator's intent.
-          const checkIn = String(payload.check_in_at || `${date}T09:00:00.000+05:30`);
-          await dutyService
-            .checkIn(input.duty_id, checkIn, ctx as { actor: ActorLike })
-            .catch((err) => {
-              console.error("[attendanceService.dayMark] duty check-in sync failed", err);
-            });
-        }
-      }
+    const syncDutyStatuses = new Set(["PRESENT", "LATE", "HALF_DAY"]);
+    if (input.sync_duty !== false && input.duty_id && syncDutyStatuses.has(status)) {
+      await syncScheduledDutyCheckIn(
+        input.duty_id,
+        String(payload.check_in_at || defaultCheckIn),
+        ctx
+      );
     }
     return marked;
   }
 };
+
+/** Advance a SCHEDULED duty to IN_PROGRESS when attendance is marked on the board. */
+async function syncScheduledDutyCheckIn(
+  dutyId: string,
+  checkInAt: string,
+  ctx: AttendanceServiceContext
+): Promise<void> {
+  const duty = await dutyRepository.findById(dutyId, dbAccess(ctx));
+  if (!duty.success || !duty.data) return;
+  const dutyStatus = String(duty.data.status || "").toUpperCase();
+  if (dutyStatus !== "SCHEDULED") return;
+  await dutyService.checkIn(dutyId, checkInAt, ctx as { actor: ActorLike }).catch((err) => {
+    console.error("[attendanceService] duty check-in sync failed", err);
+  });
+}

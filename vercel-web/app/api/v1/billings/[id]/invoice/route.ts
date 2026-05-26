@@ -1,3 +1,5 @@
+import { requireRole } from "@/lib/api/auth";
+import { BILLING_READ_ROLES } from "@/lib/api/billingRoles";
 import { withAuth } from "@/lib/api/handler";
 import { billingService } from "@/services/billingService";
 import { respond } from "@/lib/api/apiResultBridge";
@@ -15,6 +17,7 @@ type Params = { id: string };
  * totals come from the server so dashboards and printouts match.
  */
 export const GET = withAuth<Params>(async (_req, { params, actor }) => {
+  requireRole(actor, [...BILLING_READ_ROLES]);
   const result = await billingService.invoicePayload(params.id, { actor });
   return respond(result);
 });

@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
  * Insert when the row id is missing/new; update otherwise.
  */
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff", "Executive"]);
+  requireRole(actor, ["Admin", "Manager"]);
   return withIdempotency(req, actor, { route: "POST /patients/sync" }, async () => {
     const body = await parseJsonBody(req);
     const result = await patientService.syncLegacy(body, { actor });

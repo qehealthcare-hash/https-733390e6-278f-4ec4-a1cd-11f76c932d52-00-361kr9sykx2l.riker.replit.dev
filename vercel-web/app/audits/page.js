@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -13,32 +14,56 @@ import { downloadCsv } from "@/lib/csv";
 export default function AuditsPage() {
   var auth = useAuth();
   var [rows, setRows] = useState([]);
+  var [total, setTotal] = useState(0);
+  var [page, setPage] = useState(1);
+  var [pageSize, setPageSize] = useState(50);
   var [loading, setLoading] = useState(true);
   var [error, setError] = useState("");
   var [moduleFilter, setModuleFilter] = useState("");
   var [entityFilter, setEntityFilter] = useState("");
 
-  useEffect(
+  var loadAudits = useCallback(
     function () {
       if (!auth.session?.access_token) return;
-      var path = "/audits?limit=200";
+      var offset = (page - 1) * pageSize;
+      var path =
+        "/audits?limit=" +
+        pageSize +
+        "&offset=" +
+        offset;
       if (moduleFilter) path += "&module=" + encodeURIComponent(moduleFilter);
       if (entityFilter) path += "&entity_id=" + encodeURIComponent(entityFilter);
       setLoading(true);
       request(path, null, auth.session)
         .then(function (data) {
           setRows((data && data.rows) || []);
+          setTotal(typeof data?.total === "number" ? data.total : (data?.rows || []).length);
           setError("");
         })
         .catch(function (err) {
           setError(err.message || "Unable to load audit log");
           setRows([]);
+          setTotal(0);
         })
         .finally(function () {
           setLoading(false);
         });
     },
-    [auth.session, moduleFilter, entityFilter]
+    [auth.session, moduleFilter, entityFilter, page, pageSize]
+  );
+
+  useEffect(
+    function () {
+      setPage(1);
+    },
+    [moduleFilter, entityFilter, pageSize]
+  );
+
+  useEffect(
+    function () {
+      loadAudits();
+    },
+    [loadAudits]
   );
 
   var modules = useMemo(
@@ -115,6 +140,16 @@ export default function AuditsPage() {
               </div>
             </div>
             {error ? <div className="error-text">{error}</div> : null}
+            <PaginationBar
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              onPageChange={setPage}
+              onPageSizeChange={function (next) {
+                setPageSize(next);
+                setPage(1);
+              }}
+            />
             {!rows.length ? (
               <EmptyState
                 title={loading ? "Loading audit entries…" : "No audit entries"}

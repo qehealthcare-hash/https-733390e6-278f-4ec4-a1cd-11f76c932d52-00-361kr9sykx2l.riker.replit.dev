@@ -79,6 +79,16 @@ export const billingRepository = {
     );
   },
 
+  listBillingsByIds(ids: string[], opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const unique = Array.from(new Set((ids || []).filter(Boolean)));
+    if (!unique.length) return Promise.resolve({ success: true, data: [] });
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () => db.from(BILLINGS).select("*").in("id", unique).order("created_at", { ascending: false }),
+      `${SCOPE}.listBillingsByIds`
+    );
+  },
+
   listBillingsByPatient(patientId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
     return listAll(BILLINGS, SCOPE, (q) => q.eq("patient_id", patientId), {
       ...opts,
@@ -144,15 +154,20 @@ export const billingRepository = {
   },
 
   listReceiptsByBilling(billingId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
-    return listAll(RECEIPTS, SCOPE, (q) => q.eq("billing_id", billingId), {
+    return listAll(
+      RECEIPTS,
+      SCOPE,
+      (q) => q.eq("billing_id", billingId).is("deleted_at", null),
+      {
       ...opts,
       orderBy: "date",
       ascending: true
-    });
+    }
+    );
   },
 
   listAllReceipts(opts?: DbAccess & { orderBy?: string }): Promise<ApiResult<JsonRow[]>> {
-    return listAll(RECEIPTS, SCOPE, (q) => q, {
+    return listAll(RECEIPTS, SCOPE, (q) => q.is("deleted_at", null), {
       ...opts,
       orderBy: opts?.orderBy ?? "date",
       ascending: false

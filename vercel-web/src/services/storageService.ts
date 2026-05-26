@@ -21,6 +21,7 @@ import {
   type SignedDownloadUrl,
   type SignedUploadUrl
 } from "@/database/storageRepository";
+import { hasBlockedUploadExtension } from "@/lib/api/security";
 
 const ALLOWED_BUCKETS = new Set([
   "patient-documents",
@@ -88,11 +89,18 @@ function isSafeObjectPath(path: string): boolean {
 export const storageService = {
   async createSignedUpload(
     input: unknown,
-    _ctx: ServiceContext
+    ctx: ServiceContext
   ): Promise<ApiResult<SignedUploadUrl>> {
+    const role = ctx.actor.role || "";
+    if (!READ_ROLES.has(role)) {
+      return failure("Role not allowed to upload documents", ErrorCodes.forbidden);
+    }
     const parsed = uploadSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
     const { bucket, fileName } = parsed.data;
+    if (hasBlockedUploadExtension(fileName)) {
+      return failure("File type is not allowed for upload", ErrorCodes.badRequest);
+    }
     if (!ALLOWED_BUCKETS.has(bucket)) {
       return failure(`Bucket '${bucket}' is not allowed for uploads`, ErrorCodes.badRequest);
     }

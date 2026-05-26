@@ -13,7 +13,19 @@ export function AuthGuard({ children, permission }) {
     function () {
       if (!auth.loading && !auth.session) {
         router.replace("/login");
-      } else if (!auth.loading && auth.session && auth.profile && permission && !hasPermission(auth.profile?.role, permission)) {
+        return;
+      }
+      if (!auth.loading && auth.session && !auth.profile) {
+        router.replace("/login");
+        return;
+      }
+      if (
+        !auth.loading &&
+        auth.session &&
+        auth.profile &&
+        permission &&
+        !hasPermission(auth.profile?.role, permission, auth.profile?.permissions)
+      ) {
         router.replace("/dashboard");
       }
     },
@@ -21,11 +33,26 @@ export function AuthGuard({ children, permission }) {
   );
 
   if (auth.loading) {
-    return <div className="login-wrap"><div className="panel login-card">Loading CRM...</div></div>;
+    return (
+      <div className="login-wrap" role="status" aria-live="polite">
+        <div className="panel login-card">
+          <span className="sr-only">Loading CRM…</span>
+          <span aria-hidden="true">Loading CRM…</span>
+        </div>
+      </div>
+    );
   }
 
   if (!auth.session) return null;
-  if (permission && auth.profile && !hasPermission(auth.profile?.role, permission)) return null;
+  if (auth.session && !auth.profile) return null;
+
+  if (
+    permission &&
+    auth.profile &&
+    !hasPermission(auth.profile?.role, permission, auth.profile?.permissions)
+  ) {
+    return null;
+  }
 
   return children;
 }

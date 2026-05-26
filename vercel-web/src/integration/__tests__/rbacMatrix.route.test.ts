@@ -100,9 +100,8 @@ const CASES: Case[] = [
     call:
       () => async () =>
         PatientsGet(makeRequest("GET", "/api/v1/patients"), ctx({})),
-    allow: [ACTORS.admin, ACTORS.manager, ACTORS.staff, ACTORS.accountant, ACTORS.nurse, ACTORS.viewer],
-    // GET /patients has no role guard — only auth required.
-    deny: []
+    allow: [ACTORS.admin, ACTORS.manager, ACTORS.staff, ACTORS.accountant, ACTORS.nurse],
+    deny: [ACTORS.viewer]
   },
   {
     route: "POST /patients",

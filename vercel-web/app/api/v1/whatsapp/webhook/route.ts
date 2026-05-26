@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "@/lib/api/env";
 import { respond } from "@/lib/api/apiResultBridge";
+import { enforceRateLimit, timingSafeEqualString } from "@/lib/api/security";
 import { whatsappService } from "@/services/whatsappService";
 
 export const runtime = "nodejs";
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
     mode === "subscribe" &&
     token &&
     env.whatsappVerifyToken &&
-    token === env.whatsappVerifyToken
+    timingSafeEqualString(token, env.whatsappVerifyToken)
   ) {
     return new NextResponse(challenge || "", { status: 200 });
   }
@@ -52,10 +53,18 @@ function verifySignature(rawBody: string, headerSignature: string | null): boole
  * Successful processing uses the canonical envelope via `respond()`.
  */
 export async function POST(req: NextRequest) {
+  if (!env.whatsappAppSecret) {
+    return new NextResponse("webhook not configured", { status: 503 });
+  }
+  try {
+    enforceRateLimit(req, "whatsapp-webhook", 120, 60_000);
+  } catch {
+    return new NextResponse("too many requests", { status: 429 });
+  }
   const raw = await req.text();
   const signature = req.headers.get("x-hub-signature-256");
   const verified = verifySignature(raw, signature);
-  if (!verified && env.whatsappAppSecret) {
+  if (!verified) {
     return new NextResponse("invalid signature", { status: 401 });
   }
   let payload: unknown = null;

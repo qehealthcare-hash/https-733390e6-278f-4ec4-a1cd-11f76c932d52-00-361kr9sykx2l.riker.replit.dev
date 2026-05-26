@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildDashboardKpis, buildProfitLoss } from "@/business/reportRules";
+import {
+  buildBillingTotals,
+  buildDashboardKpis,
+  buildPayoutTotals,
+  buildProfitLoss,
+  receiptInYmdRange
+} from "@/business/reportRules";
 
 describe("reportRules — test matrix", () => {
   it("buildDashboardKpis matches service, receipt, and payout math", () => {
@@ -59,5 +65,58 @@ describe("reportRules — test matrix", () => {
     expect(pl.payouts_pending).toBe(300);
     expect(pl.net_profit).toBe(400);
     expect(pl.net_profit_after_pending_payouts).toBe(100);
+  });
+
+  it("buildBillingTotals counts billings with period activity only", () => {
+    const report = buildBillingTotals(
+      "2026-05",
+      { from: "2026-05-01T00:00:00.000Z", to: "2026-06-01T00:00:00.000Z" },
+      {
+        billings: [
+          { id: "b1", status: "Active" },
+          { id: "b2", status: "Closed" }
+        ],
+        services: [{ billing_id: "b1", total: 500 }],
+        receipts: [{ billing_id: "b2", amount: 200 }]
+      }
+    );
+    expect(report.billings_count).toBe(2);
+    expect(report.service_total).toBe(500);
+    expect(report.collected).toBe(200);
+    expect(report.byStatus.Active?.count).toBe(1);
+    expect(report.byStatus.Closed?.count).toBe(1);
+  });
+
+  it("buildPayoutTotals includes partner charge ledger in pending", () => {
+    const totals = buildPayoutTotals(
+      "2026-05",
+      { from: "2026-05-01T00:00:00.000Z", to: "2026-06-01T00:00:00.000Z" },
+      [{ net_amount: 500, gross_amount: 600, status: "OPEN" }],
+      [{ amount: 75 }]
+    );
+    expect(totals.net).toBe(500);
+    expect(totals.pending).toBe(575);
+    expect(totals.partner_charge_ledger).toBe(75);
+  });
+
+  it("receiptInYmdRange prefers business date over created_at", () => {
+    expect(
+      receiptInYmdRange(
+        { date: "2026-04-30", created_at: "2026-05-15T10:00:00.000Z" },
+        "2026-05-01",
+        "2026-06-01",
+        "2026-05-01T00:00:00.000Z",
+        "2026-06-01T00:00:00.000Z"
+      )
+    ).toBe(false);
+    expect(
+      receiptInYmdRange(
+        { date: "", created_at: "2026-05-15T10:00:00.000Z" },
+        "2026-05-01",
+        "2026-06-01",
+        "2026-05-01T00:00:00.000Z",
+        "2026-06-01T00:00:00.000Z"
+      )
+    ).toBe(true);
   });
 });

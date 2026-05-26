@@ -7,25 +7,37 @@ import { modules } from "@/lib/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { hasPermission } from "@/lib/permissions";
 
-export function Sidebar() {
+export function Sidebar({ open = false, onNavigate }) {
   const pathname = usePathname();
   const auth = useAuth();
 
+  const navItems = modules.filter(function (item) {
+    if (!item.permission) return Boolean(auth.session);
+    return hasPermission(auth.profile?.role, item.permission, auth.profile?.permissions);
+  });
+
   return (
-    <aside className="crm-sidebar">
+    <aside
+      id="crm-sidebar-nav"
+      className={"crm-sidebar" + (open ? " crm-sidebar-open" : "")}
+      aria-label="Primary navigation"
+    >
       <div className="crm-brand">
         <img src={appConfig.companyLogo} alt={appConfig.companyName + " logo"} className="crm-brand-logo" />
         <div className="crm-logo">{appConfig.companyName}</div>
       </div>
       <div className="crm-tagline">{appConfig.companyTagline}</div>
-      <nav className="crm-nav">
-        {modules.filter(function (item) {
-          if (!item.permission) return Boolean(auth.session);
-          return hasPermission(auth.profile?.role, item.permission);
-        }).map(function (item) {
+      <nav className="crm-nav" aria-label="Modules">
+        {navItems.map(function (item) {
           const active = pathname === item.href;
           return (
-            <Link key={item.href} href={item.href} className={active ? "active" : ""}>
+            <Link
+              key={item.href}
+              href={item.href}
+              className={active ? "active" : ""}
+              aria-current={active ? "page" : undefined}
+              onClick={function () { if (onNavigate) onNavigate(); }}
+            >
               {item.label}
             </Link>
           );

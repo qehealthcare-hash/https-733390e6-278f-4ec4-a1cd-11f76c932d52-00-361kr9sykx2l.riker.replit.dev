@@ -7,6 +7,7 @@ import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 var PERMISSION_MODULES = [
   "dashboard",
@@ -47,6 +48,7 @@ function emptyRoleForm() {
 
 export default function UsersPage() {
   var auth = useAuth();
+  var confirm = useConfirm();
   var [users, setUsers] = useState([]);
   var [roles, setRoles] = useState([]);
   var [userForm, setUserForm] = useState(emptyUserForm());
@@ -151,7 +153,13 @@ export default function UsersPage() {
   }
 
   async function deactivateUser(id) {
-    if (!window.confirm("Deactivate this user? They will lose access immediately.")) return;
+    var ok = await confirm({
+      title: "Deactivate this user?",
+      description: "They will lose access immediately. The account stays in the system for audit history.",
+      confirmLabel: "Deactivate",
+      tone: "danger"
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {
@@ -216,7 +224,13 @@ export default function UsersPage() {
   }
 
   async function deleteRole(id) {
-    if (!window.confirm("Delete role? Will fail if any user is using it.")) return;
+    var ok = await confirm({
+      title: "Delete this role?",
+      description: "The request will fail if any user is currently assigned to it.",
+      confirmLabel: "Delete role",
+      tone: "danger"
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {

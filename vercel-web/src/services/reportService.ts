@@ -239,11 +239,7 @@ export const reportService = {
     const w = resolveWindow(query);
     const access = dbAccess(ctx);
 
-    const [billings, services, receipts] = await Promise.all([
-      reportRepository.listBillingsInRange(
-        { from: w.startISO, to: w.endISO, patient_id: query.patient_id },
-        access
-      ),
+    const [services, receipts] = await Promise.all([
       reportRepository.listServicesInRange(
         w.startYMD,
         w.endYMD,
@@ -257,9 +253,22 @@ export const reportService = {
         access
       )
     ]);
-    if (!billings.success) return passFailure(billings);
     if (!services.success) return passFailure(services);
     if (!receipts.success) return passFailure(receipts);
+
+    const serviceRows = castRows(services);
+    const receiptRows = castRows(receipts);
+    const billingIds = new Set<string>();
+    for (const s of serviceRows) {
+      const id = String(s.billing_id || "");
+      if (id) billingIds.add(id);
+    }
+    for (const r of receiptRows) {
+      const id = String(r.billing_id || "");
+      if (id) billingIds.add(id);
+    }
+    const billings = await reportRepository.listBillingsByIds([...billingIds], access);
+    if (!billings.success) return passFailure(billings);
 
     return success(
       buildBillingTotals(
@@ -270,8 +279,8 @@ export const reportService = {
             id: b.id as string | null,
             status: b.status as string | null
           })),
-          services: castRows(services),
-          receipts: castRows(receipts)
+          services: serviceRows,
+          receipts: receiptRows
         }
       )
     );
@@ -291,18 +300,28 @@ export const reportService = {
     const w = resolveWindow(query);
     const access = dbAccess(ctx);
 
-    const payouts = await reportRepository.listPayoutsForPeriod(
-      w.period,
-      { employee_id: query.employee_id },
-      access
-    );
+    const [payouts, payoutCharges] = await Promise.all([
+      reportRepository.listPayoutsForPeriod(
+        w.period,
+        { employee_id: query.employee_id },
+        access
+      ),
+      reportRepository.listPayoutChargesInRange(
+        w.startYMD,
+        w.endYMD,
+        { partner_id: query.employee_id },
+        access
+      )
+    ]);
     if (!payouts.success) return passFailure(payouts);
+    if (!payoutCharges.success) return passFailure(payoutCharges);
 
     return success(
       buildPayoutTotals(
         w.period,
         { from: w.startISO, to: w.endISO },
-        castRows(payouts)
+        castRows(payouts),
+        castRows(payoutCharges)
       )
     );
   },

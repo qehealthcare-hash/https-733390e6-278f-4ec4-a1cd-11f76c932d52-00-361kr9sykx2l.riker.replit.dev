@@ -142,6 +142,10 @@ export const patientListQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional().default(0),
   q: z.string().optional().default(""),
   status: z.enum(PATIENT_STATUSES).optional(),
+  gender: z.string().trim().optional(),
+  area: z.string().trim().optional(),
+  pin: z.string().trim().optional(),
+  shift: z.string().trim().optional(),
   caretaker_id: z.string().optional(),
   /**
    * Inclusive YYYY-MM-DD bounds against `created_at` so Reports can ask the

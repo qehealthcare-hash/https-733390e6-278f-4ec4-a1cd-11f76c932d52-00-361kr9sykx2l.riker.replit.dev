@@ -5,7 +5,8 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useRealtimeResource } from "@/hooks/use-realtime-resource";
+import { usePaginatedResource } from "@/hooks/use-paginated-resource";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import {
@@ -62,8 +63,11 @@ export default function InquiriesPage() {
   var isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
   var [search, setSearch] = useState("");
   var [debouncedSearch, setDebouncedSearch] = useState("");
-  var [pageSize, setPageSize] = useState(500);
   var [employees, setEmployees] = useState([]);
+  var [potentialFilter, setPotentialFilter] = useState("");
+  var [statusFilter, setStatusFilter] = useState("");
+  var [sourceFilter, setSourceFilter] = useState("");
+  var [openOnly, setOpenOnly] = useState(true);
 
   useEffect(
     function () {
@@ -88,26 +92,28 @@ export default function InquiriesPage() {
     [auth.session]
   );
 
-  var apiPath = useMemo(
+  var listQuery = useMemo(
     function () {
-      var params = ["limit=" + pageSize];
-      if (debouncedSearch) params.push("q=" + encodeURIComponent(debouncedSearch));
-      return "/inquiries?" + params.join("&");
+      return {
+        q: debouncedSearch || undefined,
+        status: statusFilter || undefined,
+        source: sourceFilter || undefined,
+        open_only: openOnly ? "true" : undefined
+      };
     },
-    [debouncedSearch, pageSize]
+    [debouncedSearch, statusFilter, sourceFilter, openOnly]
   );
 
-  var resource = useRealtimeResource({
-    apiPath: apiPath,
+  var resource = usePaginatedResource({
+    basePath: "/inquiries",
     table: "hh_inquiries",
-    channel: "inquiries"
+    channel: "inquiries",
+    queryParams: listQuery,
+    resetKey: debouncedSearch + "|" + statusFilter + "|" + sourceFilter + "|" + (openOnly ? "1" : "0"),
+    pageSize: 50
   });
   var [form, setForm] = useState(createInitialForm());
   var [busy, setBusy] = useState(false);
-  var [potentialFilter, setPotentialFilter] = useState("");
-  var [statusFilter, setStatusFilter] = useState("");
-  var [sourceFilter, setSourceFilter] = useState("");
-  var [openOnly, setOpenOnly] = useState(true);
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
 
@@ -119,20 +125,12 @@ export default function InquiriesPage() {
 
   var filtered = useMemo(
     function () {
+      if (!potentialFilter) return resource.data;
       return resource.data.filter(function (row) {
-        var hay = [row.patient_name || row.name, row.mobile || row.phone, row.area, row.service_required || row.service, row.source]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        var matchesSearch = !search || hay.indexOf(search.toLowerCase()) >= 0;
-        var matchesPotential = !potentialFilter || row.potential === potentialFilter;
-        var matchesStatus = !statusFilter || row.status === statusFilter;
-        var matchesSource = !sourceFilter || row.source === sourceFilter;
-        var matchesOpen = !openOnly || OPEN_STATUSES.indexOf(row.status || "New") >= 0;
-        return matchesSearch && matchesPotential && matchesStatus && matchesSource && matchesOpen;
+        return row.potential === potentialFilter;
       });
     },
-    [resource.data, search, potentialFilter, statusFilter, sourceFilter, openOnly]
+    [resource.data, potentialFilter]
   );
 
   var overdueCount = useMemo(
@@ -600,15 +598,6 @@ export default function InquiriesPage() {
                 <input value={search} onChange={function (event) { setSearch(event.target.value); }} placeholder="Name, mobile, service or source" />
               </div>
               <div className="field">
-                <label>Rows per page</label>
-                <select value={String(pageSize)} onChange={function (event) { setPageSize(parseInt(event.target.value, 10) || 500); }}>
-                  <option value="50">50</option>
-                  <option value="100">100</option>
-                  <option value="200">200</option>
-                  <option value="500">All (up to 500)</option>
-                </select>
-              </div>
-              <div className="field">
                 <label>Status</label>
                 <select value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
                   <option value="">All</option>
@@ -642,10 +631,18 @@ export default function InquiriesPage() {
                 </label>
               </div>
             </div>
+            <PaginationBar
+              page={resource.page}
+              pageSize={resource.pageSize}
+              total={resource.total}
+              onPageChange={resource.setPage}
+              onPageSizeChange={resource.setPageSize}
+            />
             <div className="mini-muted" style={{ margin: "0.25rem 0 0.75rem" }}>
-              {debouncedSearch ? "Server search: \"" + debouncedSearch + "\" — " : ""}
-              Showing {filtered.length} of {resource.data.length} loaded
-              {overdueCount ? " · " + overdueCount + " overdue follow-up(s)" : ""}
+              {debouncedSearch ? "Search: \"" + debouncedSearch + "\" — " : ""}
+              {resource.total} inquir{resource.total === 1 ? "y" : "ies"} total
+              {overdueCount ? " · " + overdueCount + " overdue on this page" : ""}
+              {potentialFilter ? " · potential filter applies to this page only" : ""}
               {resource.loading ? " (loading...)" : ""}
             </div>
             {!filtered.length ? (

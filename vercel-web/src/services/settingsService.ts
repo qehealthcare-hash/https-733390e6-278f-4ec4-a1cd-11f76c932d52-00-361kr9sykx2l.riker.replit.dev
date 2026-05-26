@@ -17,6 +17,7 @@ import {
   settingsBulkSchema,
   settingsKeySchema
 } from "@/validation/settingsValidation";
+import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 
 export const settingsService = {
   async listAll(
@@ -52,13 +53,24 @@ export const settingsService = {
     const parsed = settingsKeySchema.safeParse(rawKey);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
 
+    const before = await settingsRepository.findByKey(parsed.data, {
+      accessToken: ctx.accessToken
+    });
     const upserted = await settingsRepository.upsert(
       { key: parsed.data, value, updated_at: new Date().toISOString() },
       { accessToken: ctx.accessToken }
     );
     if (!upserted.success) return passFailure(upserted);
     if (!upserted.data) return failure("Failed to save setting", ErrorCodes.internal);
-    return success(upserted.data);
+    const audit = await writeMutationAudit({ accessToken: ctx.accessToken }, ctx.actor, {
+      module: "settings",
+      entity_id: parsed.data,
+      action: "update",
+      before: before.success ? before.data ?? null : null,
+      after: upserted.data,
+      stamp: `Updated setting ${parsed.data}`
+    });
+    return finalizeWithAudit(audit, upserted.data);
   },
 
   async deleteKey(
@@ -68,11 +80,21 @@ export const settingsService = {
     const parsed = settingsKeySchema.safeParse(rawKey);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
 
+    const before = await settingsRepository.findByKey(parsed.data, {
+      accessToken: ctx.accessToken
+    });
     const removed = await settingsRepository.remove(parsed.data, {
       accessToken: ctx.accessToken
     });
     if (!removed.success) return passFailure(removed);
-    return success({ key: parsed.data, deleted: true });
+    const audit = await writeMutationAudit({ accessToken: ctx.accessToken }, ctx.actor, {
+      module: "settings",
+      entity_id: parsed.data,
+      action: "delete",
+      before: before.success ? before.data ?? null : null,
+      stamp: `Deleted setting ${parsed.data}`
+    });
+    return finalizeWithAudit(audit, { key: parsed.data, deleted: true as const });
   },
 
   async bulkSet(
@@ -92,8 +114,16 @@ export const settingsService = {
       accessToken: ctx.accessToken
     });
     if (!written.success) return passFailure(written);
-    return success(
-      (written.data || []).map((r) => ({ key: r.key, value: r.value }))
+    const audit = await writeMutationAudit({ accessToken: ctx.accessToken }, ctx.actor, {
+      module: "settings",
+      entity_id: null,
+      action: "bulk-update",
+      after: rows.map((r) => ({ key: r.key })),
+      stamp: `Bulk updated ${rows.length} setting(s)`
+    });
+    return finalizeWithAudit(
+      audit,
+      (written.data || []).map((r) => ({ key: r.key as string, value: r.value as unknown }))
     );
   }
 };

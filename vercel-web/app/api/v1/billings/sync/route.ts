@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
  * through `billingService.syncLegacy` (audited, RLS-scoped).
  */
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Accountant", "Staff"]);
+  requireRole(actor, ["Admin", "Manager"]);
   return withIdempotency(req, actor, { route: "POST /billings/sync" }, async () => {
     const body = await parseJsonBody(req);
     const result = await billingService.syncLegacy(body, { actor });

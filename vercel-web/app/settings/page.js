@@ -7,6 +7,7 @@ import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 var KNOWN_KEYS = [
   { key: "signatoryName", label: "Signatory name" },
@@ -40,6 +41,7 @@ function parseValue(input, isJson) {
 
 export default function SettingsPage() {
   var auth = useAuth();
+  var confirm = useConfirm();
   var [settings, setSettings] = useState({});
   var [drafts, setDrafts] = useState({});
   var [customKey, setCustomKey] = useState("");
@@ -102,7 +104,13 @@ export default function SettingsPage() {
   }
 
   async function deleteKey(key) {
-    if (!window.confirm("Delete setting '" + key + "'?")) return;
+    var ok = await confirm({
+      title: "Delete setting '" + key + "'?",
+      description: "Removing a setting may affect downstream modules until it is restored.",
+      confirmLabel: "Delete",
+      tone: "danger"
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {

@@ -4,6 +4,7 @@ import { dutyDiaryService } from "@/services/dutyDiaryService";
 import { dutyRepository } from "@/database/dutyRepository";
 import { billingRepository } from "@/database/billingRepository";
 import { employeeRepository } from "@/database/employeeRepository";
+import { payoutRepository } from "@/database/payoutRepository";
 
 vi.mock("@/database/dutyRepository");
 vi.mock("@/database/billingRepository");
@@ -19,7 +20,8 @@ vi.mock("@/database/payoutRepository", () => ({
   payoutRepository: {
     recomputeRpc: vi.fn().mockResolvedValue({ success: true, data: null }),
     isDayPaid: vi.fn().mockResolvedValue({ success: true, data: false }),
-    anyDayPaid: vi.fn().mockResolvedValue({ success: true, data: { paid: false } })
+    anyDayPaid: vi.fn().mockResolvedValue({ success: true, data: { paid: false } }),
+    findByEmployeePeriod: vi.fn().mockResolvedValue({ success: true, data: null })
   }
 }));
 vi.mock("@/services/mutationAudit", () => ({
@@ -49,6 +51,37 @@ const baseDuty = {
 describe("dutyDiaryService.materializeDuty", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(payoutRepository.findByEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: null
+    });
+  });
+
+  it("skips payout charge mutations when employee period payout is LOCKED", async () => {
+    vi.mocked(billingRepository.findActiveByPatient).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Active" }
+    });
+    vi.mocked(employeeRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "EMP1", full_name: "Alice" }
+    });
+    vi.mocked(payoutRepository.findByEmployeePeriod).mockResolvedValueOnce({
+      success: true,
+      data: { id: "PAY1", employee_id: "EMP1", period_month: "2026-05", status: "LOCKED" }
+    });
+    vi.mocked(billingRepository.findSvcByDayPartner).mockResolvedValue({ success: true, data: null });
+    vi.mocked(billingRepository.findPayoutByDayPartner).mockResolvedValue({ success: true, data: null });
+    vi.mocked(dutyRepository.findSvcEntriesByDutyId).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(dutyRepository.findPayoutChargesByDutyId).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(billingRepository.insertSvc).mockResolvedValue({ success: true, data: { id: 1 } });
+    vi.mocked(billingRepository.insertPayoutCharge).mockResolvedValue({ success: true, data: { id: 2 } });
+    vi.mocked(dutyRepository.update).mockResolvedValue({ success: true, data: baseDuty });
+
+    const result = await dutyDiaryService.materializeDuty(baseDuty, ctx);
+    expect(result.success).toBe(true);
+    expect(billingRepository.insertSvc).toHaveBeenCalled();
+    expect(billingRepository.insertPayoutCharge).not.toHaveBeenCalled();
   });
 
   it("creates per-day svc + payout rows idempotently", async () => {

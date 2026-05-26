@@ -163,6 +163,22 @@ describe("patient lifecycle — create → edit → close → reopen → delete"
     expect(patients.length).toBe(2);
   });
 
+  it("blocks status change via update PATCH (must use close/reopen)", async () => {
+    const created = await patientService.create(
+      { name: "Status Guard", phone: "9876500009" },
+      { actor: ACTOR }
+    );
+    const id = (created.data as { id: string }).id;
+    const result = await patientService.update(
+      id,
+      { name: "Status Guard", phone: "9876500009", status: "Closed" },
+      { actor: ACTOR }
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("business_rule_violation");
+    expect(patients[0].status).toBe("Active");
+  });
+
   it("returns conflict when expected_updated_at is stale", async () => {
     const created = await patientService.create(
       { name: "Stale Edit", phone: "9876512345" },

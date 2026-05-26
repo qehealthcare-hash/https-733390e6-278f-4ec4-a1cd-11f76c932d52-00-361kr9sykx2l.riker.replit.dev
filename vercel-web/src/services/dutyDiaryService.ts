@@ -6,6 +6,7 @@
 import type { ApiResult } from "@/types/common";
 import { ErrorCodes } from "@/types/common";
 import { billingSvcKey, canEditBilling } from "@/business/billingRules";
+import { isPayoutLocked } from "@/business/payoutRules";
 import {
   buildPayoutChargeRow,
   buildSvcEntryRow,
@@ -338,6 +339,25 @@ export const dutyDiaryService = {
     let duplicateSkippedPayout = 0;
     const preview: MaterializePreviewRow[] = [];
     const nameCache = new Map<string, string>();
+    /** employee_id:YYYY-MM → locked (LOCKED/PAID payout row exists). */
+    const payoutLockCache = new Map<string, boolean>();
+
+    async function isPartnerPayoutPeriodLocked(
+      employeeId: string,
+      isoDate: string
+    ): Promise<boolean> {
+      const period = isoDate.slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(period)) return false;
+      const cacheKey = `${employeeId}:${period}`;
+      if (payoutLockCache.has(cacheKey)) return payoutLockCache.get(cacheKey)!;
+      const payoutRow = await payoutRepository.findByEmployeePeriod(employeeId, period, access);
+      const locked =
+        payoutRow.success &&
+        payoutRow.data != null &&
+        isPayoutLocked(String(payoutRow.data.status || ""));
+      payoutLockCache.set(cacheKey, locked);
+      return locked;
+    }
 
     const existingSvcRows = await dutyRepository.findSvcEntriesByDutyId(dutyId, access);
     if (!existingSvcRows.success) return passFailure(existingSvcRows);
@@ -415,6 +435,13 @@ export const dutyDiaryService = {
           skipped += 1;
           continue;
         }
+        if (
+          parsed &&
+          (await isPartnerPayoutPeriodLocked(parsed.employeeId, parsed.isoDate))
+        ) {
+          skipped += 1;
+          continue;
+        }
         if (opts?.dry_run) {
           deletedPayout += 1;
           continue;
@@ -459,6 +486,7 @@ export const dutyDiaryService = {
 
       const ownedSvc = svcByKey.get(key);
       const ownedPay = payByKey.get(key);
+      const payoutPeriodLocked = await isPartnerPayoutPeriodLocked(empId, isoDate);
 
       if (ownedSvc) {
         const ownedParsed = parseDutyDiaryRemarks(String(ownedSvc.remarks || ""));
@@ -495,7 +523,9 @@ export const dutyDiaryService = {
         }
       }
 
-      if (ownedPay) {
+      if (payoutPeriodLocked) {
+        payoutAction = "skip";
+      } else if (ownedPay) {
         const ownedParsed = parseDutyDiaryRemarks(String(ownedPay.remarks || ""));
         if (ownedParsed?.manual) {
           payoutAction = "skip";

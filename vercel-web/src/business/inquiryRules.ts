@@ -58,6 +58,29 @@ export function inquiryToRow(input: InquiryInput) {
   return row;
 }
 
+/**
+ * Fields to copy from an inquiry onto the linked patient after convert.
+ * The DB RPC only seeds name/phone/address; this patch carries clinical +
+ * contact metadata the registry form expects.
+ */
+export function inquiryToPatientPatch(inq: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  const age = String(inq.age || "").trim();
+  const gender = String(inq.gender || "").trim();
+  const email = String(inq.email || "").trim();
+  if (age) patch.age = age;
+  if (gender) patch.gender = gender;
+  if (email) patch.email = email;
+
+  const service = String(inq.service || "").trim();
+  const remarks = String(inq.remarks || inq.notes || "").trim();
+  const diseaseParts = [service, remarks].filter(Boolean);
+  if (diseaseParts.length) {
+    patch.disease_condition = diseaseParts.join(" — ");
+  }
+  return patch;
+}
+
 /** Map raw row to the React/legacy UI shape (keeps page rendering working). */
 export function inquiryToApi(row: Record<string, unknown>) {
   if (!row) return row;

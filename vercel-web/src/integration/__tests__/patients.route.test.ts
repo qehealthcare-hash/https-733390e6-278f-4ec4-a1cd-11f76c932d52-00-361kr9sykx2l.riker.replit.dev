@@ -169,7 +169,7 @@ describe("GET /api/v1/patients/[id]", () => {
   });
 
   it("returns the patient envelope on success", async () => {
-    setActor(ACTORS.viewer);
+    setActor(ACTORS.staff);
     mPatient.getById.mockResolvedValue({
       success: true,
       data: { id: "PAT1", name: "Anita" }

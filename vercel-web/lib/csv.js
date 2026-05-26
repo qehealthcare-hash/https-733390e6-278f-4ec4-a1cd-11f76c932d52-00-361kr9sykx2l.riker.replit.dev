@@ -1,13 +1,33 @@
-export function downloadCsv(fileName, rows) {
-  if (!rows.length) return;
-  var headers = Object.keys(rows[0]);
+/**
+ * Build a stable header list: explicit columns first, then any extra keys
+ * discovered across rows (sorted) so exports stay predictable.
+ */
+function resolveHeaders(rows, columns) {
+  if (columns && columns.length) return columns;
+  var seen = new Set();
+  var headers = [];
+  rows.forEach(function (row) {
+    Object.keys(row || {}).forEach(function (key) {
+      if (!seen.has(key)) {
+        seen.add(key);
+        headers.push(key);
+      }
+    });
+  });
+  return headers.sort();
+}
+
+export function downloadCsv(fileName, rows, columns) {
+  if (!rows || !rows.length) return;
+  var headers = resolveHeaders(rows, columns);
   var lines = [headers.join(",")];
   rows.forEach(function (row) {
     lines.push(
       headers
         .map(function (header) {
           var value = row[header];
-          var normalized = value == null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
+          var normalized =
+            value == null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
           return '"' + normalized.replace(/"/g, '""') + '"';
         })
         .join(",")
