@@ -227,6 +227,42 @@ export const payoutRepository = {
    * (`hh_payout_charges`) minus any disbursements already recorded in
    * `hh_paid_transactions`. Works even before an `hh_payouts` row exists.
    */
+  /**
+   * Every employee who still has an unpaid balance for `period`, with their
+   * charged/paid totals. Backed by `hh_employees_pending_for_period(p_period)`
+   * (migration 043). Used by the "Unpaid employees" board on the payouts page.
+   */
+  pendingEmployeesForPeriodRpc(
+    period: string,
+    opts?: DbAccess
+  ): Promise<
+    ApiResult<
+      | Array<{
+          employee_id: string;
+          charged: number;
+          paid: number;
+          pending: number;
+          duty_count: number;
+        }>
+      | null
+    >
+  > {
+    return callRpc<
+      Array<{
+        employee_id: string;
+        charged: number;
+        paid: number;
+        pending: number;
+        duty_count: number;
+      }>
+    >(
+      "hh_employees_pending_for_period",
+      { p_period: period },
+      `${SCOPE}.pendingEmployeesForPeriod`,
+      opts
+    );
+  },
+
   pendingPayoutRpc(
     employeeId: string,
     period: string,

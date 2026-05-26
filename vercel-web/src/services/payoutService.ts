@@ -72,6 +72,7 @@ import { payoutRepository } from "@/database/payoutRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { attendanceRepository } from "@/database/attendanceRepository";
 import { employeeRepository } from "@/database/employeeRepository";
+import { dutyDiaryService } from "@/services/dutyDiaryService";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
 import {
@@ -165,6 +166,45 @@ export interface PayoutDetail {
   outstanding: number;
   /** Display-friendly employee name resolved from `hh_employees`. */
   employee_name: string;
+  /**
+   * Data-source diagnostics. Lets the UI explain "why is Gross 0?" by
+   * showing exact row counts and sums from every table feeding this payout.
+   * All fields are READ-ONLY; mutating the payout requires the normal
+   * ensure / adjust / pay paths.
+   */
+  diagnostics: PayoutDiagnostics;
+}
+
+export interface PayoutDiagnostics {
+  /** Rows in `hh_payout_charges` for this employee × period. */
+  charge_row_count: number;
+  /** Sum of `amount` across those rows — drives `gross_amount`. */
+  charge_sum: number;
+  /**
+   * Number of charge rows with `amount = 0`. A common cause of "duty
+   * present but Gross ₹0" is duties saved with `payout_per_day = 0`.
+   */
+  charge_zero_rate_rows: number;
+  /** Distinct svc_keys (billing rows) the charges roll up to. */
+  charge_distinct_svc_keys: number;
+  /** Most recent updated_at across the charge rows (ISO). */
+  charge_last_updated_at: string | null;
+  /** Rows in `hh_duties` overlapping the period for this employee. */
+  duty_row_count: number;
+  /** Distinct duty statuses observed — useful for spotting CANCELLED runs. */
+  duty_statuses: Record<string, number>;
+  /** Rows in `hh_attendance` for the period (any status). */
+  attendance_row_count: number;
+  /** Attendance rows counted by `hh_recompute_payout` (PRESENT/LATE/HALF_DAY). */
+  attendance_payable_count: number;
+  /** Sum of `hours` across payable attendance rows. */
+  attendance_payable_hours: number;
+  /**
+   * Human-friendly hint when something looks off, e.g. "Duties exist but
+   * every charge row has amount = 0 — edit the duty to set payout_per_day".
+   * Empty when the data flow looks healthy.
+   */
+  warning: string;
 }
 
 /**
@@ -210,6 +250,104 @@ async function hydrateEmployeeNames(
   return map;
 }
 
+function emptyDiagnostics(): PayoutDiagnostics {
+  return {
+    charge_row_count: 0,
+    charge_sum: 0,
+    charge_zero_rate_rows: 0,
+    charge_distinct_svc_keys: 0,
+    charge_last_updated_at: null,
+    duty_row_count: 0,
+    duty_statuses: {},
+    attendance_row_count: 0,
+    attendance_payable_count: 0,
+    attendance_payable_hours: 0,
+    warning: ""
+  };
+}
+
+/**
+ * Inspect the three tables that feed a payout (`hh_payout_charges`,
+ * `hh_duties`, `hh_attendance`) and produce row counts + a human-readable
+ * warning when the data flow looks broken.
+ *
+ * The most common failure modes we surface:
+ *   1. Duties exist but every charge row has amount = 0 → the duty was
+ *      saved with `payout_per_day = 0`. Operator must edit the duty.
+ *   2. Duties exist but NO charge rows exist → materialization never ran
+ *      (legacy duty, or save without `materialize: true`). Pressing
+ *      "Recompute" will fix this because we now re-materialize first.
+ *   3. Charge sum > 0 but `hh_attendance` is empty → no PRESENT rows,
+ *      so the payout's `duty_count` / `hours` will look wrong even
+ *      though gross is correct.
+ */
+function buildDiagnostics(
+  duties: JsonRow[],
+  attendance: JsonRow[],
+  charges: JsonRow[]
+): PayoutDiagnostics {
+  const diagnostics = emptyDiagnostics();
+  diagnostics.duty_row_count = duties.length;
+  for (const d of duties) {
+    const status = String(d.status || "").toUpperCase() || "UNKNOWN";
+    diagnostics.duty_statuses[status] = (diagnostics.duty_statuses[status] || 0) + 1;
+  }
+
+  diagnostics.attendance_row_count = attendance.length;
+  const payableStatuses = new Set(["PRESENT", "LATE", "HALF_DAY"]);
+  for (const a of attendance) {
+    const status = String(a.status || "").toUpperCase();
+    if (!payableStatuses.has(status)) continue;
+    diagnostics.attendance_payable_count += 1;
+    diagnostics.attendance_payable_hours += Number(a.hours || 0);
+  }
+  diagnostics.attendance_payable_hours =
+    Math.round(diagnostics.attendance_payable_hours * 100) / 100;
+
+  diagnostics.charge_row_count = charges.length;
+  const svcKeys = new Set<string>();
+  let sum = 0;
+  let zero = 0;
+  let lastUpdated = "";
+  for (const c of charges) {
+    const amount = Number(c.amount || 0);
+    sum += amount;
+    if (amount <= 0) zero += 1;
+    const key = String(c.svc_key || "");
+    if (key) svcKeys.add(key);
+    const updated = String(c.updated_at || c.created_at || "");
+    if (updated && updated > lastUpdated) lastUpdated = updated;
+  }
+  diagnostics.charge_sum = Math.round(sum * 100) / 100;
+  diagnostics.charge_zero_rate_rows = zero;
+  diagnostics.charge_distinct_svc_keys = svcKeys.size;
+  diagnostics.charge_last_updated_at = lastUpdated || null;
+
+  const activeDutyCount = duties.filter((d) => {
+    const status = String(d.status || "").toUpperCase();
+    return status !== "CANCELLED" && status !== "NO_SHOW";
+  }).length;
+
+  if (activeDutyCount > 0 && diagnostics.charge_row_count === 0) {
+    diagnostics.warning =
+      "Duties exist for this employee in this period but no payout charges have been materialized. Press Recompute to refresh.";
+  } else if (
+    diagnostics.charge_row_count > 0 &&
+    diagnostics.charge_sum === 0
+  ) {
+    diagnostics.warning =
+      "Payout charges exist but every row has amount ₹0. Open the source duty and set a non-zero payout_per_day, then Recompute.";
+  } else if (diagnostics.charge_row_count > 0 && diagnostics.attendance_payable_count === 0) {
+    diagnostics.warning =
+      "Charges materialized but no PRESENT / LATE / HALF_DAY attendance rows exist for this period — duty_count and hours will show 0 until attendance is marked.";
+  } else if (activeDutyCount === 0 && diagnostics.charge_row_count === 0) {
+    diagnostics.warning =
+      "No duties or charges for this employee in this period. Assign them on the duty calendar first.";
+  }
+
+  return diagnostics;
+}
+
 /** Load a payout + its source duty/attendance for the breakdown widget. */
 async function loadPayoutDetail(
   payout: JsonRow,
@@ -229,28 +367,33 @@ async function loadPayoutDetail(
       paid_transactions: [],
       paid_total: 0,
       outstanding: Math.max(0, Number(payout.net_amount || 0)),
-      employee_name: employeeName
+      employee_name: employeeName,
+      diagnostics: emptyDiagnostics()
     });
   }
 
   const access = dbAccess(ctx);
   const { startISO, endISO } = monthRangeUTC(period);
 
-  const [duties, attendance, paidTx] = await Promise.all([
+  const [duties, attendance, paidTx, charges] = await Promise.all([
     dutyRepository.list(
       { employeeId, from: startISO, to: endISO, limit: 500, offset: 0 },
       access
     ),
     attendanceRepository.listForEmployeeMonth(employeeId, startISO, endISO, access),
-    payoutRepository.listPaidTransactionsByPayout(String(payout.id || ""), access)
+    payoutRepository.listPaidTransactionsByPayout(String(payout.id || ""), access),
+    payoutRepository.listChargesByEmployeePeriod(employeeId, period, access)
   ]);
   if (!duties.success) return passFailure(duties);
   if (!attendance.success) return passFailure(attendance);
   if (!paidTx.success) return passFailure(paidTx);
+  if (!charges.success) return passFailure(charges);
 
   const dutyRows = duties.data?.rows || [];
   const attendanceRows = attendance.data || [];
   const paidRows = paidTx.data || [];
+  const chargeRows = charges.data || [];
+  const diagnostics = buildDiagnostics(dutyRows, attendanceRows, chargeRows);
   const paidTotal = paidRows.reduce(
     (sum, r) => sum + Number(r.amount || 0),
     0
@@ -265,6 +408,7 @@ async function loadPayoutDetail(
     paid_total: Math.round(paidTotal * 100) / 100,
     outstanding: Math.round(outstanding * 100) / 100,
     employee_name: employeeName,
+    diagnostics,
     breakdown: breakdownByPatient(
       dutyRows.map((d) => ({
         id: String(d.id),
@@ -305,9 +449,35 @@ async function recomputeAndPersist(
       remarks: string;
     }>;
     requireSource?: boolean;
+    /**
+     * When true (the default for ensure/recompute), re-materialize every duty
+     * involving this employee×period BEFORE summing `hh_payout_charges`. This
+     * guarantees that edits to duty rates or partner assignments flow into
+     * the payout without the user having to also open each duty manually.
+     * Set false for cron / billing-close paths that have already materialized.
+     */
+    rematerialize?: boolean;
   } = {}
 ): Promise<ApiResult<JsonRow>> {
   const access = dbAccess(ctx);
+
+  if (options.rematerialize !== false) {
+    // Soft pass — failures here are logged inside the report.failures array
+    // and surfaced via diagnostics but never block the recompute itself
+    // (we still want a payout row even if one of N duties had no active bill).
+    const rematerialize = await dutyDiaryService.rematerializeForEmployeePeriod(
+      employeeId,
+      period,
+      ctx
+    );
+    if (!rematerialize.success) {
+      console.warn(
+        "[payoutService.recomputeAndPersist] rematerialize failed",
+        { employeeId, period, error: rematerialize.error }
+      );
+    }
+  }
+
   const rpc = await payoutRepository.recomputeRpc(employeeId, period, access);
   if (!rpc.success) return passFailure(rpc);
   const payoutId = rpc.data?.payout_id;
@@ -426,6 +596,97 @@ export const payoutService = {
       return failure(loaded.error || "Payout not found", loaded.code, loaded.details);
     }
     return loadPayoutDetail(loaded.data, ctx);
+  },
+
+  /**
+   * Period-scoped roster of employees who still have unpaid balances.
+   *
+   * Sourced from the duty calendar (`hh_payout_charges`) minus
+   * `hh_paid_transactions` via `hh_employees_pending_for_period` (migration
+   * 043). Each row is enriched with the employee display name and any
+   * existing `hh_payouts` row (id + status) so the UI can show "ensure /
+   * open payout" actions without an extra round-trip.
+   */
+  async pendingEmployeesForPeriod(
+    rawQuery: unknown,
+    ctx: PayoutServiceContext
+  ): Promise<
+    ApiResult<{
+      period: string;
+      rows: Array<{
+        employee_id: string;
+        employee_name: string;
+        charged: number;
+        paid: number;
+        pending: number;
+        duty_count: number;
+        payout_id: string | null;
+        payout_status: string | null;
+      }>;
+      total_pending: number;
+    }>
+  > {
+    const period = String(
+      (rawQuery && typeof rawQuery === "object"
+        ? (rawQuery as { period?: unknown }).period
+        : "") || ""
+    ).trim();
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      return failure(
+        "period must be in YYYY-MM format",
+        ErrorCodes.validation,
+        { period }
+      );
+    }
+    const query = { period };
+    const access = dbAccess(ctx);
+
+    const rpc = await payoutRepository.pendingEmployeesForPeriodRpc(
+      query.period,
+      access
+    );
+    if (!rpc.success) return passFailure(rpc);
+    const rpcRows = Array.isArray(rpc.data) ? rpc.data : [];
+
+    const ids = rpcRows.map((r) => String(r.employee_id || "")).filter(Boolean);
+    const nameMap = await hydrateEmployeeNames(ids, ctx);
+
+    // Pull every existing hh_payouts row for the period so we can light up
+    // "Open in payouts" / "Ensure" actions on the board.
+    const payoutsForPeriod = await payoutRepository.listByPeriod(query.period, access);
+    if (!payoutsForPeriod.success) return passFailure(payoutsForPeriod);
+    const payoutByEmployee = new Map<string, { id: string; status: string }>();
+    for (const row of payoutsForPeriod.data || []) {
+      const empId = String(row.employee_id || "");
+      if (!empId) continue;
+      payoutByEmployee.set(empId, {
+        id: String(row.id || ""),
+        status: String(row.status || "OPEN")
+      });
+    }
+
+    const rows = rpcRows.map((r) => {
+      const id = String(r.employee_id || "");
+      const existing = payoutByEmployee.get(id) || null;
+      return {
+        employee_id: id,
+        employee_name: nameMap.get(id) || id,
+        charged: Number(r.charged || 0),
+        paid: Number(r.paid || 0),
+        pending: Number(r.pending || 0),
+        duty_count: Number(r.duty_count || 0),
+        payout_id: existing ? existing.id : null,
+        payout_status: existing ? existing.status : null
+      };
+    });
+
+    const totalPending = rows.reduce((sum, r) => sum + Number(r.pending || 0), 0);
+    void query;
+    return success({
+      period,
+      rows,
+      total_pending: Math.round(totalPending * 100) / 100
+    });
   },
 
   /** Lookup by natural key (employee + period) — used by duty / attendance services. */

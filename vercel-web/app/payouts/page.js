@@ -101,6 +101,12 @@ export default function PayoutsPage() {
   var [advanceForm, setAdvanceForm] = useState(emptyAdvanceForm());
   var [advanceOpen, setAdvanceOpen] = useState(false);
   var [pending, setPending] = useState(null);
+  var [unpaidEmployees, setUnpaidEmployees] = useState({
+    period: "",
+    rows: [],
+    total_pending: 0,
+    loading: false
+  });
   var [busy, setBusy] = useState(false);
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
@@ -122,6 +128,38 @@ export default function PayoutsPage() {
       setPayouts([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function reloadUnpaidEmployees() {
+    if (!auth.session?.access_token || !periodFilter) {
+      setUnpaidEmployees({ period: "", rows: [], total_pending: 0, loading: false });
+      return;
+    }
+    setUnpaidEmployees(function (prev) {
+      return { ...prev, loading: true };
+    });
+    try {
+      var qs = new URLSearchParams();
+      qs.set("period", periodFilter);
+      var data = await request(
+        "/payouts/pending-employees?" + qs.toString(),
+        null,
+        auth.session
+      );
+      setUnpaidEmployees({
+        period: data?.period || periodFilter,
+        rows: Array.isArray(data?.rows) ? data.rows : [],
+        total_pending: Number(data?.total_pending || 0),
+        loading: false
+      });
+    } catch (err) {
+      setUnpaidEmployees({
+        period: periodFilter,
+        rows: [],
+        total_pending: 0,
+        loading: false
+      });
     }
   }
 
@@ -181,6 +219,7 @@ export default function PayoutsPage() {
       if (!auth.session?.access_token) return;
       reloadList();
       reloadPending();
+      reloadUnpaidEmployees();
       request("/lookups/employees", null, auth.session)
         .then(function (rows) {
           setEmployees(Array.isArray(rows) ? rows : []);
@@ -262,6 +301,7 @@ export default function PayoutsPage() {
       );
       setEnsureForm(emptyEnsureForm());
       await reloadList();
+      await reloadUnpaidEmployees();
       if (data?.id) await openPayout(data.id);
     } catch (err) {
       setError(err.message || "Could not ensure payout");
@@ -294,6 +334,7 @@ export default function PayoutsPage() {
       await openPayout(selectedId);
       await reloadList();
       await reloadPending();
+      await reloadUnpaidEmployees();
     } catch (err) {
       setError(err.message || "Could not adjust payout");
     } finally {
@@ -315,6 +356,7 @@ export default function PayoutsPage() {
       await openPayout(selectedId);
       await reloadList();
       await reloadPending();
+      await reloadUnpaidEmployees();
     } catch (err) {
       setError(err.message || "Could not recompute");
     } finally {
@@ -425,6 +467,7 @@ export default function PayoutsPage() {
       await openPayout(selectedId);
       await reloadList();
       await reloadPending();
+      await reloadUnpaidEmployees();
     } catch (err) {
       setError(err.message || "Could not mark paid");
     } finally {
@@ -469,6 +512,7 @@ export default function PayoutsPage() {
       await openPayout(selectedId);
       await reloadList();
       await reloadPending();
+      await reloadUnpaidEmployees();
     } catch (err) {
       setError(err.message || "Could not record advance");
     } finally {
@@ -549,6 +593,63 @@ export default function PayoutsPage() {
     openPrintWindow("Payout " + row.id, body);
   }
 
+  // One-receipt-per-transaction PDF. Includes serial, employee name, payout
+  // ref, method, amount, remarks, proof file name — everything an auditor or
+  // employee needs to reconcile a single disbursement. The user "Saves as PDF"
+  // from the browser print dialog opened by openPrintWindow.
+  function printReceipt(tx) {
+    if (!tx) return;
+    var row = detail?.payout || null;
+    var name = row
+      ? row.employee_name || employeeDisplayName(row.employee_id)
+      : employeeDisplayName(tx.employee_id || "");
+    var period = row?.period_month || tx.period_month || "";
+    var kindLabel = String(tx.tx_kind || "FINAL") === "ADVANCE" ? "Advance Receipt" : "Payout Receipt";
+    var rows = [
+      ["Receipt no", tx.serial_no || tx.id || ""],
+      ["Type", tx.tx_kind || "FINAL"],
+      ["Employee", name],
+      ["Period", period],
+      ["Paid on", tx.paid_on || ""],
+      ["Method", tx.method || ""],
+      ["Amount", formatCurrency(tx.amount)],
+      ["Payout ref", row ? row.id : "-"],
+      ["Proof", tx.photo || tx.proof_path || (tx.proof_bucket ? "(attached)" : "Not attached")],
+      ["Remarks", tx.remarks || "-"]
+    ];
+    var rowsHtml = rows
+      .map(function (pair) {
+        return (
+          "<tr><th style='width:35%'>" +
+          pair[0] +
+          "</th><td>" +
+          (pair[1] === null || pair[1] === undefined ? "" : pair[1]) +
+          "</td></tr>"
+        );
+      })
+      .join("");
+    var body =
+      "<h2>" + kindLabel + "</h2>" +
+      "<table><tbody>" + rowsHtml + "</tbody></table>" +
+      "<div class='stamp'>I confirm I have received the above amount from Hominal Healthcare Pvt Ltd.</div>";
+    openPrintWindow(kindLabel + " " + (tx.serial_no || tx.id || ""), body);
+  }
+
+  function startEnsureForEmployee(empId, period) {
+    if (!canWrite) return;
+    setEnsureForm(function (prev) {
+      return {
+        ...prev,
+        employee_id: empId || prev.employee_id,
+        period_month: period || prev.period_month || currentPeriod()
+      };
+    });
+    setMessage("Pre-filled ensure form for " + employeeDisplayName(empId));
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
   var payout = detail?.payout || null;
   var status = String(payout?.status || "OPEN");
   var isLocked = status === "LOCKED" || status === "PAID";
@@ -561,6 +662,7 @@ export default function PayoutsPage() {
   var employeeNameForDetail = payout
     ? payout.employee_name || employeeDisplayName(payout.employee_id)
     : "";
+  var diagnostics = detail?.diagnostics || null;
 
   return (
     <AuthGuard permission="payouts.read">
@@ -710,6 +812,77 @@ export default function PayoutsPage() {
               </ModuleShell>
             ) : null}
 
+            <ModuleShell
+              title={"Unpaid employees — " + (unpaidEmployees.period || periodFilter || "")}
+              description="Every employee with outstanding payout balance for this period (charged in duty calendar minus disbursements). Click to ensure or open the payout."
+            >
+              <div className="helper-box">
+                {unpaidEmployees.loading
+                  ? "Loading…"
+                  : unpaidEmployees.rows.length === 0
+                  ? "All employees fully paid for this period."
+                  : unpaidEmployees.rows.length +
+                    " employee" +
+                    (unpaidEmployees.rows.length === 1 ? "" : "s") +
+                    " · Total pending " +
+                    formatCurrency(unpaidEmployees.total_pending)}
+              </div>
+              {unpaidEmployees.rows.length ? (
+                <div className="record-list">
+                  {unpaidEmployees.rows.map(function (row) {
+                    var statusLabel = row.payout_status || "UNPAID";
+                    return (
+                      <div key={row.employee_id} className="record-card">
+                        <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <div>
+                            <h3>{row.employee_name || row.employee_id}</h3>
+                            <div className="record-meta">
+                              <span>{row.duty_count || 0} duties</span>
+                              <span>Charged {formatCurrency(row.charged)}</span>
+                              <span>Paid {formatCurrency(row.paid)}</span>
+                              <span>
+                                <strong>Pending {formatCurrency(row.pending)}</strong>
+                              </span>
+                            </div>
+                          </div>
+                          <div className="button-row">
+                            <span className={"status " + String(statusLabel).toLowerCase()}>
+                              {statusLabel}
+                            </span>
+                            {row.payout_id ? (
+                              <button
+                                type="button"
+                                className="button secondary"
+                                onClick={function () {
+                                  setEmployeeFilter(row.employee_id);
+                                  openPayout(row.payout_id);
+                                }}
+                              >
+                                Open
+                              </button>
+                            ) : canWrite ? (
+                              <button
+                                type="button"
+                                className="button primary"
+                                onClick={function () {
+                                  startEnsureForEmployee(
+                                    row.employee_id,
+                                    unpaidEmployees.period || periodFilter
+                                  );
+                                }}
+                              >
+                                Ensure
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </ModuleShell>
+
             <ModuleShell title="Payout ledger" description="hh_payouts month view. Filter by period, status, or employee.">
               <div className="toolbar">
                 <div className="field">
@@ -828,9 +1001,12 @@ export default function PayoutsPage() {
                 <div className="stack">
                   <div className="helper-box">
                     <div>
-                      <strong>Status:</strong> {status} &nbsp;·&nbsp;
+                      <strong>Employee:</strong> {employeeNameForDetail} &nbsp;·&nbsp;
                       <strong>Period:</strong> {payout.period_month} &nbsp;·&nbsp;
-                      <strong>Employee:</strong> {employeeNameForDetail}
+                      <strong>Status:</strong> {status}
+                    </div>
+                    <div style={{ marginTop: 4, color: "#64748b", fontSize: 12 }}>
+                      Payout ref {payout.id}
                     </div>
                     <div className="grid-2" style={{ marginTop: 8 }}>
                       <div>
@@ -868,6 +1044,62 @@ export default function PayoutsPage() {
                       </div>
                     </div>
                   </div>
+
+                  {diagnostics ? (
+                    <div
+                      className="helper-box"
+                      style={{
+                        background: diagnostics.warning ? "#fff4f4" : "#f1f7ff",
+                        borderColor: diagnostics.warning ? "#dc2626" : "#0c5adb"
+                      }}
+                    >
+                      <div>
+                        <strong>Where this data comes from</strong>
+                      </div>
+                      <div style={{ marginTop: 6, fontSize: 13 }}>
+                        <div>
+                          Gross ← <code>hh_payout_charges</code>: {diagnostics.charge_row_count} row
+                          {diagnostics.charge_row_count === 1 ? "" : "s"} · sum {formatCurrency(diagnostics.charge_sum)}
+                          {diagnostics.charge_zero_rate_rows > 0
+                            ? " · " + diagnostics.charge_zero_rate_rows + " row(s) at ₹0"
+                            : ""}
+                          {diagnostics.charge_distinct_svc_keys > 0
+                            ? " · " + diagnostics.charge_distinct_svc_keys + " billing service(s)"
+                            : ""}
+                        </div>
+                        <div>
+                          Duty count / Hours ← <code>hh_attendance</code>: {diagnostics.attendance_payable_count} payable row
+                          {diagnostics.attendance_payable_count === 1 ? "" : "s"} · {diagnostics.attendance_payable_hours}h
+                          {diagnostics.attendance_row_count > diagnostics.attendance_payable_count
+                            ? " (" + (diagnostics.attendance_row_count - diagnostics.attendance_payable_count) + " non-payable)"
+                            : ""}
+                        </div>
+                        <div>
+                          Source duties ← <code>hh_duties</code>: {diagnostics.duty_row_count} row
+                          {diagnostics.duty_row_count === 1 ? "" : "s"} overlapping {payout.period_month}
+                          {Object.keys(diagnostics.duty_statuses || {}).length
+                            ? " (" +
+                              Object.entries(diagnostics.duty_statuses)
+                                .map(function (pair) {
+                                  return pair[0] + ": " + pair[1];
+                                })
+                                .join(", ") +
+                              ")"
+                            : ""}
+                        </div>
+                        {diagnostics.charge_last_updated_at ? (
+                          <div style={{ color: "#64748b" }}>
+                            Charges last materialized {formatDate(diagnostics.charge_last_updated_at)}
+                          </div>
+                        ) : null}
+                      </div>
+                      {diagnostics.warning ? (
+                        <div style={{ marginTop: 8, color: "#b91c1c", fontWeight: 600 }}>
+                          {diagnostics.warning}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   <div className="button-row">
                     <button className="button secondary" type="button" onClick={printPayout}>
@@ -965,6 +1197,9 @@ export default function PayoutsPage() {
                   {canDisburse && advanceOpen && status === "OPEN" ? (
                     <form className="stack" onSubmit={handleAdvance}>
                       <strong>Pay advance</strong>
+                      <div className="helper-box" style={{ background: "#fff7e6", borderColor: "#f59e0b" }}>
+                        Payment proof (bank slip / UPI screenshot / signed receipt) is <strong>required</strong> before submission. The disbursement is rejected by the server if proof is missing.
+                      </div>
                       <div className="grid-2">
                         <div className="field">
                           <label>Amount</label>
@@ -1043,6 +1278,9 @@ export default function PayoutsPage() {
                   {canDisburse && status === "LOCKED" ? (
                     <form className="stack" onSubmit={handlePay}>
                       <strong>Mark as paid</strong>
+                      <div className="helper-box" style={{ background: "#fff7e6", borderColor: "#f59e0b" }}>
+                        Payment proof (bank slip / UPI screenshot / signed receipt) is <strong>required</strong> before submission. The disbursement is rejected by the server if proof is missing.
+                      </div>
                       <div className="grid-2">
                         <div className="field">
                           <label>Paid on</label>
@@ -1137,6 +1375,15 @@ export default function PayoutsPage() {
                                   {tx.remarks ? <div className="record-meta"><span>{tx.remarks}</span></div> : null}
                                 </div>
                                 <div className="button-row">
+                                  <button
+                                    type="button"
+                                    className="button secondary"
+                                    onClick={function () {
+                                      printReceipt(tx);
+                                    }}
+                                  >
+                                    Receipt PDF
+                                  </button>
                                   {tx.proof_bucket && tx.proof_path ? (
                                     <button
                                       type="button"

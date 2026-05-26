@@ -164,7 +164,102 @@ function rowOwnedByDuty(remarks: string | null | undefined, dutyId: string): boo
   return parsed !== null && parsed.dutyId === dutyId;
 }
 
+export interface RematerializeReport {
+  period: string;
+  employee_id: string;
+  duties_scanned: number;
+  duties_materialized: number;
+  duties_skipped: number;
+  failures: Array<{ duty_id: string; reason: string }>;
+}
+
 export const dutyDiaryService = {
+  /**
+   * Walk every duty involving `employeeId` that overlaps `period` (YYYY-MM)
+   * and re-run `materializeDuty` against the period window.
+   *
+   * Why we need this: payouts read from `hh_payout_charges`, which is filled
+   * by materialization. If a duty's rates were edited (or it was created
+   * without `materialize: true`), the per-day rows can be missing or stale,
+   * producing a ₹0 payout despite duty rows existing. `payoutService.ensure`
+   * / `recompute` calls this BEFORE `hh_recompute_payout` so the operator
+   * always sees the latest duty calendar reality.
+   *
+   * Failures are collected per-duty (e.g. patient has no active bill) and
+   * surfaced to the caller — the recompute itself still proceeds.
+   */
+  async rematerializeForEmployeePeriod(
+    employeeId: string,
+    period: string,
+    ctx: DutyServiceContext
+  ): Promise<ApiResult<RematerializeReport>> {
+    if (!employeeId || !/^\d{4}-\d{2}$/.test(period)) {
+      return failure(
+        "employeeId + period (YYYY-MM) are required",
+        ErrorCodes.badRequest,
+        { employeeId, period }
+      );
+    }
+    const access = dbAccess(ctx);
+    const [y, mo] = period.split("-").map((n) => parseInt(n, 10));
+    const startDay = `${period}-01`;
+    // Last day of period as YYYY-MM-DD (works for Dec rollover).
+    const lastDate = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    const endDay = `${period}-${String(lastDate).padStart(2, "0")}`;
+    const fromIso = `${startDay}T00:00:00.000Z`;
+    const toIso = `${endDay}T23:59:59.999Z`;
+
+    const list = await dutyRepository.list(
+      {
+        employeeId,
+        from: fromIso,
+        to: toIso,
+        limit: 500
+      },
+      access
+    );
+    if (!list.success) return passFailure(list);
+    const rows = list.data?.rows || [];
+
+    const report: RematerializeReport = {
+      period,
+      employee_id: employeeId,
+      duties_scanned: rows.length,
+      duties_materialized: 0,
+      duties_skipped: 0,
+      failures: []
+    };
+
+    for (const duty of rows) {
+      const status = String(duty.status || "").toUpperCase();
+      if (status === "CANCELLED" || status === "NO_SHOW") {
+        report.duties_skipped += 1;
+        continue;
+      }
+      try {
+        const mat = await this.materializeDuty(duty, ctx, {
+          from: startDay,
+          to: endDay
+        });
+        if (mat.success) {
+          report.duties_materialized += 1;
+        } else {
+          report.failures.push({
+            duty_id: String(duty.id || ""),
+            reason: mat.error || mat.code || "unknown"
+          });
+        }
+      } catch (err) {
+        report.failures.push({
+          duty_id: String(duty.id || ""),
+          reason: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+
+    return success(report);
+  },
+
   async materializeDuty(
     duty: JsonRow,
     ctx: DutyServiceContext,

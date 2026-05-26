@@ -27,7 +27,8 @@ vi.mock("@/services/payoutService", () => ({
     lock: vi.fn(),
     markPaid: vi.fn(),
     payAdvance: vi.fn(),
-    pendingForEmployeePeriod: vi.fn()
+    pendingForEmployeePeriod: vi.fn(),
+    pendingEmployeesForPeriod: vi.fn()
   }
 }));
 
@@ -51,6 +52,7 @@ import { POST as PayoutLock } from "../../../app/api/v1/payouts/[id]/lock/route"
 import { POST as PayoutPay } from "../../../app/api/v1/payouts/pay/route";
 import { POST as PayoutPayAdvance } from "../../../app/api/v1/payouts/[id]/pay-advance/route";
 import { GET as PayoutPending } from "../../../app/api/v1/payouts/pending/route";
+import { GET as PayoutPendingEmployees } from "../../../app/api/v1/payouts/pending-employees/route";
 
 const m = payoutService as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
@@ -320,6 +322,71 @@ describe("GET /api/v1/payouts/pending", () => {
     expect(body.employee_name).toBe("Manisha Asari");
     expect(m.pendingForEmployeePeriod).toHaveBeenCalledWith(
       { employee_id: "EMP1", period: "2026-05" },
+      expect.any(Object)
+    );
+  });
+});
+
+describe("GET /api/v1/payouts/pending-employees", () => {
+  beforeEach(() => {
+    setActor(null);
+    vi.clearAllMocks();
+  });
+
+  it("requires auth", async () => {
+    const req = makeRequest("GET", "/api/v1/payouts/pending-employees?period=2026-05", {
+      noAuth: true
+    });
+    const res = await PayoutPendingEmployees(req, ctx({}));
+    await expectErrorEnvelope(res, 401, "unauthorized");
+  });
+
+  it("returns the unpaid-employees envelope for an authed reader", async () => {
+    setActor(ACTORS.accountant);
+    m.pendingEmployeesForPeriod.mockResolvedValue({
+      success: true,
+      data: {
+        period: "2026-05",
+        total_pending: 14500,
+        rows: [
+          {
+            employee_id: "EMP1",
+            employee_name: "Manisha Asari",
+            charged: 12000,
+            paid: 4000,
+            pending: 8000,
+            duty_count: 24,
+            payout_id: "PAY1",
+            payout_status: "LOCKED"
+          },
+          {
+            employee_id: "EMP2",
+            employee_name: "Rakesh Kumar",
+            charged: 6500,
+            paid: 0,
+            pending: 6500,
+            duty_count: 13,
+            payout_id: null,
+            payout_status: null
+          }
+        ]
+      }
+    });
+    const req = makeRequest(
+      "GET",
+      "/api/v1/payouts/pending-employees?period=2026-05"
+    );
+    const res = await PayoutPendingEmployees(req, ctx({}));
+    const body = await expectOkEnvelope<{
+      total_pending: number;
+      rows: Array<{ employee_name: string; payout_id: string | null }>;
+    }>(res);
+    expect(body.total_pending).toBe(14500);
+    expect(body.rows).toHaveLength(2);
+    expect(body.rows[0].employee_name).toBe("Manisha Asari");
+    expect(body.rows[1].payout_id).toBeNull();
+    expect(m.pendingEmployeesForPeriod).toHaveBeenCalledWith(
+      { period: "2026-05" },
       expect.any(Object)
     );
   });

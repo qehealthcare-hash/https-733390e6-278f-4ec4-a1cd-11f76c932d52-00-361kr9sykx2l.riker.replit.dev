@@ -16,11 +16,28 @@ import { payoutRepository } from "@/database/payoutRepository";
 import { employeeRepository } from "@/database/employeeRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { attendanceRepository } from "@/database/attendanceRepository";
+import { dutyDiaryService } from "@/services/dutyDiaryService";
 
 vi.mock("@/database/payoutRepository");
 vi.mock("@/database/employeeRepository");
 vi.mock("@/database/dutyRepository");
 vi.mock("@/database/attendanceRepository");
+vi.mock("@/services/dutyDiaryService", () => ({
+  dutyDiaryService: {
+    rematerializeForEmployeePeriod: vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        period: "2026-05",
+        employee_id: "EMP1",
+        duties_scanned: 0,
+        duties_materialized: 0,
+        duties_skipped: 0,
+        failures: []
+      }
+    }),
+    materializeDuty: vi.fn().mockResolvedValue({ success: true, data: null })
+  }
+}));
 vi.mock("@/services/mutationAudit", () => ({
   writeMutationAudit: vi.fn().mockResolvedValue({ success: true, data: null }),
   finalizeWithAudit: vi.fn((_audit, data) => ({ success: true, data }))
@@ -352,5 +369,219 @@ describe("payoutService.list", () => {
     expect(employeeRepository.findByIds).toHaveBeenCalledTimes(1);
     expect(result.data.rows[0].employee_name).toBe("Manisha Asari");
     expect(result.data.rows[1].employee_name).toBe("Rakesh Kumar");
+  });
+});
+
+describe("payoutService.pendingEmployeesForPeriod", () => {
+  it("rejects bad period format with validation error", async () => {
+    const result = await payoutService.pendingEmployeesForPeriod(
+      { period: "not-a-month" },
+      ctx
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("validation_error");
+  });
+
+  it("aggregates pending rows with employee_name and links existing payout row", async () => {
+    vi.mocked(payoutRepository.pendingEmployeesForPeriodRpc).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          employee_id: "EMP1",
+          charged: 12000,
+          paid: 4000,
+          pending: 8000,
+          duty_count: 24
+        },
+        {
+          employee_id: "EMP2",
+          charged: 6500,
+          paid: 0,
+          pending: 6500,
+          duty_count: 13
+        }
+      ]
+    });
+    vi.mocked(payoutRepository.listByPeriod).mockResolvedValue({
+      success: true,
+      data: [
+        payoutRow({ id: "PAY1", employee_id: "EMP1", status: "LOCKED" })
+        // EMP2 has no payout row yet, simulating "needs Ensure"
+      ]
+    });
+    vi.mocked(employeeRepository.findByIds).mockResolvedValue({
+      success: true,
+      data: [
+        { id: "EMP1", fn: "Manisha", ln: "Asari" },
+        { id: "EMP2", fn: "Rakesh", ln: "Kumar" }
+      ]
+    });
+
+    const result = await payoutService.pendingEmployeesForPeriod(
+      { period: "2026-05" },
+      ctx
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success || !result.data) throw new Error("expected data");
+    expect(result.data.period).toBe("2026-05");
+    expect(result.data.total_pending).toBe(14500);
+    expect(result.data.rows).toHaveLength(2);
+
+    const byId = Object.fromEntries(
+      result.data.rows.map((r) => [r.employee_id, r])
+    );
+    expect(byId.EMP1.employee_name).toBe("Manisha Asari");
+    expect(byId.EMP1.payout_id).toBe("PAY1");
+    expect(byId.EMP1.payout_status).toBe("LOCKED");
+    expect(byId.EMP2.payout_id).toBeNull();
+    expect(byId.EMP2.payout_status).toBeNull();
+    expect(byId.EMP2.pending).toBe(6500);
+  });
+});
+
+describe("payoutService.ensure re-materializes duties before recomputing", () => {
+  it("calls dutyDiaryService.rematerializeForEmployeePeriod for the employee×period", async () => {
+    vi.mocked(payoutRepository.recomputeRpc).mockResolvedValue({
+      success: true,
+      data: { payout_id: "PAY1", duties: 1, hours: 8 }
+    });
+    vi.mocked(payoutRepository.findById).mockResolvedValue({
+      success: true,
+      data: payoutRow({ id: "PAY1", gross_amount: 1200 })
+    });
+
+    const result = await payoutService.ensure(
+      { employee_id: "EMP1", period_month: "2026-05" },
+      ctx
+    );
+
+    expect(result.success).toBe(true);
+    expect(
+      dutyDiaryService.rematerializeForEmployeePeriod
+    ).toHaveBeenCalledWith("EMP1", "2026-05", expect.any(Object));
+    // Recompute RPC is called AFTER materialization so latest charges flow in.
+    expect(payoutRepository.recomputeRpc).toHaveBeenCalledAfter(
+      vi.mocked(dutyDiaryService.rematerializeForEmployeePeriod) as never
+    );
+  });
+
+  it("does not block recompute when rematerialize reports failures", async () => {
+    vi.mocked(dutyDiaryService.rematerializeForEmployeePeriod).mockResolvedValueOnce({
+      success: false,
+      error: "boom",
+      code: "internal_error"
+    });
+    vi.mocked(payoutRepository.recomputeRpc).mockResolvedValue({
+      success: true,
+      data: { payout_id: "PAY1", duties: 1, hours: 8 }
+    });
+    vi.mocked(payoutRepository.findById).mockResolvedValue({
+      success: true,
+      data: payoutRow({ id: "PAY1", gross_amount: 1200 })
+    });
+
+    const result = await payoutService.ensure(
+      { employee_id: "EMP1", period_month: "2026-05" },
+      ctx
+    );
+
+    expect(result.success).toBe(true);
+    expect(payoutRepository.recomputeRpc).toHaveBeenCalledWith(
+      "EMP1",
+      "2026-05",
+      expect.any(Object)
+    );
+  });
+});
+
+describe("payoutService.getById diagnostics", () => {
+  it("flags zero-rate charge rows as the root cause when gross is ₹0 but duties exist", async () => {
+    vi.mocked(payoutRepository.findById).mockResolvedValue({
+      success: true,
+      data: payoutRow({ id: "PAY1", gross_amount: 0 })
+    });
+    vi.mocked(dutyRepository.list).mockResolvedValue({
+      success: true,
+      data: {
+        rows: [
+          {
+            id: "DUTY1",
+            employee_id: "EMP1",
+            patient_id: "PAT1",
+            start_at: "2026-05-01T00:00:00Z",
+            end_at: "2026-05-31T23:59:59Z",
+            status: "IN_PROGRESS",
+            shift_type: "DAY"
+          }
+        ],
+        total: 1
+      }
+    });
+    vi.mocked(attendanceRepository.listForEmployeeMonth).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(payoutRepository.listPaidTransactionsByPayout).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(payoutRepository.listChargesByEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: [
+        { id: "C1", svc_key: "SVC1", date: "2026-05-01", amount: 0 },
+        { id: "C2", svc_key: "SVC1", date: "2026-05-02", amount: 0 }
+      ]
+    });
+
+    const result = await payoutService.getById("PAY1", ctx);
+    expect(result.success).toBe(true);
+    if (!result.success || !result.data) throw new Error("expected data");
+    const d = result.data.diagnostics;
+    expect(d.charge_row_count).toBe(2);
+    expect(d.charge_sum).toBe(0);
+    expect(d.charge_zero_rate_rows).toBe(2);
+    expect(d.duty_row_count).toBe(1);
+    expect(d.warning).toMatch(/every row has amount ₹0/i);
+  });
+
+  it("flags missing charges when duties exist but materialization never ran", async () => {
+    vi.mocked(payoutRepository.findById).mockResolvedValue({
+      success: true,
+      data: payoutRow({ id: "PAY1", gross_amount: 0 })
+    });
+    vi.mocked(dutyRepository.list).mockResolvedValue({
+      success: true,
+      data: {
+        rows: [
+          {
+            id: "DUTY1",
+            employee_id: "EMP1",
+            patient_id: "PAT1",
+            start_at: "2026-05-01T00:00:00Z",
+            end_at: "2026-05-31T23:59:59Z",
+            status: "IN_PROGRESS"
+          }
+        ],
+        total: 1
+      }
+    });
+    vi.mocked(attendanceRepository.listForEmployeeMonth).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(payoutRepository.listPaidTransactionsByPayout).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(payoutRepository.listChargesByEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: []
+    });
+
+    const result = await payoutService.getById("PAY1", ctx);
+    expect(result.success).toBe(true);
+    if (!result.success || !result.data) throw new Error("expected data");
+    expect(result.data.diagnostics.warning).toMatch(/no payout charges have been materialized/i);
   });
 });
