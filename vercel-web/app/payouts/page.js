@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
@@ -60,7 +60,7 @@ function emptyAdvanceForm() {
   };
 }
 
-export default function PayoutsPage() {
+function PayoutsPageContent() {
   var auth = useAuth();
   var userRole = auth.profile?.role || "";
   var canWrite = hasPermission(userRole, "payouts.write");
@@ -2382,5 +2382,21 @@ export default function PayoutsPage() {
         </div>
       </AppShell>
     </AuthGuard>
+  );
+}
+
+export default function PayoutsPage() {
+  return (
+    <Suspense
+      fallback={
+        <AuthGuard permission="payouts.read">
+          <AppShell title="Payouts">
+            <div className="helper-box">Loading payouts…</div>
+          </AppShell>
+        </AuthGuard>
+      }
+    >
+      <PayoutsPageContent />
+    </Suspense>
   );
 }
