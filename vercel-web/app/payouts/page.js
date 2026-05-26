@@ -580,53 +580,13 @@ export default function PayoutsPage() {
     }
   }
 
-  function patientBreakdownHtml() {
-    var rows = Array.isArray(detail?.breakdown) ? detail.breakdown : [];
-    if (!rows.length) return "";
-    var totalAmount = 0;
-    var totalDays = 0;
-    var body = rows
-      .map(function (r) {
-        var days = Array.isArray(r.dates) ? r.dates.length : r.duty_count || 0;
-        totalAmount += Number(r.amount || 0);
-        totalDays += days;
-        var dateRange = "";
-        if (Array.isArray(r.dates) && r.dates.length) {
-          dateRange = r.dates[0] + " → " + r.dates[r.dates.length - 1];
-        }
-        return (
-          "<tr><td>" +
-          (r.patient_name || r.patient_id) +
-          "</td><td>" +
-          days +
-          "</td><td>" +
-          (r.hours || 0) +
-          "</td><td>" +
-          dateRange +
-          "</td><td style='text-align:right'>" +
-          formatCurrency(r.amount) +
-          "</td></tr>"
-        );
-      })
-      .join("");
-    return (
-      "<h3>Per-patient breakdown</h3>" +
-      "<table><thead><tr><th>Patient</th><th>Days worked</th><th>Hours</th><th>Range</th><th style='text-align:right'>Amount</th></tr></thead>" +
-      "<tbody>" +
-      body +
-      "<tr><td colspan='4'><strong>Total (" +
-      rows.length +
-      " patient" +
-      (rows.length === 1 ? "" : "s") +
-      ", " +
-      totalDays +
-      " day" +
-      (totalDays === 1 ? "" : "s") +
-      ")</strong></td><td style='text-align:right'><strong>" +
-      formatCurrency(totalAmount) +
-      "</strong></td></tr>" +
-      "</tbody></table>"
-    );
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   function printPayout() {
@@ -637,19 +597,19 @@ export default function PayoutsPage() {
       ? detail.paid_transactions
       : [];
     var paidTable = paidRows.length
-      ? "<table><thead><tr><th>Serial</th><th>Kind</th><th>Date</th><th>Method</th><th style='text-align:right'>Amount</th></tr></thead><tbody>" +
+      ? "<table><thead><tr><th>Serial</th><th>Kind</th><th>Date</th><th>Method</th><th>Amount</th></tr></thead><tbody>" +
         paidRows
           .map(function (t) {
             return (
               "<tr><td>" +
-              (t.serial_no || t.id) +
+              escapeHtml(t.serial_no || t.id) +
               "</td><td>" +
-              (t.tx_kind || "FINAL") +
+              escapeHtml(t.tx_kind || "FINAL") +
               "</td><td>" +
-              (t.paid_on || "") +
+              escapeHtml(t.paid_on || "") +
               "</td><td>" +
-              (t.method || "") +
-              "</td><td style='text-align:right'>" +
+              escapeHtml(t.method || "") +
+              "</td><td>" +
               formatCurrency(t.amount) +
               "</td></tr>"
             );
@@ -657,52 +617,75 @@ export default function PayoutsPage() {
           .join("") +
         "</tbody></table>"
       : "";
-    var statusColor =
-      String(row.status) === "PAID"
-        ? "#00a37a"
-        : String(row.status) === "LOCKED"
-        ? "#8b5e00"
-        : "#0c5adb";
-    var statusBadge =
-      "<span style='display:inline-block;padding:3px 10px;border-radius:999px;background:" +
-      statusColor +
-      ";color:#fff;font-weight:700;font-size:12px;'>" +
-      row.status +
-      "</span>";
+
+    var pb = Array.isArray(detail.patient_breakdown)
+      ? detail.patient_breakdown
+      : [];
+    var patientTable = pb.length
+      ? "<table><thead><tr><th>#</th><th>Patient</th><th>Days present</th><th>Hours</th><th>Charged days</th><th>Window</th><th>Amount</th></tr></thead><tbody>" +
+        pb
+          .map(function (p, idx) {
+            return (
+              "<tr><td>" +
+              (idx + 1) +
+              "</td><td>" +
+              escapeHtml(p.patient_name || p.patient_id) +
+              "</td><td>" +
+              (p.days_worked || 0) +
+              "</td><td>" +
+              (p.hours || 0) +
+              "</td><td>" +
+              (p.charged_days || 0) +
+              "</td><td>" +
+              escapeHtml(
+                (p.first_date || "-") + " → " + (p.last_date || "-")
+              ) +
+              "</td><td>" +
+              formatCurrency(p.amount) +
+              "</td></tr>"
+            );
+          })
+          .join("") +
+        "</tbody></table>"
+      : "";
+
     var body =
       "<h2>Payout Statement</h2>" +
       "<div class='meta'><strong>Employee:</strong> " +
-      name +
+      escapeHtml(name) +
       "</div>" +
       "<div class='meta'><strong>Period:</strong> " +
-      row.period_month +
+      escapeHtml(row.period_month) +
       "</div>" +
       "<div class='meta'><strong>Status:</strong> " +
-      statusBadge +
+      escapeHtml(row.status) +
       "</div>" +
-      "<table><thead><tr><th>Field</th><th style='text-align:right'>Amount</th></tr></thead><tbody>" +
-      "<tr><td>Gross</td><td style='text-align:right'>" + formatCurrency(row.gross_amount) + "</td></tr>" +
-      "<tr><td>Duty count</td><td style='text-align:right'>" + (row.duty_count || 0) + "</td></tr>" +
-      "<tr><td>Hours</td><td style='text-align:right'>" + (row.hours || 0) + "</td></tr>" +
-      "<tr><td>Advance</td><td style='text-align:right'>" + formatCurrency(row.advance) + "</td></tr>" +
-      "<tr><td>Deduction</td><td style='text-align:right'>" + formatCurrency(row.deduction) + "</td></tr>" +
-      "<tr><td>Bonus</td><td style='text-align:right'>" + formatCurrency(row.bonus) + "</td></tr>" +
-      "<tr><td><strong>Net</strong></td><td style='text-align:right'><strong>" + formatCurrency(row.net_amount) + "</strong></td></tr>" +
-      "<tr><td>Paid so far</td><td style='text-align:right'>" + formatCurrency(detail.paid_total || 0) + "</td></tr>" +
-      "<tr><td>Outstanding</td><td style='text-align:right'>" + formatCurrency(detail.outstanding || 0) + "</td></tr>" +
+      "<table><thead><tr><th>Field</th><th>Amount</th></tr></thead><tbody>" +
+      "<tr><td>Gross</td><td>" + formatCurrency(row.gross_amount) + "</td></tr>" +
+      "<tr><td>Duty count</td><td>" + (row.duty_count || 0) + "</td></tr>" +
+      "<tr><td>Hours</td><td>" + (row.hours || 0) + "</td></tr>" +
+      "<tr><td>Advance</td><td>" + formatCurrency(row.advance) + "</td></tr>" +
+      "<tr><td>Deduction</td><td>" + formatCurrency(row.deduction) + "</td></tr>" +
+      "<tr><td>Bonus</td><td>" + formatCurrency(row.bonus) + "</td></tr>" +
+      "<tr><td><strong>Net</strong></td><td><strong>" + formatCurrency(row.net_amount) + "</strong></td></tr>" +
+      "<tr><td>Paid so far</td><td>" + formatCurrency(detail.paid_total || 0) + "</td></tr>" +
+      "<tr><td>Outstanding</td><td>" + formatCurrency(detail.outstanding || 0) + "</td></tr>" +
       "</tbody></table>" +
-      patientBreakdownHtml() +
+      (patientTable
+        ? "<h3>Patients worked (" + pb.length + ")</h3>" + patientTable
+        : "") +
       (paidTable ? "<h3>Disbursements</h3>" + paidTable : "") +
       (row.paid_at ? "<div class='meta'><strong>Paid on:</strong> " + formatDate(row.paid_at) + "</div>" : "") +
-      (row.remarks ? "<div class='meta'><strong>Remarks:</strong> " + row.remarks + "</div>" : "");
-    openPrintWindow("Payout " + name + " " + row.period_month, body);
+      (row.remarks ? "<div class='meta'><strong>Remarks:</strong> " + escapeHtml(row.remarks) + "</div>" : "");
+    openPrintWindow("Payout " + row.id, body);
   }
 
   // One-receipt-per-transaction PDF. Includes serial, employee name, payout
-  // ref, method, amount, remarks AND the embedded payment proof image so the
-  // operator can save a single PDF that doubles as the audit record. Days
-  // worked per patient are listed at the bottom so the recipient sees what
-  // the payment covers.
+  // ref, method, amount, remarks, the per-patient breakdown for the period
+  // (so the receipt explains "this ₹X is for N days across M patients"),
+  // and the payment proof embedded as an image when the proof is an image
+  // file. PDF proofs are linked instead of embedded — print engines vary
+  // wildly on cross-doc embedding.
   async function printReceipt(tx) {
     if (!tx) return;
     var row = detail?.payout || null;
@@ -712,43 +695,6 @@ export default function PayoutsPage() {
     var period = row?.period_month || tx.period_month || "";
     var kindLabel = String(tx.tx_kind || "FINAL") === "ADVANCE" ? "Advance Receipt" : "Payout Receipt";
 
-    // Resolve a signed URL for the proof so we can embed it in the PDF. The
-    // signed download endpoint returns a URL valid for ~15 minutes — enough
-    // time for the user to view + save as PDF from the print dialog.
-    var proofHtml = "<div class='meta'><em>No payment proof attached</em></div>";
-    var proofIsImage = false;
-    if (tx.proof_bucket && tx.proof_path) {
-      try {
-        var signed = await getDocumentSignedUrl(
-          { bucket: tx.proof_bucket, path: tx.proof_path, file_name: tx.photo },
-          auth.session
-        );
-        if (signed?.signedUrl) {
-          var path = String(tx.proof_path || "").toLowerCase();
-          proofIsImage = /\.(png|jpe?g|webp|gif|bmp|svg)$/.test(path);
-          if (proofIsImage) {
-            proofHtml =
-              "<div class='proof-wrap'><img src='" +
-              signed.signedUrl +
-              "' alt='Payment proof' class='proof-img'/></div>";
-          } else {
-            // PDFs / non-images: link out so the saved PDF stays clickable.
-            proofHtml =
-              "<div class='meta'><strong>Proof file:</strong> " +
-              (tx.photo || tx.proof_path) +
-              " — <a href='" +
-              signed.signedUrl +
-              "'>open original</a></div>";
-          }
-        }
-      } catch (err) {
-        proofHtml =
-          "<div class='meta' style='color:#b91c1c'>Could not load proof: " +
-          (err.message || "") +
-          "</div>";
-      }
-    }
-
     var rows = [
       ["Receipt no", tx.serial_no || tx.id || ""],
       ["Type", tx.tx_kind || "FINAL"],
@@ -756,55 +702,103 @@ export default function PayoutsPage() {
       ["Period", period],
       ["Paid on", tx.paid_on || ""],
       ["Method", tx.method || ""],
-      ["Amount", "<strong style='color:#00a37a'>" + formatCurrency(tx.amount) + "</strong>"],
+      ["Amount", formatCurrency(tx.amount)],
       ["Payout ref", row ? row.id : "-"],
       ["Remarks", tx.remarks || "-"]
     ];
     var rowsHtml = rows
       .map(function (pair) {
         return (
-          "<tr><th style='width:35%;text-align:left'>" +
-          pair[0] +
+          "<tr><th style='width:35%'>" +
+          escapeHtml(pair[0]) +
           "</th><td>" +
-          (pair[1] === null || pair[1] === undefined ? "" : pair[1]) +
+          (pair[1] === null || pair[1] === undefined ? "" : escapeHtml(pair[1])) +
           "</td></tr>"
         );
       })
       .join("");
 
-    var breakdownHtml = patientBreakdownHtml();
-    var body =
-      "<style>" +
-      ".proof-wrap{margin-top:18px;padding:10px;border:1px solid #dbe3ee;border-radius:8px;background:#f8fafc;text-align:center}" +
-      ".proof-img{max-width:520px;max-height:520px;display:block;margin:0 auto;border:1px solid #94a3b8;border-radius:4px}" +
-      ".paid-badge{display:inline-block;padding:6px 18px;border-radius:999px;background:#00a37a;color:#fff;font-weight:800;letter-spacing:1px;margin-bottom:10px}" +
-      "</style>" +
-      "<div style='text-align:center'><div class='paid-badge'>" +
-      kindLabel.toUpperCase() +
-      " — " +
-      formatCurrency(tx.amount) +
-      "</div></div>" +
-      "<h2 style='text-align:center;margin-top:0'>" + kindLabel + "</h2>" +
-      "<table><tbody>" + rowsHtml + "</tbody></table>" +
-      "<h3>Payment proof</h3>" +
-      proofHtml +
-      breakdownHtml +
-      "<div class='stamp'>I, <strong>" +
-      name +
-      "</strong>, confirm receiving " +
-      formatCurrency(tx.amount) +
-      " from Hominal Healthcare Pvt Ltd on " +
-      (tx.paid_on || formatDate(new Date().toISOString())) +
-      " via " +
-      (tx.method || "") +
-      " for the period " +
-      period +
-      ".</div>";
+    // Patient × days table — directly answers "this receipt was earned
+    // working with which patient(s) for how many days?"
+    var pbAll = Array.isArray(detail?.patient_breakdown)
+      ? detail.patient_breakdown
+      : [];
+    var pb = pbAll.filter(function (p) {
+      return Number(p.days_worked || 0) > 0 || Number(p.amount || 0) > 0;
+    });
+    var patientTable = pb.length
+      ? "<h3>Days worked this period (" + pb.length + " patient" + (pb.length === 1 ? "" : "s") + ")</h3>" +
+        "<table><thead><tr><th>#</th><th>Patient</th><th>Days present</th><th>Hours</th><th>Window</th><th>Amount</th></tr></thead><tbody>" +
+        pb
+          .map(function (p, idx) {
+            return (
+              "<tr><td>" +
+              (idx + 1) +
+              "</td><td>" +
+              escapeHtml(p.patient_name || p.patient_id) +
+              "</td><td>" +
+              (p.days_worked || 0) +
+              "</td><td>" +
+              (p.hours || 0) +
+              "</td><td>" +
+              escapeHtml((p.first_date || "-") + " → " + (p.last_date || "-")) +
+              "</td><td>" +
+              formatCurrency(p.amount) +
+              "</td></tr>"
+            );
+          })
+          .join("") +
+        "</tbody></table>"
+      : "";
 
-    openPrintWindow(
-      kindLabel + " " + name + " " + (tx.serial_no || tx.id || ""),
-      body
-    );
+    // Resolve the proof into a signed URL + decide whether to embed as
+    // <img> (images) or link (PDFs / unknown types). Failures are non-fatal
+    // — the receipt still prints with a "proof on file" note so the user
+    // can save the PDF and attach the proof manually if needed.
+    var proofHtml = "";
+    if (tx.proof_bucket && tx.proof_path) {
+      try {
+        var signed = await getDocumentSignedUrl(
+          { bucket: tx.proof_bucket, path: tx.proof_path, file_name: tx.photo },
+          auth.session
+        );
+        var url = signed && signed.signedUrl;
+        var lower = String(tx.photo || tx.proof_path || "").toLowerCase();
+        var isImage = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(lower);
+        if (url && isImage) {
+          proofHtml =
+            "<h3>Payment proof</h3>" +
+            "<div style='margin:6px 0'>" +
+            "<img src='" + url + "' alt='Payment proof' style='max-width:100%;max-height:520px;border:1px solid #dbe3ee;border-radius:6px'/>" +
+            "</div>" +
+            "<div class='meta'>Source: " + escapeHtml(tx.photo || tx.proof_path) + "</div>";
+        } else if (url) {
+          proofHtml =
+            "<h3>Payment proof</h3>" +
+            "<div class='meta'>File: " + escapeHtml(tx.photo || tx.proof_path) + "</div>" +
+            "<div class='meta'><a href='" + url + "' target='_blank'>Open proof in new tab</a></div>";
+        } else {
+          proofHtml =
+            "<h3>Payment proof</h3>" +
+            "<div class='meta'>Reference: " + escapeHtml(tx.photo || tx.proof_path) + " (signing failed — open from the disbursement row).</div>";
+        }
+      } catch (err) {
+        proofHtml =
+          "<h3>Payment proof</h3>" +
+          "<div class='meta'>Reference: " + escapeHtml(tx.photo || tx.proof_path) + " (" + escapeHtml(err.message || "could not fetch signed URL") + ")</div>";
+      }
+    } else {
+      proofHtml = "<div class='meta' style='color:#b91c1c'><strong>No payment proof was attached.</strong></div>";
+    }
+
+    var body =
+      "<h2>" + kindLabel + "</h2>" +
+      "<table><tbody>" + rowsHtml + "</tbody></table>" +
+      patientTable +
+      proofHtml +
+      "<div class='stamp'>I confirm I have received the above amount from Hominal Healthcare Pvt Ltd.</div>";
+
+    openPrintWindow(kindLabel + " " + (tx.serial_no || tx.id || ""), body);
   }
 
   function startEnsureForEmployee(empId, period) {
@@ -835,6 +829,10 @@ export default function PayoutsPage() {
     ? payout.employee_name || employeeDisplayName(payout.employee_id)
     : "";
   var diagnostics = detail?.diagnostics || null;
+  var patientBreakdown = Array.isArray(detail?.patient_breakdown)
+    ? detail.patient_breakdown
+    : [];
+  var multiPatient = patientBreakdown.length > 1;
 
   return (
     <AuthGuard permission="payouts.read">
@@ -1217,78 +1215,6 @@ export default function PayoutsPage() {
                     </div>
                   </div>
 
-                  {isPaid && outstanding <= 0 ? (
-                    <div
-                      className="helper-box"
-                      style={{
-                        background: "#dcfce7",
-                        borderColor: "#16a34a",
-                        textAlign: "center",
-                        fontWeight: 700,
-                        color: "#166534",
-                        fontSize: 16
-                      }}
-                    >
-                      ✓ PAID — {formatCurrency(paidTotal)} disbursed in{" "}
-                      {paidTransactions.length} transaction
-                      {paidTransactions.length === 1 ? "" : "s"}
-                    </div>
-                  ) : paidTotal > 0 && outstanding > 0 ? (
-                    <div
-                      className="helper-box"
-                      style={{
-                        background: "#fef9c3",
-                        borderColor: "#ca8a04",
-                        color: "#854d0e",
-                        fontWeight: 600
-                      }}
-                    >
-                      Partially paid — {formatCurrency(paidTotal)} of{" "}
-                      {formatCurrency(payout.net_amount || 0)} ·{" "}
-                      <strong>{formatCurrency(outstanding)} still pending</strong>
-                    </div>
-                  ) : null}
-
-                  {Array.isArray(detail?.breakdown) && detail.breakdown.length ? (
-                    <div className="helper-box" style={{ background: "#f0fdf4", borderColor: "#16a34a" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <strong>
-                          Patients worked this period ({detail.breakdown.length})
-                        </strong>
-                        <span className="mini-muted">From duty calendar</span>
-                      </div>
-                      <div className="record-list" style={{ marginTop: 8 }}>
-                        {detail.breakdown.map(function (b) {
-                          var days = Array.isArray(b.dates) ? b.dates.length : b.duty_count || 0;
-                          var range = "";
-                          if (Array.isArray(b.dates) && b.dates.length) {
-                            range = b.dates[0] + " → " + b.dates[b.dates.length - 1];
-                          }
-                          return (
-                            <div key={b.patient_id} className="record-card" style={{ padding: 8 }}>
-                              <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                                <div>
-                                  <h3 style={{ margin: 0 }}>{b.patient_name || b.patient_id}</h3>
-                                  <div className="record-meta">
-                                    <span>{days} day{days === 1 ? "" : "s"}</span>
-                                    <span>{b.hours || 0}h</span>
-                                    {range ? <span>{range}</span> : null}
-                                  </div>
-                                </div>
-                                <div style={{ textAlign: "right" }}>
-                                  <div style={{ fontWeight: 700, color: "#16a34a" }}>
-                                    {formatCurrency(b.amount)}
-                                  </div>
-                                  <div className="mini-muted">{b.patient_id}</div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
-
                   {diagnostics ? (
                     <div
                       className="helper-box"
@@ -1340,6 +1266,43 @@ export default function PayoutsPage() {
                       {diagnostics.warning ? (
                         <div style={{ marginTop: 8, color: "#b91c1c", fontWeight: 600 }}>
                           {diagnostics.warning}
+                        </div>
+                      ) : null}
+                      {patientBreakdown.length ? (
+                        <div className="stack" style={{ marginTop: 12 }}>
+                          <strong>
+                            Patients worked this period ({patientBreakdown.length})
+                            {multiPatient ? " — multi-patient assignment" : ""}
+                          </strong>
+                          <div className="record-list" style={{ maxHeight: 220, overflowY: "auto" }}>
+                            {patientBreakdown.map(function (pb) {
+                              return (
+                                <div key={pb.patient_id} className="record-card" style={{ padding: 10 }}>
+                                  <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                                    <div>
+                                      <h3 style={{ margin: 0 }}>{pb.patient_name || pb.patient_id}</h3>
+                                      <div className="record-meta" style={{ marginTop: 4 }}>
+                                        <span><strong>{pb.days_worked}</strong> day{pb.days_worked === 1 ? "" : "s"} present</span>
+                                        <span>{pb.charged_days} charged</span>
+                                        <span>{pb.hours}h</span>
+                                        {pb.first_date && pb.last_date ? (
+                                          <span>
+                                            {pb.first_date} → {pb.last_date}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                    <div style={{ textAlign: "right" }}>
+                                      <strong>{formatCurrency(pb.amount)}</strong>
+                                      <div className="mini-muted">
+                                        {pb.duty_ids.length} dut{pb.duty_ids.length === 1 ? "y" : "ies"}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       ) : null}
                       {canWrite && Array.isArray(diagnostics.duties_needing_rate) && diagnostics.duties_needing_rate.length > 0 ? (

@@ -74,6 +74,7 @@ import { attendanceRepository } from "@/database/attendanceRepository";
 import { employeeRepository } from "@/database/employeeRepository";
 import { patientRepository } from "@/database/patientRepository";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
+import { parseDutyDiaryRemarks } from "@/business/dutyDiaryRules";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
 import {
@@ -168,12 +169,37 @@ export interface PayoutDetail {
   /** Display-friendly employee name resolved from `hh_employees`. */
   employee_name: string;
   /**
+   * Per-patient breakdown: when an employee works across multiple patients
+   * in a period, this lets the UI/PDF list each patient with the days
+   * worked, hours, and earnings attributable to that patient.
+   */
+  patient_breakdown: PayoutPatientSummary[];
+  /**
    * Data-source diagnostics. Lets the UI explain "why is Gross 0?" by
    * showing exact row counts and sums from every table feeding this payout.
    * All fields are READ-ONLY; mutating the payout requires the normal
    * ensure / adjust / pay paths.
    */
   diagnostics: PayoutDiagnostics;
+}
+
+export interface PayoutPatientSummary {
+  patient_id: string;
+  patient_name: string;
+  /** Days the employee actually worked for this patient (PRESENT attendance). */
+  days_worked: number;
+  /** Total hours across those days. */
+  hours: number;
+  /** Days where a charge row was materialized (i.e. days the duty was active). */
+  charged_days: number;
+  /** Sum of `hh_payout_charges.amount` attributed to this patient. */
+  amount: number;
+  /** Earliest charge date for this patient × employee × period. */
+  first_date: string | null;
+  /** Latest charge date for this patient × employee × period. */
+  last_date: string | null;
+  /** Duty ids contributing to the breakdown (audit hint). */
+  duty_ids: string[];
 }
 
 export interface PayoutDiagnostics {
@@ -380,6 +406,135 @@ function buildDiagnostics(
   return diagnostics;
 }
 
+/**
+ * Build a per-patient summary for a (employee, period) payout.
+ *
+ * Strategy:
+ *   1. Walk duties → map duty_id → patient_id, collect patient ids.
+ *   2. Walk charges → parse `duty:<id>:...` from remarks → look up the
+ *      duty's patient. Sum amount per patient, count distinct dates,
+ *      track first/last date.
+ *   3. Walk attendance → count PRESENT/LATE/HALF_DAY days + hours per
+ *      duty → fold those into the patient bucket.
+ *   4. Hydrate patient names in one batch lookup so the UI / PDF can
+ *      print "Mr. Patel — 22 days · ₹17,600" without an N+1.
+ */
+async function buildPatientBreakdown(
+  duties: JsonRow[],
+  attendance: JsonRow[],
+  charges: JsonRow[],
+  ctx: PayoutServiceContext
+): Promise<PayoutPatientSummary[]> {
+  const dutyToPatient = new Map<string, string>();
+  for (const d of duties) {
+    const id = String(d.id || "");
+    const pid = String(d.patient_id || "");
+    if (id && pid) dutyToPatient.set(id, pid);
+  }
+
+  type Acc = {
+    patient_id: string;
+    amount: number;
+    days: Set<string>;
+    duty_ids: Set<string>;
+    first_date: string | null;
+    last_date: string | null;
+    days_worked: number;
+    hours: number;
+  };
+  const byPatient = new Map<string, Acc>();
+  const ensure = (pid: string): Acc => {
+    let acc = byPatient.get(pid);
+    if (!acc) {
+      acc = {
+        patient_id: pid,
+        amount: 0,
+        days: new Set(),
+        duty_ids: new Set(),
+        first_date: null,
+        last_date: null,
+        days_worked: 0,
+        hours: 0
+      };
+      byPatient.set(pid, acc);
+    }
+    return acc;
+  };
+
+  for (const c of charges) {
+    const parsed = parseDutyDiaryRemarks(String(c.remarks || ""));
+    if (!parsed) continue;
+    const pid = dutyToPatient.get(parsed.dutyId);
+    if (!pid) continue;
+    const acc = ensure(pid);
+    acc.amount += Number(c.amount || 0);
+    acc.duty_ids.add(parsed.dutyId);
+    const date = String(c.date || parsed.isoDate || "").slice(0, 10);
+    if (date) {
+      acc.days.add(date);
+      if (!acc.first_date || date < acc.first_date) acc.first_date = date;
+      if (!acc.last_date || date > acc.last_date) acc.last_date = date;
+    }
+  }
+
+  // Attendance gives the *actual* days worked (PRESENT/LATE/HALF_DAY) per
+  // duty — fold into the patient bucket so the PDF can show "22 days
+  // present" even when charges materialized 30 calendar days.
+  const payableStatuses = new Set(["PRESENT", "LATE", "HALF_DAY"]);
+  for (const a of attendance) {
+    const status = String(a.status || "").toUpperCase();
+    if (!payableStatuses.has(status)) continue;
+    const dutyId = String(a.duty_id || "");
+    const pid = dutyId ? dutyToPatient.get(dutyId) : undefined;
+    if (!pid) continue;
+    const acc = ensure(pid);
+    acc.days_worked += 1;
+    acc.hours += Number(a.hours || 0);
+  }
+
+  // Also make sure every duty's patient appears in the breakdown even when
+  // no charges/attendance exist yet — otherwise "this duty had no
+  // materialization" cases would hide the patient entirely.
+  for (const [, pid] of dutyToPatient) {
+    ensure(pid);
+  }
+
+  const patientIds = Array.from(byPatient.keys());
+  const nameMap = new Map<string, string>();
+  if (patientIds.length) {
+    const rows = await patientRepository.findByIds(patientIds, dbAccess(ctx));
+    if (rows.success && Array.isArray(rows.data)) {
+      for (const row of rows.data) {
+        const id = String(row.id || "");
+        if (!id) continue;
+        const direct = String(row.full_name || row.name || "").trim();
+        if (direct) {
+          nameMap.set(id, direct);
+          continue;
+        }
+        const parts = [row.fn, row.mn, row.ln]
+          .map((p) => String(p || "").trim())
+          .filter(Boolean);
+        nameMap.set(id, parts.join(" ") || id);
+      }
+    }
+  }
+
+  return Array.from(byPatient.values())
+    .map<PayoutPatientSummary>((acc) => ({
+      patient_id: acc.patient_id,
+      patient_name: nameMap.get(acc.patient_id) || acc.patient_id,
+      days_worked: acc.days_worked,
+      hours: Math.round(acc.hours * 100) / 100,
+      charged_days: acc.days.size,
+      amount: Math.round(acc.amount * 100) / 100,
+      first_date: acc.first_date,
+      last_date: acc.last_date,
+      duty_ids: Array.from(acc.duty_ids)
+    }))
+    .sort((a, b) => b.amount - a.amount || b.days_worked - a.days_worked);
+}
+
 /** Load a payout + its source duty/attendance for the breakdown widget. */
 async function loadPayoutDetail(
   payout: JsonRow,
@@ -400,6 +555,7 @@ async function loadPayoutDetail(
       paid_total: 0,
       outstanding: Math.max(0, Number(payout.net_amount || 0)),
       employee_name: employeeName,
+      patient_breakdown: [],
       diagnostics: emptyDiagnostics()
     });
   }
@@ -434,57 +590,17 @@ async function loadPayoutDetail(
     chargeRows,
     zeroRateRows
   );
+  const patientBreakdown = await buildPatientBreakdown(
+    dutyRows,
+    attendanceRows,
+    chargeRows,
+    ctx
+  );
   const paidTotal = paidRows.reduce(
     (sum, r) => sum + Number(r.amount || 0),
     0
   );
   const outstanding = Math.max(0, Number(payout.net_amount || 0) - paidTotal);
-
-  const baseBreakdown = breakdownByPatient(
-    dutyRows.map((d) => ({
-      id: String(d.id),
-      patient_id: (d.patient_id as string | null) ?? null,
-      employee_id: (d.employee_id as string | null) ?? null,
-      start_at: (d.start_at as string | null) ?? null,
-      shift_type: (d.shift_type as string | null) ?? null,
-      status: (d.status as string | null) ?? null
-    })),
-    attendanceRows.map((a) => ({
-      duty_id: (a.duty_id as string | null) ?? null,
-      hours: (a.hours as number | string | null) ?? null,
-      status: (a.status as string | null) ?? null,
-      check_in_at: (a.check_in_at as string | null) ?? null
-    })),
-    chargeRows.map((c) => ({
-      remarks: (c.remarks as string | null) ?? null,
-      amount: (c.amount as number | string | null) ?? null,
-      date: (c.date as string | null) ?? null
-    }))
-  );
-
-  // Hydrate patient names in one batch so the UI / PDF can read
-  // breakdown[i].patient_name without an extra request per row.
-  const patientIds = baseBreakdown.map((r) => r.patient_id).filter(Boolean);
-  if (patientIds.length) {
-    const patients = await patientRepository.findByIds(patientIds, access);
-    if (patients.success && Array.isArray(patients.data)) {
-      const nameById = new Map<string, string>();
-      for (const p of patients.data) {
-        const id = String(p.id || "");
-        if (!id) continue;
-        const direct = String((p.full_name as string | undefined) || "").trim();
-        const parts = [p.fn, p.mn, p.ln]
-          .map((part) => String(part || "").trim())
-          .filter(Boolean);
-        nameById.set(id, direct || parts.join(" ") || id);
-      }
-      for (const row of baseBreakdown) {
-        row.patient_name = nameById.get(row.patient_id) || row.patient_id;
-      }
-    } else {
-      for (const row of baseBreakdown) row.patient_name = row.patient_id;
-    }
-  }
 
   return success({
     payout: { ...payout, employee_name: employeeName },
@@ -494,8 +610,25 @@ async function loadPayoutDetail(
     paid_total: Math.round(paidTotal * 100) / 100,
     outstanding: Math.round(outstanding * 100) / 100,
     employee_name: employeeName,
+    patient_breakdown: patientBreakdown,
     diagnostics,
-    breakdown: baseBreakdown
+    breakdown: breakdownByPatient(
+      dutyRows.map((d) => ({
+        id: String(d.id),
+        patient_id: (d.patient_id as string | null) ?? null,
+        employee_id: (d.employee_id as string | null) ?? null,
+        start_at: (d.start_at as string | null) ?? null,
+        shift_type: (d.shift_type as string | null) ?? null,
+        status: (d.status as string | null) ?? null
+      })),
+      attendanceRows.map((a) => ({
+        duty_id: (a.duty_id as string | null) ?? null,
+        employee_id: (a.employee_id as string | null) ?? null,
+        hours: (a.hours as number | string | null) ?? null,
+        status: (a.status as string | null) ?? null,
+        check_in_at: (a.check_in_at as string | null) ?? null
+      }))
+    )
   });
 }
 

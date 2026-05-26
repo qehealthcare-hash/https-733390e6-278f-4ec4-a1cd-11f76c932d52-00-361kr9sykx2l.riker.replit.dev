@@ -16,17 +16,14 @@ import { payoutRepository } from "@/database/payoutRepository";
 import { employeeRepository } from "@/database/employeeRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { attendanceRepository } from "@/database/attendanceRepository";
+import { patientRepository } from "@/database/patientRepository";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
 
 vi.mock("@/database/payoutRepository");
 vi.mock("@/database/employeeRepository");
 vi.mock("@/database/dutyRepository");
 vi.mock("@/database/attendanceRepository");
-vi.mock("@/database/patientRepository", () => ({
-  patientRepository: {
-    findByIds: vi.fn().mockResolvedValue({ success: true, data: [] })
-  }
-}));
+vi.mock("@/database/patientRepository");
 vi.mock("@/services/dutyDiaryService", () => ({
   dutyDiaryService: {
     rematerializeForEmployeePeriod: vi.fn().mockResolvedValue({
@@ -81,6 +78,10 @@ beforeEach(() => {
     data: { rows: [], total: 0 }
   });
   vi.mocked(attendanceRepository.listForEmployeeMonth).mockResolvedValue({
+    success: true,
+    data: []
+  });
+  vi.mocked(patientRepository.findByIds).mockResolvedValue({
     success: true,
     data: []
   });
@@ -730,5 +731,110 @@ describe("payoutService.setEmployeePeriodPayoutRate", () => {
     );
     expect(result.data.payout.gross_amount).toBe(1600);
     expect(result.data.diagnostics.duties_needing_rate).toHaveLength(0);
+  });
+});
+
+describe("payoutService.getById patient_breakdown", () => {
+  it("groups charges + attendance per patient with hydrated patient_name", async () => {
+    vi.mocked(payoutRepository.findById).mockResolvedValue({
+      success: true,
+      data: payoutRow({ id: "PAY1", gross_amount: 22000, net_amount: 22000 })
+    });
+    // Two duties, two different patients (multi-patient assignment scenario).
+    vi.mocked(dutyRepository.list).mockResolvedValue({
+      success: true,
+      data: {
+        rows: [
+          {
+            id: "DUTY1",
+            patient_id: "PAT1",
+            employee_id: "EMP1",
+            start_at: "2026-05-01T00:00:00Z",
+            end_at: "2026-05-15T23:59:59Z",
+            status: "IN_PROGRESS"
+          },
+          {
+            id: "DUTY2",
+            patient_id: "PAT2",
+            employee_id: "EMP1",
+            start_at: "2026-05-16T00:00:00Z",
+            end_at: "2026-05-31T23:59:59Z",
+            status: "IN_PROGRESS"
+          }
+        ],
+        total: 2
+      }
+    });
+    // 2 PRESENT for DUTY1 (PAT1), 1 PRESENT for DUTY2 (PAT2).
+    vi.mocked(attendanceRepository.listForEmployeeMonth).mockResolvedValue({
+      success: true,
+      data: [
+        { duty_id: "DUTY1", status: "PRESENT", hours: 8 },
+        { duty_id: "DUTY1", status: "PRESENT", hours: 6 },
+        { duty_id: "DUTY2", status: "PRESENT", hours: 8 }
+      ]
+    });
+    vi.mocked(payoutRepository.listPaidTransactionsByPayout).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    // Charges: DUTY1 ⇒ PAT1 (₹10000), DUTY2 ⇒ PAT2 (₹12000).
+    vi.mocked(payoutRepository.listChargesByEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          id: "C1",
+          svc_key: "SVC1",
+          date: "2026-05-01",
+          amount: 5000,
+          remarks: "duty:DUTY1:2026-05-01:EMP1"
+        },
+        {
+          id: "C2",
+          svc_key: "SVC1",
+          date: "2026-05-02",
+          amount: 5000,
+          remarks: "duty:DUTY1:2026-05-02:EMP1"
+        },
+        {
+          id: "C3",
+          svc_key: "SVC2",
+          date: "2026-05-16",
+          amount: 12000,
+          remarks: "duty:DUTY2:2026-05-16:EMP1"
+        }
+      ]
+    });
+    vi.mocked(dutyRepository.findZeroPayoutRateForEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(patientRepository.findByIds).mockResolvedValue({
+      success: true,
+      data: [
+        { id: "PAT1", full_name: "Mr. Patel" },
+        { id: "PAT2", fn: "Mrs.", ln: "Sharma" }
+      ]
+    });
+
+    const result = await payoutService.getById("PAY1", ctx);
+    expect(result.success).toBe(true);
+    if (!result.success || !result.data) throw new Error("expected data");
+    expect(result.data.patient_breakdown).toHaveLength(2);
+
+    const byId = Object.fromEntries(
+      result.data.patient_breakdown.map((p) => [p.patient_id, p])
+    );
+    expect(byId.PAT1.patient_name).toBe("Mr. Patel");
+    expect(byId.PAT1.amount).toBe(10000);
+    expect(byId.PAT1.days_worked).toBe(2);
+    expect(byId.PAT1.charged_days).toBe(2);
+    expect(byId.PAT1.first_date).toBe("2026-05-01");
+    expect(byId.PAT1.last_date).toBe("2026-05-02");
+
+    expect(byId.PAT2.patient_name).toBe("Mrs. Sharma");
+    expect(byId.PAT2.amount).toBe(12000);
+    expect(byId.PAT2.days_worked).toBe(1);
+    expect(byId.PAT2.hours).toBe(8);
   });
 });
