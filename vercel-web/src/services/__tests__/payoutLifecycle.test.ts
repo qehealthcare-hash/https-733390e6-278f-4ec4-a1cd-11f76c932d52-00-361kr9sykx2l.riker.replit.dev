@@ -533,6 +533,10 @@ describe("payoutService.getById diagnostics", () => {
         { id: "C2", svc_key: "SVC1", date: "2026-05-02", amount: 0 }
       ]
     });
+    vi.mocked(dutyRepository.findZeroPayoutRateForEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: []
+    });
 
     const result = await payoutService.getById("PAY1", ctx);
     expect(result.success).toBe(true);
@@ -578,10 +582,148 @@ describe("payoutService.getById diagnostics", () => {
       success: true,
       data: []
     });
+    vi.mocked(dutyRepository.findZeroPayoutRateForEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: []
+    });
 
     const result = await payoutService.getById("PAY1", ctx);
     expect(result.success).toBe(true);
     if (!result.success || !result.data) throw new Error("expected data");
     expect(result.data.diagnostics.warning).toMatch(/no payout charges have been materialized/i);
+  });
+
+  it("lists duties_needing_rate when payout_per_day is 0 on the source duties", async () => {
+    vi.mocked(payoutRepository.findById).mockResolvedValue({
+      success: true,
+      data: payoutRow({ id: "PAY1", gross_amount: 0 })
+    });
+    vi.mocked(dutyRepository.list).mockResolvedValue({
+      success: true,
+      data: { rows: [], total: 0 }
+    });
+    vi.mocked(attendanceRepository.listForEmployeeMonth).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(payoutRepository.listPaidTransactionsByPayout).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(payoutRepository.listChargesByEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(dutyRepository.findZeroPayoutRateForEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          id: "DUTY1",
+          patient_id: "PAT1",
+          service_name: "Care Taker Services",
+          start_at: "2026-05-01T00:00:00Z",
+          end_at: "2026-05-31T23:59:59Z",
+          status: "IN_PROGRESS",
+          charge_per_day: 1200,
+          payout_per_day: 0
+        }
+      ]
+    });
+
+    const result = await payoutService.getById("PAY1", ctx);
+    expect(result.success).toBe(true);
+    if (!result.success || !result.data) throw new Error("expected data");
+    expect(result.data.diagnostics.duties_needing_rate).toHaveLength(1);
+    expect(result.data.diagnostics.duties_needing_rate[0].duty_id).toBe("DUTY1");
+    expect(result.data.diagnostics.warning).toMatch(/payout_per_day = 0/i);
+  });
+});
+
+describe("payoutService.setEmployeePeriodPayoutRate", () => {
+  it("rejects non-positive rate with validation error", async () => {
+    const result = await payoutService.setEmployeePeriodPayoutRate(
+      { employee_id: "EMP1", period: "2026-05", payout_per_day: 0 },
+      ctx
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("validation_error");
+  });
+
+  it("refuses on a PAID payout — settled amounts are immutable", async () => {
+    vi.mocked(payoutRepository.findByEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: payoutRow({ id: "PAY1", status: "PAID" })
+    });
+    const result = await payoutService.setEmployeePeriodPayoutRate(
+      { employee_id: "EMP1", period: "2026-05", payout_per_day: 800 },
+      ctx
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("business_rule_violation");
+  });
+
+  it("bulk-updates zero-rate duties, recomputes, and returns refreshed detail", async () => {
+    vi.mocked(payoutRepository.findByEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: payoutRow({ id: "PAY1", status: "OPEN" })
+    });
+    vi.mocked(dutyRepository.bulkSetPayoutRateForEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: { updated_ids: ["DUTY1", "DUTY2"] }
+    });
+    vi.mocked(payoutRepository.recomputeRpc).mockResolvedValue({
+      success: true,
+      data: { payout_id: "PAY1", duties: 2, hours: 16 }
+    });
+    // loadPayoutDetail fan-out
+    vi.mocked(payoutRepository.findById).mockResolvedValue({
+      success: true,
+      data: payoutRow({ id: "PAY1", gross_amount: 1600, net_amount: 1600 })
+    });
+    vi.mocked(dutyRepository.list).mockResolvedValue({
+      success: true,
+      data: { rows: [], total: 0 }
+    });
+    vi.mocked(attendanceRepository.listForEmployeeMonth).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(payoutRepository.listPaidTransactionsByPayout).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(payoutRepository.listChargesByEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: [
+        { id: "C1", amount: 800, svc_key: "SVC1", date: "2026-05-01" },
+        { id: "C2", amount: 800, svc_key: "SVC1", date: "2026-05-02" }
+      ]
+    });
+    vi.mocked(dutyRepository.findZeroPayoutRateForEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: []
+    });
+
+    const result = await payoutService.setEmployeePeriodPayoutRate(
+      { employee_id: "EMP1", period: "2026-05", payout_per_day: 800 },
+      ctx
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success || !result.data) throw new Error("expected data");
+    expect(dutyRepository.bulkSetPayoutRateForEmployeePeriod).toHaveBeenCalledWith(
+      "EMP1",
+      "2026-05",
+      800,
+      "acct@test.com",
+      expect.any(Object)
+    );
+    expect(payoutRepository.recomputeRpc).toHaveBeenCalledWith(
+      "EMP1",
+      "2026-05",
+      expect.any(Object)
+    );
+    expect(result.data.payout.gross_amount).toBe(1600);
+    expect(result.data.diagnostics.duties_needing_rate).toHaveLength(0);
   });
 });

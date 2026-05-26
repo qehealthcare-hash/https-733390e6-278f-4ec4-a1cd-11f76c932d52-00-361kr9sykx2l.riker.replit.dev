@@ -28,7 +28,8 @@ vi.mock("@/services/payoutService", () => ({
     markPaid: vi.fn(),
     payAdvance: vi.fn(),
     pendingForEmployeePeriod: vi.fn(),
-    pendingEmployeesForPeriod: vi.fn()
+    pendingEmployeesForPeriod: vi.fn(),
+    setEmployeePeriodPayoutRate: vi.fn()
   }
 }));
 
@@ -53,6 +54,7 @@ import { POST as PayoutPay } from "../../../app/api/v1/payouts/pay/route";
 import { POST as PayoutPayAdvance } from "../../../app/api/v1/payouts/[id]/pay-advance/route";
 import { GET as PayoutPending } from "../../../app/api/v1/payouts/pending/route";
 import { GET as PayoutPendingEmployees } from "../../../app/api/v1/payouts/pending-employees/route";
+import { POST as PayoutSetRate } from "../../../app/api/v1/payouts/set-rate/route";
 
 const m = payoutService as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
@@ -387,6 +389,58 @@ describe("GET /api/v1/payouts/pending-employees", () => {
     expect(body.rows[1].payout_id).toBeNull();
     expect(m.pendingEmployeesForPeriod).toHaveBeenCalledWith(
       { period: "2026-05" },
+      expect.any(Object)
+    );
+  });
+});
+
+describe("POST /api/v1/payouts/set-rate", () => {
+  beforeEach(() => {
+    setActor(null);
+    vi.clearAllMocks();
+  });
+
+  it("denies Nurse (read-only role)", async () => {
+    setActor(ACTORS.nurse);
+    const req = makeRequest("POST", "/api/v1/payouts/set-rate", {
+      body: { employee_id: "EMP1", period: "2026-05", payout_per_day: 800 }
+    });
+    const res = await PayoutSetRate(req, ctx({}));
+    await expectErrorEnvelope(res, 403, "forbidden");
+    expect(m.setEmployeePeriodPayoutRate).not.toHaveBeenCalled();
+  });
+
+  it("propagates validation failure for non-positive rate", async () => {
+    setActor(ACTORS.accountant);
+    m.setEmployeePeriodPayoutRate.mockResolvedValue({
+      success: false,
+      code: "validation_error",
+      error: "payout_per_day must be a positive number"
+    });
+    const req = makeRequest("POST", "/api/v1/payouts/set-rate", {
+      body: { employee_id: "EMP1", period: "2026-05", payout_per_day: 0 }
+    });
+    const res = await PayoutSetRate(req, ctx({}));
+    await expectErrorEnvelope(res, 422, "validation_error");
+  });
+
+  it("returns the refreshed PayoutDetail envelope for Accountant", async () => {
+    setActor(ACTORS.accountant);
+    m.setEmployeePeriodPayoutRate.mockResolvedValue({
+      success: true,
+      data: {
+        payout: { id: "PAY1", gross_amount: 1600, net_amount: 1600 },
+        diagnostics: { duties_needing_rate: [], warning: "" }
+      }
+    });
+    const req = makeRequest("POST", "/api/v1/payouts/set-rate", {
+      body: { employee_id: "EMP1", period: "2026-05", payout_per_day: 800 }
+    });
+    const res = await PayoutSetRate(req, ctx({}));
+    const body = await expectOkEnvelope<{ payout: { gross_amount: number } }>(res);
+    expect(body.payout.gross_amount).toBe(1600);
+    expect(m.setEmployeePeriodPayoutRate).toHaveBeenCalledWith(
+      expect.objectContaining({ employee_id: "EMP1", period: "2026-05", payout_per_day: 800 }),
       expect.any(Object)
     );
   });

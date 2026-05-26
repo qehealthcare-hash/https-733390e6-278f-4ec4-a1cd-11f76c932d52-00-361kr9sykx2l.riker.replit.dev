@@ -100,6 +100,7 @@ export default function PayoutsPage() {
   var [payForm, setPayForm] = useState(emptyPayForm());
   var [advanceForm, setAdvanceForm] = useState(emptyAdvanceForm());
   var [advanceOpen, setAdvanceOpen] = useState(false);
+  var [rateRepairRate, setRateRepairRate] = useState("");
   var [pending, setPending] = useState(null);
   var [unpaidEmployees, setUnpaidEmployees] = useState({
     period: "",
@@ -337,6 +338,48 @@ export default function PayoutsPage() {
       await reloadUnpaidEmployees();
     } catch (err) {
       setError(err.message || "Could not adjust payout");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSetRate(event) {
+    if (event && event.preventDefault) event.preventDefault();
+    if (!payout) return;
+    var rate = Number(rateRepairRate);
+    if (!rate || rate <= 0) {
+      setError("Enter a payout per day greater than 0");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await requestWithOfflineFallback(
+        "/payouts/set-rate",
+        {
+          method: "POST",
+          body: {
+            employee_id: payout.employee_id,
+            period: payout.period_month,
+            payout_per_day: rate
+          }
+        },
+        auth.session
+      );
+      setMessage(
+        "Updated payout rate to ₹" +
+          rate +
+          "/day and refreshed " +
+          employeeNameForDetail
+      );
+      setRateRepairRate("");
+      await openPayout(selectedId);
+      await reloadList();
+      await reloadPending();
+      await reloadUnpaidEmployees();
+    } catch (err) {
+      setError(err.message || "Could not update duty rates");
     } finally {
       setBusy(false);
     }
@@ -1096,6 +1139,67 @@ export default function PayoutsPage() {
                       {diagnostics.warning ? (
                         <div style={{ marginTop: 8, color: "#b91c1c", fontWeight: 600 }}>
                           {diagnostics.warning}
+                        </div>
+                      ) : null}
+                      {canWrite && Array.isArray(diagnostics.duties_needing_rate) && diagnostics.duties_needing_rate.length > 0 ? (
+                        <div className="stack" style={{ marginTop: 12 }}>
+                          <strong>
+                            Duties without a payout rate ({diagnostics.duties_needing_rate.length})
+                          </strong>
+                          <div className="record-list" style={{ maxHeight: 180, overflowY: "auto" }}>
+                            {diagnostics.duties_needing_rate.map(function (d) {
+                              return (
+                                <div key={d.duty_id} className="record-card" style={{ padding: 8 }}>
+                                  <div className="record-meta">
+                                    <span>{d.duty_id}</span>
+                                    <span>{d.service_name || ""}</span>
+                                    <span>
+                                      {String(d.start_at || "").slice(0, 10)} →{" "}
+                                      {String(d.end_at || "").slice(0, 10)}
+                                    </span>
+                                    <span className={"status " + String(d.status || "").toLowerCase()}>
+                                      {d.status}
+                                    </span>
+                                    {d.charge_per_day ? (
+                                      <span>Charge ₹{d.charge_per_day}/day</span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <form
+                            className="button-row"
+                            onSubmit={handleSetRate}
+                            style={{ alignItems: "flex-end" }}
+                          >
+                            <div className="field" style={{ minWidth: 180 }}>
+                              <label>Payout per day for these duties</label>
+                              <input
+                                type="number"
+                                min="1"
+                                step="0.01"
+                                placeholder="e.g. 800"
+                                value={rateRepairRate}
+                                onChange={function (event) {
+                                  setRateRepairRate(event.target.value);
+                                }}
+                                disabled={busy || isPaid}
+                              />
+                            </div>
+                            <button
+                              type="submit"
+                              className="button primary"
+                              disabled={busy || isPaid || !rateRepairRate}
+                            >
+                              Set rate &amp; refresh
+                            </button>
+                          </form>
+                          <div className="mini-muted">
+                            Applies to <strong>{diagnostics.duties_needing_rate.length}</strong> duty/duties for{" "}
+                            {employeeNameForDetail} in {payout.period_month}, then re-materializes the diary and
+                            recomputes this payout.
+                          </div>
                         </div>
                       ) : null}
                     </div>

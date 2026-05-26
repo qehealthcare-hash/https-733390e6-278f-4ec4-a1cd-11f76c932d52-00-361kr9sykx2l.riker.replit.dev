@@ -146,6 +146,96 @@ export const dutyRepository = {
     );
   },
 
+  /**
+   * Duties for `employeeId` that overlap `period` (YYYY-MM) AND have
+   * `payout_per_day` <= 0 (or null). Used by the payout repair flow to list
+   * "duties needing a rate" and to bulk-set the rate.
+   *
+   * Note: we deliberately scan `employee_id` (primary partner) only. Extra
+   * partners have their own per-row rates inside the `extra_partners` JSONB
+   * and a different repair surface; the common case driving Gross=₹0 is the
+   * primary employee being saved with rate=0.
+   */
+  async findZeroPayoutRateForEmployeePeriod(
+    employeeId: string,
+    period: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    if (!employeeId || !/^\d{4}-\d{2}$/.test(period)) {
+      return { success: true, data: [] };
+    }
+    const [y, mo] = period.split("-").map((n) => parseInt(n, 10));
+    const startIso = `${period}-01T00:00:00.000Z`;
+    const lastDate = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    const endIso = `${period}-${String(lastDate).padStart(2, "0")}T23:59:59.999Z`;
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(TABLE)
+          .select(
+            "id, employee_id, patient_id, service_name, start_at, end_at, status, charge_per_day, payout_per_day"
+          )
+          .eq("employee_id", employeeId)
+          .not("status", "in", "(CANCELLED,NO_SHOW)")
+          .lte("start_at", endIso)
+          .gte("end_at", startIso)
+          .or("payout_per_day.is.null,payout_per_day.eq.0"),
+      `${SCOPE}.findZeroPayoutRateForEmployeePeriod`
+    );
+    return result;
+  },
+
+  /**
+   * Set `payout_per_day` for every primary-employee duty matching
+   * (employeeId, period) where the existing rate is null or 0. Returns the
+   * ids that were touched. Use the diary materializer + payout recompute to
+   * fan the new rate into hh_payout_charges and hh_payouts.
+   */
+  async bulkSetPayoutRateForEmployeePeriod(
+    employeeId: string,
+    period: string,
+    payoutPerDay: number,
+    actorEmail: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<{ updated_ids: string[] }>> {
+    const zeros = await this.findZeroPayoutRateForEmployeePeriod(employeeId, period, opts);
+    if (!zeros.success) {
+      return {
+        success: false,
+        error: zeros.error,
+        code: zeros.code,
+        details: zeros.details
+      };
+    }
+    const ids = (zeros.data || []).map((row) => String(row.id));
+    if (!ids.length) return { success: true, data: { updated_ids: [] } };
+    const db = resolveClient(opts);
+    const patch: JsonRow = {
+      payout_per_day: payoutPerDay,
+      updated_by: actorEmail || "system",
+      updated_at: new Date().toISOString()
+    };
+    const result = await runQuery<null>(
+      () =>
+        db
+          .from(TABLE)
+          .update(patch)
+          .in("id", ids)
+          .then(({ error }) => ({ data: null, error })),
+      `${SCOPE}.bulkSetPayoutRateForEmployeePeriod`
+    );
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        code: result.code,
+        details: result.details
+      };
+    }
+    return { success: true, data: { updated_ids: ids } };
+  },
+
   insert(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return insertRow(TABLE, row, SCOPE, opts);
   },

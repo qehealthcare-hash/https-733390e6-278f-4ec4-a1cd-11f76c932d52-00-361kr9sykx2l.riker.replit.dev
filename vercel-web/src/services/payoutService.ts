@@ -205,6 +205,21 @@ export interface PayoutDiagnostics {
    * Empty when the data flow looks healthy.
    */
   warning: string;
+  /**
+   * Primary-employee duties whose `payout_per_day` is 0 or null. Surfaced to
+   * the UI so the operator can one-click "Set ₹X for all and refresh"
+   * instead of opening each duty separately.
+   */
+  duties_needing_rate: Array<{
+    duty_id: string;
+    patient_id: string | null;
+    service_name: string | null;
+    start_at: string | null;
+    end_at: string | null;
+    status: string | null;
+    charge_per_day: number;
+    payout_per_day: number;
+  }>;
 }
 
 /**
@@ -262,7 +277,8 @@ function emptyDiagnostics(): PayoutDiagnostics {
     attendance_row_count: 0,
     attendance_payable_count: 0,
     attendance_payable_hours: 0,
-    warning: ""
+    warning: "",
+    duties_needing_rate: []
   };
 }
 
@@ -284,7 +300,8 @@ function emptyDiagnostics(): PayoutDiagnostics {
 function buildDiagnostics(
   duties: JsonRow[],
   attendance: JsonRow[],
-  charges: JsonRow[]
+  charges: JsonRow[],
+  zeroRateDuties: JsonRow[] = []
 ): PayoutDiagnostics {
   const diagnostics = emptyDiagnostics();
   diagnostics.duty_row_count = duties.length;
@@ -292,6 +309,17 @@ function buildDiagnostics(
     const status = String(d.status || "").toUpperCase() || "UNKNOWN";
     diagnostics.duty_statuses[status] = (diagnostics.duty_statuses[status] || 0) + 1;
   }
+
+  diagnostics.duties_needing_rate = zeroRateDuties.map((d) => ({
+    duty_id: String(d.id || ""),
+    patient_id: (d.patient_id as string | null) ?? null,
+    service_name: (d.service_name as string | null) ?? null,
+    start_at: (d.start_at as string | null) ?? null,
+    end_at: (d.end_at as string | null) ?? null,
+    status: (d.status as string | null) ?? null,
+    charge_per_day: Number(d.charge_per_day || 0),
+    payout_per_day: Number(d.payout_per_day || 0)
+  }));
 
   diagnostics.attendance_row_count = attendance.length;
   const payableStatuses = new Set(["PRESENT", "LATE", "HALF_DAY"]);
@@ -328,7 +356,10 @@ function buildDiagnostics(
     return status !== "CANCELLED" && status !== "NO_SHOW";
   }).length;
 
-  if (activeDutyCount > 0 && diagnostics.charge_row_count === 0) {
+  if (diagnostics.duties_needing_rate.length > 0) {
+    diagnostics.warning =
+      `${diagnostics.duties_needing_rate.length} duty/duties for this employee have payout_per_day = 0 — set a rate below and the payout will refresh automatically.`;
+  } else if (activeDutyCount > 0 && diagnostics.charge_row_count === 0) {
     diagnostics.warning =
       "Duties exist for this employee in this period but no payout charges have been materialized. Press Recompute to refresh.";
   } else if (
@@ -375,25 +406,33 @@ async function loadPayoutDetail(
   const access = dbAccess(ctx);
   const { startISO, endISO } = monthRangeUTC(period);
 
-  const [duties, attendance, paidTx, charges] = await Promise.all([
+  const [duties, attendance, paidTx, charges, zeroRate] = await Promise.all([
     dutyRepository.list(
       { employeeId, from: startISO, to: endISO, limit: 500, offset: 0 },
       access
     ),
     attendanceRepository.listForEmployeeMonth(employeeId, startISO, endISO, access),
     payoutRepository.listPaidTransactionsByPayout(String(payout.id || ""), access),
-    payoutRepository.listChargesByEmployeePeriod(employeeId, period, access)
+    payoutRepository.listChargesByEmployeePeriod(employeeId, period, access),
+    dutyRepository.findZeroPayoutRateForEmployeePeriod(employeeId, period, access)
   ]);
   if (!duties.success) return passFailure(duties);
   if (!attendance.success) return passFailure(attendance);
   if (!paidTx.success) return passFailure(paidTx);
   if (!charges.success) return passFailure(charges);
+  if (!zeroRate.success) return passFailure(zeroRate);
 
   const dutyRows = duties.data?.rows || [];
   const attendanceRows = attendance.data || [];
   const paidRows = paidTx.data || [];
   const chargeRows = charges.data || [];
-  const diagnostics = buildDiagnostics(dutyRows, attendanceRows, chargeRows);
+  const zeroRateRows = zeroRate.data || [];
+  const diagnostics = buildDiagnostics(
+    dutyRows,
+    attendanceRows,
+    chargeRows,
+    zeroRateRows
+  );
   const paidTotal = paidRows.reduce(
     (sum, r) => sum + Number(r.amount || 0),
     0
@@ -1355,6 +1394,84 @@ export const payoutService = {
    * Returns success even if the row doesn't exist yet (the RPC will upsert).
    * Refuses to touch PAID rows.
    */
+  /**
+   * One-click repair for "duty exists but Gross is ₹0" — set
+   * `payout_per_day` on every zero-rate duty for an (employee, period) pair,
+   * re-materialize the diary, then recompute the payout. Returns the
+   * refreshed payout detail so the UI can render the corrected total in
+   * place.
+   *
+   * RBAC: callers must hold PAYOUT_WRITE_ROLES (enforced by the route).
+   * Refuses if the payout is already PAID — settled amounts are immutable.
+   */
+  async setEmployeePeriodPayoutRate(
+    rawInput: unknown,
+    ctx: PayoutServiceContext
+  ): Promise<ApiResult<PayoutDetail>> {
+    const input = (rawInput && typeof rawInput === "object" ? rawInput : {}) as {
+      employee_id?: unknown;
+      period?: unknown;
+      payout_per_day?: unknown;
+    };
+    const employeeId = String(input.employee_id || "").trim();
+    const period = String(input.period || "").trim();
+    const rate = Number(input.payout_per_day);
+    if (!employeeId) {
+      return failure("employee_id is required", ErrorCodes.validation);
+    }
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      return failure("period must be YYYY-MM", ErrorCodes.validation, { period });
+    }
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return failure(
+        "payout_per_day must be a positive number",
+        ErrorCodes.validation,
+        { payout_per_day: input.payout_per_day }
+      );
+    }
+
+    const access = dbAccess(ctx);
+    const existing = await payoutRepository.findByEmployeePeriod(employeeId, period, access);
+    if (existing.success && existing.data && String(existing.data.status || "") === "PAID") {
+      return failure(
+        "Cannot adjust rates on a PAID payout — reopen first",
+        ErrorCodes.business,
+        { payout_id: existing.data.id }
+      );
+    }
+
+    const bulk = await dutyRepository.bulkSetPayoutRateForEmployeePeriod(
+      employeeId,
+      period,
+      rate,
+      ctx.actor.email,
+      access
+    );
+    if (!bulk.success) return passFailure(bulk);
+    const updatedIds = bulk.data?.updated_ids || [];
+
+    // Audit the bulk rate change so it is reviewable from /audit-log later.
+    await writeMutationAudit(access, ctx.actor, {
+      module: "payouts",
+      entity_id: existing.data?.id ? String(existing.data.id) : `${employeeId}:${period}`,
+      action: "update",
+      stamp: new Date().toISOString(),
+      before: { duties_updated: 0 },
+      after: {
+        employee_id: employeeId,
+        period,
+        payout_per_day: rate,
+        duty_ids: updatedIds
+      }
+    });
+
+    const persisted = await recomputeAndPersist(employeeId, period, ctx, {
+      requireSource: false
+    });
+    if (!persisted.success) return passFailure(persisted);
+    return loadPayoutDetail(persisted.data as JsonRow, ctx);
+  },
+
   async recomputeForEmployeePeriod(
     employeeId: string,
     period: string,
