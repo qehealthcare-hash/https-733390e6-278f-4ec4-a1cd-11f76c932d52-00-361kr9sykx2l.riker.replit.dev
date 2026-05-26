@@ -251,6 +251,7 @@ export default function EmployeesPage() {
   var [shiftFilter, setShiftFilter] = useState("");
   var [scoreFilter, setScoreFilter] = useState("");
   var [error, setError] = useState("");
+  var [fieldErrors, setFieldErrors] = useState(null);
   var [message, setMessage] = useState("");
 
   var [statusDialog, setStatusDialog] = useState(null);
@@ -344,6 +345,7 @@ export default function EmployeesPage() {
   function resetForm() {
     setForm(createInitialForm());
     setError("");
+    setFieldErrors(null);
     setMessage("");
   }
 
@@ -399,6 +401,7 @@ export default function EmployeesPage() {
       documents: row.employee_documents || row.docs || []
     });
     setError("");
+    setFieldErrors(null);
     setMessage("");
   }
 
@@ -466,6 +469,7 @@ export default function EmployeesPage() {
     event.preventDefault();
     setBusy(true);
     setError("");
+    setFieldErrors(null);
     setMessage("");
     try {
       // Documents are recommended for Active employees but no longer hard-required
@@ -588,6 +592,14 @@ export default function EmployeesPage() {
         });
       } else {
         setError(submitError.message || "Unable to save employee");
+        if (code === "validation_error" && submitError?.details) {
+          setFieldErrors({
+            fields: submitError.details.fieldErrors || {},
+            form: submitError.details.formErrors || []
+          });
+        } else {
+          setFieldErrors(null);
+        }
       }
     } finally {
       setBusy(false);
@@ -1238,7 +1250,29 @@ export default function EmployeesPage() {
                 </div>
               ) : null}
               {error && !conflictPrompt && !duplicatePrompt ? (
-                <div className="error-text">{error}</div>
+                <div className="error-text">
+                  <div>{error}</div>
+                  {fieldErrors && (
+                    (fieldErrors.fields && Object.keys(fieldErrors.fields).length > 0) ||
+                    (fieldErrors.form && fieldErrors.form.length > 0)
+                  ) ? (
+                    <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: "12px" }}>
+                      {(fieldErrors.form || []).map(function (msg, idx) {
+                        return <li key={"f" + idx}>{msg}</li>;
+                      })}
+                      {Object.entries(fieldErrors.fields || {}).map(function (entry) {
+                        var field = entry[0];
+                        var msgs = entry[1] || [];
+                        if (!msgs.length) return null;
+                        return (
+                          <li key={field}>
+                            <strong>{field}:</strong> {msgs.filter(Boolean).join(", ")}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : null}
+                </div>
               ) : null}
               {!error && !conflictPrompt && !duplicatePrompt && resource.error ? (
                 <div className="error-text">Live employee list error — {resource.error}</div>

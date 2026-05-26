@@ -388,6 +388,88 @@ describe("payoutService.pendingEmployeesForPeriod", () => {
     expect(result.code).toBe("validation_error");
   });
 
+  it("falls back to direct charge/paid table queries when the RPC is unavailable", async () => {
+    vi.mocked(payoutRepository.pendingEmployeesForPeriodRpc).mockResolvedValue({
+      success: false,
+      error: "function public.hh_employees_pending_for_period(text) does not exist",
+      code: "database_error"
+    });
+    vi.mocked(payoutRepository.listAllChargesForPeriod).mockResolvedValue({
+      success: true,
+      data: [
+        { duty_id: "D1", partner_id: "EMP1", amount: 500 },
+        { duty_id: "D2", partner_id: "EMP1", amount: 500 },
+        // Same duty counted once even if charge has multiple lines.
+        { duty_id: "D2", partner_id: "EMP1", amount: 100 },
+        { duty_id: "D3", partner: "EMP2", amount: 1200 }
+      ]
+    });
+    vi.mocked(payoutRepository.listAllPaidTransactionsForPeriod).mockResolvedValue({
+      success: true,
+      data: [{ employee_id: "EMP1", amount: 400 }]
+    });
+    vi.mocked(payoutRepository.listByPeriod).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(employeeRepository.findByIds).mockResolvedValue({
+      success: true,
+      data: [
+        { id: "EMP1", fn: "Manisha", ln: "Asari" },
+        { id: "EMP2", fn: "Rakesh", ln: "Kumar" }
+      ]
+    });
+
+    const result = await payoutService.pendingEmployeesForPeriod(
+      { period: "2026-05" },
+      ctx
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success || !result.data) throw new Error("expected data");
+    expect(result.data.source).toBe("fallback");
+    // EMP1: charged 1100, paid 400 → pending 700, duty_count 2 distinct duty_ids
+    const byId = Object.fromEntries(
+      result.data.rows.map((r) => [r.employee_id, r])
+    );
+    expect(byId.EMP1.pending).toBe(700);
+    expect(byId.EMP1.duty_count).toBe(2);
+    expect(byId.EMP1.employee_name).toBe("Manisha Asari");
+    // EMP2: charged 1200, paid 0 → pending 1200
+    expect(byId.EMP2.pending).toBe(1200);
+    expect(byId.EMP2.employee_name).toBe("Rakesh Kumar");
+    expect(result.data.total_pending).toBe(1900);
+    // Highest pending first.
+    expect(result.data.rows[0].employee_id).toBe("EMP2");
+  });
+
+  it("excludes employees whose pending settles within rounding noise", async () => {
+    vi.mocked(payoutRepository.pendingEmployeesForPeriodRpc).mockResolvedValue({
+      success: false,
+      error: "RPC missing",
+      code: "database_error"
+    });
+    vi.mocked(payoutRepository.listAllChargesForPeriod).mockResolvedValue({
+      success: true,
+      data: [{ duty_id: "D1", partner_id: "EMP1", amount: 1000 }]
+    });
+    vi.mocked(payoutRepository.listAllPaidTransactionsForPeriod).mockResolvedValue({
+      success: true,
+      data: [{ employee_id: "EMP1", amount: 1000 }]
+    });
+    vi.mocked(payoutRepository.listByPeriod).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(employeeRepository.findByIds).mockResolvedValue({ success: true, data: [] });
+
+    const result = await payoutService.pendingEmployeesForPeriod(
+      { period: "2026-05" },
+      ctx
+    );
+    expect(result.success).toBe(true);
+    if (!result.success || !result.data) throw new Error("expected data");
+    expect(result.data.rows).toHaveLength(0);
+    expect(result.data.total_pending).toBe(0);
+  });
+
   it("aggregates pending rows with employee_name and links existing payout row", async () => {
     vi.mocked(payoutRepository.pendingEmployeesForPeriodRpc).mockResolvedValue({
       success: true,

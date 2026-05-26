@@ -827,6 +827,7 @@ export const payoutService = {
         payout_status: string | null;
       }>;
       total_pending: number;
+      source: "rpc" | "fallback";
     }>
   > {
     const period = String(
@@ -844,12 +845,79 @@ export const payoutService = {
     const query = { period };
     const access = dbAccess(ctx);
 
+    type AggRow = {
+      employee_id: string;
+      charged: number;
+      paid: number;
+      pending: number;
+      duty_count: number;
+    };
+    let rpcRows: AggRow[] = [];
+    let source: "rpc" | "fallback" = "rpc";
     const rpc = await payoutRepository.pendingEmployeesForPeriodRpc(
       query.period,
       access
     );
-    if (!rpc.success) return passFailure(rpc);
-    const rpcRows = Array.isArray(rpc.data) ? rpc.data : [];
+    if (rpc.success) {
+      rpcRows = (rpc.data || []).map((r) => ({
+        employee_id: String(r.employee_id || ""),
+        charged: Number(r.charged || 0),
+        paid: Number(r.paid || 0),
+        pending: Number(r.pending || 0),
+        duty_count: Number(r.duty_count || 0)
+      }));
+    } else {
+      // Graceful fallback: the aggregating RPC (migration 043) may not be
+      // applied yet. Reconstruct the same shape from hh_payout_charges +
+      // hh_paid_transactions so the operator never sees an empty board just
+      // because a SQL migration hasn't shipped.
+      console.warn(
+        "[payoutService.pendingEmployeesForPeriod] RPC failed, falling back to direct table query",
+        { period, error: rpc.error }
+      );
+      source = "fallback";
+      const [chargesAll, paidAll] = await Promise.all([
+        payoutRepository.listAllChargesForPeriod(query.period, access),
+        payoutRepository.listAllPaidTransactionsForPeriod(query.period, access)
+      ]);
+      if (!chargesAll.success) return passFailure(chargesAll);
+      if (!paidAll.success) return passFailure(paidAll);
+      const chargeBy = new Map<string, { charged: number; duties: Set<string> }>();
+      for (const row of chargesAll.data || []) {
+        const empId =
+          String((row.partner_id as string | null) || "") ||
+          String((row.partner as string | null) || "");
+        if (!empId) continue;
+        const slot = chargeBy.get(empId) || { charged: 0, duties: new Set<string>() };
+        slot.charged += Number(row.amount || 0);
+        const dutyId = String((row.duty_id as string | null) || "");
+        if (dutyId) slot.duties.add(dutyId);
+        chargeBy.set(empId, slot);
+      }
+      const paidBy = new Map<string, number>();
+      for (const row of paidAll.data || []) {
+        const empId =
+          String((row.employee_id as string | null) || "") ||
+          String((row.partner as string | null) || "");
+        if (!empId) continue;
+        paidBy.set(empId, (paidBy.get(empId) || 0) + Number(row.amount || 0));
+      }
+      const allEmployees = new Set<string>([...chargeBy.keys(), ...paidBy.keys()]);
+      for (const empId of allEmployees) {
+        const charged = chargeBy.get(empId)?.charged ?? 0;
+        const paid = paidBy.get(empId) ?? 0;
+        const pending = Math.max(0, charged - paid);
+        if (pending <= 0.005) continue;
+        rpcRows.push({
+          employee_id: empId,
+          charged,
+          paid,
+          pending,
+          duty_count: chargeBy.get(empId)?.duties.size ?? 0
+        });
+      }
+      rpcRows.sort((a, b) => b.pending - a.pending);
+    }
 
     const ids = rpcRows.map((r) => String(r.employee_id || "")).filter(Boolean);
     const nameMap = await hydrateEmployeeNames(ids, ctx);
@@ -888,7 +956,8 @@ export const payoutService = {
     return success({
       period,
       rows,
-      total_pending: Math.round(totalPending * 100) / 100
+      total_pending: Math.round(totalPending * 100) / 100,
+      source
     });
   },
 

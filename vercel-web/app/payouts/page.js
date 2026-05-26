@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
@@ -60,12 +60,6 @@ function emptyAdvanceForm() {
   };
 }
 
-function describeProof(proof) {
-  if (!proof) return "No proof attached";
-  if (proof.file_name) return proof.file_name;
-  return proof.path || "Attached";
-}
-
 export default function PayoutsPage() {
   var auth = useAuth();
   var userRole = auth.profile?.role || "";
@@ -102,15 +96,27 @@ export default function PayoutsPage() {
   var [advanceOpen, setAdvanceOpen] = useState(false);
   var [rateRepairRate, setRateRepairRate] = useState("");
   var [pending, setPending] = useState(null);
+  var [auditTrail, setAuditTrail] = useState([]);
+  var [unpaidSearch, setUnpaidSearch] = useState("");
+  var [ledgerSearch, setLedgerSearch] = useState("");
+  // Ref lets the "front-of-page" unpaid banner scroll the actual list
+  // panel into view when the user clicks "Jump to list".
+  var unpaidPanelRef = useRef(null);
   var [unpaidEmployees, setUnpaidEmployees] = useState({
     period: "",
     rows: [],
     total_pending: 0,
-    loading: false
+    loading: false,
+    source: "rpc",
+    error: ""
   });
   var [busy, setBusy] = useState(false);
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
+  // Refs let "Lock → Mark paid" and "Pay advance" actions auto-scroll the
+  // proof uploader into view so the operator never has to hunt for it.
+  var payFormRef = useRef(null);
+  var advanceFormRef = useRef(null);
 
   async function reloadList() {
     if (!auth.session?.access_token) return;
@@ -134,11 +140,18 @@ export default function PayoutsPage() {
 
   async function reloadUnpaidEmployees() {
     if (!auth.session?.access_token || !periodFilter) {
-      setUnpaidEmployees({ period: "", rows: [], total_pending: 0, loading: false });
+      setUnpaidEmployees({
+        period: "",
+        rows: [],
+        total_pending: 0,
+        loading: false,
+        source: "rpc",
+        error: ""
+      });
       return;
     }
     setUnpaidEmployees(function (prev) {
-      return { ...prev, loading: true };
+      return { ...prev, loading: true, error: "" };
     });
     try {
       var qs = new URLSearchParams();
@@ -152,14 +165,20 @@ export default function PayoutsPage() {
         period: data?.period || periodFilter,
         rows: Array.isArray(data?.rows) ? data.rows : [],
         total_pending: Number(data?.total_pending || 0),
-        loading: false
+        loading: false,
+        source: data?.source || "rpc",
+        error: ""
       });
     } catch (err) {
+      // Don't blank the board on failure — surface the reason so the user
+      // can act on it instead of staring at an empty table.
       setUnpaidEmployees({
         period: periodFilter,
         rows: [],
         total_pending: 0,
-        loading: false
+        loading: false,
+        source: "rpc",
+        error: err?.message || "Could not load unpaid employees"
       });
     }
   }
@@ -185,10 +204,35 @@ export default function PayoutsPage() {
     }
   }
 
+  async function loadAuditTrail(payoutId) {
+    if (!payoutId || !auth.session?.access_token) {
+      setAuditTrail([]);
+      return;
+    }
+    try {
+      var qs = new URLSearchParams();
+      qs.set("module", "payout");
+      qs.set("entity_id", payoutId);
+      qs.set("limit", "100");
+      var data = await request("/audits?" + qs.toString(), null, auth.session);
+      var rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
+      // Oldest first so the PDF reads as a chronological audit log.
+      rows.sort(function (a, b) {
+        var at = new Date(a.created_at || 0).getTime();
+        var bt = new Date(b.created_at || 0).getTime();
+        return at - bt;
+      });
+      setAuditTrail(rows);
+    } catch (_err) {
+      setAuditTrail([]);
+    }
+  }
+
   async function openPayout(id) {
     if (!id) {
       setDetail(null);
       setSelectedId("");
+      setAuditTrail([]);
       return;
     }
     setDetailLoading(true);
@@ -197,6 +241,8 @@ export default function PayoutsPage() {
       var data = await request("/payouts/" + id, null, auth.session);
       setDetail(data);
       setSelectedId(id);
+      // Audit trail is informational; never block the detail render on it.
+      loadAuditTrail(id);
       var row = data?.payout || {};
       setAdjustForm({
         advance: Number(row.advance || 0),
@@ -206,7 +252,19 @@ export default function PayoutsPage() {
       });
       setPayForm(emptyPayForm());
       setAdvanceForm(emptyAdvanceForm());
-      setAdvanceOpen(false);
+      // Auto-expand the "Pay advance" form for OPEN payouts that have
+      // outstanding balance and zero disbursements so the proof uploader
+      // is immediately visible — the previous flow required an extra
+      // toggle click that operators routinely missed.
+      var disbursementCount = Array.isArray(data?.paid_transactions)
+        ? data.paid_transactions.length
+        : 0;
+      var openOutstanding = Number(data?.outstanding || row.net_amount || 0);
+      setAdvanceOpen(
+        String(row.status || "OPEN") === "OPEN" &&
+          disbursementCount === 0 &&
+          openOutstanding > 0
+      );
     } catch (err) {
       setError(err.message || "Could not load payout detail");
       setDetail(null);
@@ -266,6 +324,44 @@ export default function PayoutsPage() {
     [payouts]
   );
 
+  // Search filter for the "Unpaid employees" board — match on name or ID
+  // so the accountant can jump straight to the row they need to act on
+  // instead of scrolling a long list.
+  var filteredUnpaid = useMemo(
+    function () {
+      var rows = Array.isArray(unpaidEmployees.rows) ? unpaidEmployees.rows : [];
+      var term = String(unpaidSearch || "").trim().toLowerCase();
+      if (!term) return rows;
+      return rows.filter(function (r) {
+        var name = String(r.employee_name || "").toLowerCase();
+        var id = String(r.employee_id || "").toLowerCase();
+        return name.indexOf(term) >= 0 || id.indexOf(term) >= 0;
+      });
+    },
+    [unpaidEmployees.rows, unpaidSearch]
+  );
+
+  // Same search behaviour on the main payout ledger so operators can
+  // narrow by employee name or payout ref without re-typing the ID into
+  // the existing employee_id filter.
+  var filteredPayouts = useMemo(
+    function () {
+      var term = String(ledgerSearch || "").trim().toLowerCase();
+      if (!term) return payouts;
+      return payouts.filter(function (p) {
+        var name = String(p.employee_name || "").toLowerCase();
+        var id = String(p.employee_id || "").toLowerCase();
+        var ref = String(p.id || "").toLowerCase();
+        return (
+          name.indexOf(term) >= 0 ||
+          id.indexOf(term) >= 0 ||
+          ref.indexOf(term) >= 0
+        );
+      });
+    },
+    [payouts, ledgerSearch]
+  );
+
   function employeeDisplayName(id) {
     if (!id) return "";
     var emp = employees.find(function (e) {
@@ -297,9 +393,11 @@ export default function PayoutsPage() {
         },
         auth.session
       );
-      setMessage(
-        "Payout ensured for " + employeeDisplayName(ensureForm.employee_id)
-      );
+      var ensuredName =
+        data?.employee_name ||
+        employeeDisplayName(ensureForm.employee_id) ||
+        ensureForm.employee_id;
+      setMessage("Payout ensured for " + ensuredName);
       setEnsureForm(emptyEnsureForm());
       await reloadList();
       await reloadUnpaidEmployees();
@@ -418,9 +516,18 @@ export default function PayoutsPage() {
         { method: "POST", body: { reason: reason } },
         auth.session
       );
-      setMessage("Payout locked");
+      setMessage(
+        "Payout locked. Attach a payment-proof image below and click 'Mark as paid' to generate the receipt PDF."
+      );
       await openPayout(selectedId);
       await reloadList();
+      // The "Mark as paid" form only renders once status is LOCKED, so we
+      // scroll on the next tick after React commits the new DOM.
+      window.setTimeout(function () {
+        if (payFormRef.current && typeof payFormRef.current.scrollIntoView === "function") {
+          payFormRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 80);
     } catch (err) {
       setError(err.message || "Could not lock");
     } finally {
@@ -452,22 +559,39 @@ export default function PayoutsPage() {
 
   async function handleProofUpload(target, files) {
     if (!files || !files[0]) return;
+    var file = files[0];
     setBusy(true);
     setError("");
     try {
       var uploaded = await uploadDocument({
         bucket: "payout-proofs",
-        file: files[0],
+        file: file,
         session: auth.session,
         supabase: auth.supabase
       });
+      // Cache an object URL so the preview tile renders the picture/PDF
+      // immediately — no extra round-trip to Supabase storage required.
+      var previewUrl = null;
+      try {
+        if (typeof window !== "undefined" && window.URL && file) {
+          previewUrl = window.URL.createObjectURL(file);
+        }
+      } catch (_e) {
+        previewUrl = null;
+      }
+      var enriched = {
+        ...uploaded,
+        preview_url: previewUrl,
+        mime: file.type || "",
+        size: file.size || 0
+      };
       if (target === "pay") {
         setPayForm(function (f) {
-          return { ...f, proof: uploaded };
+          return { ...f, proof: enriched };
         });
       } else {
         setAdvanceForm(function (f) {
-          return { ...f, proof: uploaded };
+          return { ...f, proof: enriched };
         });
       }
       setMessage("Proof attached: " + uploaded.file_name);
@@ -476,6 +600,76 @@ export default function PayoutsPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Visual preview tile for an attached payout proof. Renders an inline
+  // <img> when the upload looks like an image, otherwise a PDF/file
+  // confirmation card. The empty state explicitly demands a photo so
+  // the accountant cannot miss the requirement.
+  function ProofPreview(props) {
+    var proof = props && props.proof;
+    if (!proof) {
+      return (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "10px 12px",
+            border: "2px dashed #f59e0b",
+            background: "#fff7ed",
+            borderRadius: 6,
+            color: "#9a3412",
+            fontSize: 13
+          }}
+        >
+          📷 <strong>Photo of payment proof is required</strong> — bank slip,
+          UPI screenshot, signed cash receipt, or any document confirming
+          this disbursement. The server rejects submissions without proof.
+        </div>
+      );
+    }
+    var url = proof.preview_url || "";
+    var name = proof.file_name || proof.path || "Attached";
+    var lower = String(name).toLowerCase();
+    var isImage =
+      /^image\//i.test(String(proof.mime || "")) ||
+      /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(lower);
+    return (
+      <div
+        style={{
+          marginTop: 6,
+          padding: 10,
+          border: "1px solid #16a34a",
+          background: "#f0fdf4",
+          borderRadius: 6
+        }}
+      >
+        <div style={{ fontWeight: 600, color: "#166534", fontSize: 13 }}>
+          ✓ Proof attached
+        </div>
+        {url && isImage ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={url}
+            alt={name}
+            style={{
+              display: "block",
+              marginTop: 6,
+              maxWidth: "100%",
+              maxHeight: 220,
+              borderRadius: 4,
+              border: "1px solid #bbf7d0"
+            }}
+          />
+        ) : (
+          <div style={{ marginTop: 4, color: "#166534", fontSize: 12 }}>
+            📄 {name}
+          </div>
+        )}
+        <div style={{ marginTop: 4, color: "#475569", fontSize: 11 }}>
+          {name}
+        </div>
+      </div>
+    );
   }
 
   async function handlePay(event) {
@@ -505,7 +699,9 @@ export default function PayoutsPage() {
         { method: "POST", body: body },
         auth.session
       );
-      setMessage("Payout marked PAID");
+      setMessage(
+        "Payout marked PAID. Receipt PDF (with embedded payment-proof image) is ready in Disbursements below — click 'Receipt PDF' to print or save."
+      );
       setPayForm(emptyPayForm());
       await openPayout(selectedId);
       await reloadList();
@@ -549,7 +745,9 @@ export default function PayoutsPage() {
         },
         auth.session
       );
-      setMessage("Advance recorded");
+      setMessage(
+        "Advance recorded. Receipt PDF (with embedded payment-proof image) is ready in Disbursements below — click 'Receipt PDF' to print or save."
+      );
       setAdvanceForm(emptyAdvanceForm());
       setAdvanceOpen(false);
       await openPayout(selectedId);
@@ -597,9 +795,10 @@ export default function PayoutsPage() {
       ? detail.paid_transactions
       : [];
     var paidTable = paidRows.length
-      ? "<table><thead><tr><th>Serial</th><th>Kind</th><th>Date</th><th>Method</th><th>Amount</th></tr></thead><tbody>" +
+      ? "<table><thead><tr><th>Serial</th><th>Kind</th><th>Date</th><th>Method</th><th>Amount</th><th>Proof</th><th>Recorded by</th></tr></thead><tbody>" +
         paidRows
           .map(function (t) {
+            var hasProof = !!(t.proof_bucket && t.proof_path);
             return (
               "<tr><td>" +
               escapeHtml(t.serial_no || t.id) +
@@ -611,6 +810,13 @@ export default function PayoutsPage() {
               escapeHtml(t.method || "") +
               "</td><td>" +
               formatCurrency(t.amount) +
+              "</td><td>" +
+              (hasProof
+                ? "<span style='color:#15803d'>✓ on file</span>"
+                : "<span style='color:#b91c1c'>missing</span>") +
+              "</td><td>" +
+              escapeHtml(t.created_by || "—") +
+              (t.created_at ? "<br/><span style='color:#64748b;font-size:10px'>" + escapeHtml(formatDate(t.created_at)) + "</span>" : "") +
               "</td></tr>"
             );
           })
@@ -649,10 +855,105 @@ export default function PayoutsPage() {
         "</tbody></table>"
       : "";
 
+    // Duty-by-duty employee work description. Auditors need to see exactly
+    // *what* the payout is paying for: the assignment, the patient, the
+    // shift, the date window, and the per-day rates. We reuse the duty
+    // rows already loaded by the service and look up patient names from
+    // the breakdown roll-up so the PDF stays accurate without an extra
+    // round-trip.
+    var dutyRows = Array.isArray(detail.duties) ? detail.duties : [];
+    var patientNameById = {};
+    pb.forEach(function (p) {
+      if (p && p.patient_id) {
+        patientNameById[String(p.patient_id)] = p.patient_name || p.patient_id;
+      }
+    });
+    function shortDate(value) {
+      if (!value) return "—";
+      try {
+        var s = String(value);
+        if (s.length >= 10) return s.slice(0, 10);
+        return s;
+      } catch (_e) {
+        return String(value || "—");
+      }
+    }
+    var workLogTable = dutyRows.length
+      ? "<table><thead><tr><th>#</th><th>Duty ID</th><th>Patient</th><th>Service</th><th>Shift</th><th>From</th><th>To</th><th>Status</th><th>Charge/day</th><th>Payout/day</th></tr></thead><tbody>" +
+        dutyRows
+          .map(function (d, idx) {
+            var pid = String(d.patient_id || "");
+            return (
+              "<tr><td>" +
+              (idx + 1) +
+              "</td><td>" +
+              escapeHtml(String(d.id || "—")) +
+              "</td><td>" +
+              escapeHtml(patientNameById[pid] || pid || "—") +
+              "</td><td>" +
+              escapeHtml(String(d.service_name || d.service_type || "—")) +
+              "</td><td>" +
+              escapeHtml(String(d.shift_type || "—")) +
+              "</td><td>" +
+              escapeHtml(shortDate(d.start_at)) +
+              "</td><td>" +
+              escapeHtml(shortDate(d.end_at)) +
+              "</td><td>" +
+              escapeHtml(String(d.status || "—")) +
+              "</td><td>" +
+              formatCurrency(d.charge_per_day) +
+              "</td><td>" +
+              formatCurrency(d.payout_per_day) +
+              "</td></tr>"
+            );
+          })
+          .join("") +
+        "</tbody></table>"
+      : "";
+
+    var auditHeader =
+      "<div class='meta' style='color:#475569;font-size:11px'>" +
+      "Created by " + escapeHtml(row.created_by || "—") +
+      (row.created_at ? " on " + escapeHtml(formatDate(row.created_at)) : "") +
+      " · Last updated by " + escapeHtml(row.updated_by || row.created_by || "—") +
+      (row.updated_at ? " on " + escapeHtml(formatDate(row.updated_at)) : "") +
+      (String(row.status) === "PAID" && row.paid_at
+        ? " · Settled on " + escapeHtml(formatDate(row.paid_at))
+        : "") +
+      "</div>";
+
+    // Detailed accountability section — chronological audit trail of every
+    // mutation persisted in `hh_audit_log` for this payout. Falls back to
+    // the row-level created/updated stamps when the audit log endpoint
+    // returns nothing (e.g. legacy rows pre-audit).
+    var trail = Array.isArray(auditTrail) ? auditTrail : [];
+    var auditRowsHtml = trail.length
+      ? trail
+          .map(function (a) {
+            return (
+              "<tr><td>" +
+              escapeHtml(a.created_at ? formatDate(a.created_at) : "—") +
+              "</td><td>" +
+              escapeHtml(String(a.action || "")) +
+              "</td><td>" +
+              escapeHtml(a.actor || "—") +
+              "</td><td>" +
+              escapeHtml(a.stamp || "") +
+              "</td></tr>"
+            );
+          })
+          .join("")
+      : "<tr><td colspan='4' style='color:#64748b'>No audit log entries returned for this payout (legacy row).</td></tr>";
+    var auditTable =
+      "<h3>Accountability — audit trail</h3>" +
+      "<table><thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Notes</th></tr></thead><tbody>" +
+      auditRowsHtml +
+      "</tbody></table>";
+
     var body =
       "<h2>Payout Statement</h2>" +
       "<div class='meta'><strong>Employee:</strong> " +
-      escapeHtml(name) +
+      escapeHtml(name || "—") +
       "</div>" +
       "<div class='meta'><strong>Period:</strong> " +
       escapeHtml(row.period_month) +
@@ -660,11 +961,16 @@ export default function PayoutsPage() {
       "<div class='meta'><strong>Status:</strong> " +
       escapeHtml(row.status) +
       "</div>" +
-      "<table><thead><tr><th>Field</th><th>Amount</th></tr></thead><tbody>" +
+      "<div class='meta'><strong>Payout ref:</strong> " +
+      escapeHtml(row.id) +
+      "</div>" +
+      auditHeader +
+      "<h3>Amount summary</h3>" +
+      "<table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>" +
       "<tr><td>Gross</td><td>" + formatCurrency(row.gross_amount) + "</td></tr>" +
       "<tr><td>Duty count</td><td>" + (row.duty_count || 0) + "</td></tr>" +
       "<tr><td>Hours</td><td>" + (row.hours || 0) + "</td></tr>" +
-      "<tr><td>Advance</td><td>" + formatCurrency(row.advance) + "</td></tr>" +
+      "<tr><td>Advance (adj)</td><td>" + formatCurrency(row.advance) + "</td></tr>" +
       "<tr><td>Deduction</td><td>" + formatCurrency(row.deduction) + "</td></tr>" +
       "<tr><td>Bonus</td><td>" + formatCurrency(row.bonus) + "</td></tr>" +
       "<tr><td><strong>Net</strong></td><td><strong>" + formatCurrency(row.net_amount) + "</strong></td></tr>" +
@@ -674,9 +980,17 @@ export default function PayoutsPage() {
       (patientTable
         ? "<h3>Patients worked (" + pb.length + ")</h3>" + patientTable
         : "") +
-      (paidTable ? "<h3>Disbursements</h3>" + paidTable : "") +
+      (workLogTable
+        ? "<h3>Employee work description — duty-by-duty (" +
+          dutyRows.length +
+          ")</h3>" +
+          "<div class='meta' style='color:#475569;font-size:11px;margin-bottom:4px'>Each row is one assignment in the duty calendar. Charge/day and Payout/day are the rates the duty was logged with at time of work.</div>" +
+          workLogTable
+        : "") +
+      (paidTable ? "<h3>Disbursements (" + paidRows.length + ")</h3>" + paidTable : "<h3>Disbursements</h3><div class='meta' style='color:#b91c1c'>No disbursements recorded yet for this payout.</div>") +
       (row.paid_at ? "<div class='meta'><strong>Paid on:</strong> " + formatDate(row.paid_at) + "</div>" : "") +
-      (row.remarks ? "<div class='meta'><strong>Remarks:</strong> " + escapeHtml(row.remarks) + "</div>" : "");
+      (row.remarks ? "<div class='meta'><strong>Remarks:</strong> " + escapeHtml(row.remarks) + "</div>" : "") +
+      auditTable;
     openPrintWindow("Payout " + row.id, body);
   }
 
@@ -698,14 +1012,22 @@ export default function PayoutsPage() {
     var rows = [
       ["Receipt no", tx.serial_no || tx.id || ""],
       ["Type", tx.tx_kind || "FINAL"],
-      ["Employee", name],
+      ["Employee", name || "—"],
       ["Period", period],
       ["Paid on", tx.paid_on || ""],
       ["Method", tx.method || ""],
       ["Amount", formatCurrency(tx.amount)],
       ["Payout ref", row ? row.id : "-"],
-      ["Remarks", tx.remarks || "-"]
-    ];
+      ["Remarks", tx.remarks || "-"],
+      [
+        "Recorded by",
+        (tx.created_by || "—") +
+          (tx.created_at ? " on " + formatDate(tx.created_at) : "")
+      ],
+      tx.updated_by && tx.updated_by !== tx.created_by
+        ? ["Last edited by", tx.updated_by]
+        : null
+    ].filter(Boolean);
     var rowsHtml = rows
       .map(function (pair) {
         return (
@@ -839,6 +1161,53 @@ export default function PayoutsPage() {
       <AppShell title="Payouts">
         <div className="page-split">
           <div className="page-grid">
+            {unpaidEmployees.rows.length > 0 ? (
+              <div
+                className="helper-box"
+                style={{
+                  background: "#fff7ed",
+                  border: "2px solid #ea580c",
+                  borderRadius: 8,
+                  padding: "10px 14px",
+                  marginBottom: 8
+                }}
+              >
+                <div
+                  className="button-row"
+                  style={{ justifyContent: "space-between", alignItems: "center" }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 15, color: "#9a3412" }}>
+                      ⚠️ {unpaidEmployees.rows.length} unpaid employee
+                      {unpaidEmployees.rows.length === 1 ? "" : "s"} for{" "}
+                      {unpaidEmployees.period || periodFilter || ""}
+                    </div>
+                    <div style={{ fontSize: 13, color: "#7c2d12", marginTop: 2 }}>
+                      Total pending{" "}
+                      <strong>{formatCurrency(unpaidEmployees.total_pending)}</strong>{" "}
+                      sourced from the duty calendar. Search and pay them below.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="button primary"
+                    onClick={function () {
+                      if (
+                        unpaidPanelRef.current &&
+                        typeof unpaidPanelRef.current.scrollIntoView === "function"
+                      ) {
+                        unpaidPanelRef.current.scrollIntoView({
+                          behavior: "smooth",
+                          block: "start"
+                        });
+                      }
+                    }}
+                  >
+                    Jump to unpaid list →
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {canWrite ? (
             <ModuleShell title="Ensure / recompute" description="Recompute gross from duty + attendance and apply advance / deduction / bonus.">
               <form className="stack" onSubmit={handleEnsure}>
@@ -982,30 +1351,86 @@ export default function PayoutsPage() {
               </ModuleShell>
             ) : null}
 
+            <div ref={unpaidPanelRef} />
             <ModuleShell
               title={"Unpaid employees — " + (unpaidEmployees.period || periodFilter || "")}
               description="Every employee with outstanding payout balance for this period (charged in duty calendar minus disbursements). Click to ensure or open the payout."
             >
+              <div
+                className="button-row"
+                style={{ marginBottom: 6, alignItems: "center", gap: 8 }}
+              >
+                <input
+                  type="search"
+                  value={unpaidSearch}
+                  onChange={function (event) {
+                    setUnpaidSearch(event.target.value);
+                  }}
+                  placeholder="🔍 Search unpaid by employee name or ID"
+                  style={{
+                    flex: 1,
+                    minWidth: 240,
+                    padding: "6px 10px",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: 6
+                  }}
+                />
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={reloadUnpaidEmployees}
+                  disabled={unpaidEmployees.loading}
+                  title="Re-read duty calendar charges and disbursements"
+                >
+                  {unpaidEmployees.loading ? "Refreshing…" : "Refresh from duty calendar"}
+                </button>
+                {unpaidEmployees.source === "fallback" ? (
+                  <span className="mini-muted" title="Running in fallback mode — migration 043 (hh_employees_pending_for_period) is missing on Supabase. Apply it for faster aggregation.">
+                    ⚠️ Fallback mode — apply migration 043 for native aggregation
+                  </span>
+                ) : null}
+              </div>
+              {unpaidEmployees.error ? (
+                <div className="error-text" style={{ marginBottom: 6 }}>
+                  {unpaidEmployees.error}
+                </div>
+              ) : null}
               <div className="helper-box">
                 {unpaidEmployees.loading
                   ? "Loading…"
                   : unpaidEmployees.rows.length === 0
                   ? "All employees fully paid for this period."
+                  : unpaidSearch && filteredUnpaid.length !== unpaidEmployees.rows.length
+                  ? filteredUnpaid.length +
+                    " of " +
+                    unpaidEmployees.rows.length +
+                    " unpaid employee" +
+                    (unpaidEmployees.rows.length === 1 ? "" : "s") +
+                    " match '" +
+                    unpaidSearch +
+                    "' · Total pending " +
+                    formatCurrency(unpaidEmployees.total_pending)
                   : unpaidEmployees.rows.length +
                     " employee" +
                     (unpaidEmployees.rows.length === 1 ? "" : "s") +
                     " · Total pending " +
                     formatCurrency(unpaidEmployees.total_pending)}
               </div>
-              {unpaidEmployees.rows.length ? (
+              {filteredUnpaid.length ? (
                 <div className="record-list">
-                  {unpaidEmployees.rows.map(function (row) {
+                  {filteredUnpaid.map(function (row) {
                     var statusLabel = row.payout_status || "UNPAID";
                     return (
                       <div key={row.employee_id} className="record-card">
                         <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                           <div>
-                            <h3>{row.employee_name || row.employee_id}</h3>
+                            <h3>
+                              {row.employee_name &&
+                              row.employee_name !== row.employee_id
+                                ? row.employee_name
+                                : employeeDisplayName(row.employee_id) ||
+                                  "Employee"}
+                            </h3>
                             <div className="record-meta">
                               <span>{row.duty_count || 0} duties</span>
                               <span>Charged {formatCurrency(row.charged)}</span>
@@ -1049,6 +1474,11 @@ export default function PayoutsPage() {
                       </div>
                     );
                   })}
+                </div>
+              ) : unpaidSearch && unpaidEmployees.rows.length ? (
+                <div className="helper-box" style={{ color: "#b91c1c" }}>
+                  No unpaid employees match &ldquo;{unpaidSearch}&rdquo;. Clear the
+                  search to see all {unpaidEmployees.rows.length}.
                 </div>
               ) : null}
             </ModuleShell>
@@ -1101,6 +1531,17 @@ export default function PayoutsPage() {
                     })}
                   </select>
                 </div>
+                <div className="field" style={{ flex: 1, minWidth: 220 }}>
+                  <label>Search</label>
+                  <input
+                    type="search"
+                    value={ledgerSearch}
+                    onChange={function (event) {
+                      setLedgerSearch(event.target.value);
+                    }}
+                    placeholder="Name, employee ID, or payout ref"
+                  />
+                </div>
                 <div className="field">
                   <label>&nbsp;</label>
                   <button className="button secondary" type="button" onClick={reloadList}>
@@ -1111,6 +1552,9 @@ export default function PayoutsPage() {
               <div className="helper-box">
                 Net {formatCurrency(totals.net)} &nbsp;·&nbsp; Paid {formatCurrency(totals.paid)} &nbsp;·&nbsp;
                 Open {formatCurrency(totals.open)}
+                {ledgerSearch && filteredPayouts.length !== payouts.length
+                  ? " · Showing " + filteredPayouts.length + " of " + payouts.length
+                  : ""}
               </div>
               {error ? <div className="error-text">{error}</div> : null}
               {message ? <div className="success-text">{message}</div> : null}
@@ -1119,9 +1563,14 @@ export default function PayoutsPage() {
                   title={loading ? "Loading…" : "No payouts"}
                   description="Ensure a payout above to start the period for this employee."
                 />
+              ) : !filteredPayouts.length ? (
+                <EmptyState
+                  title={"No matches for \u201c" + ledgerSearch + "\u201d"}
+                  description="Clear the search to see all payouts."
+                />
               ) : (
                 <div className="record-list">
-                  {payouts.map(function (row) {
+                  {filteredPayouts.map(function (row) {
                     var name = row.employee_name || employeeDisplayName(row.employee_id);
                     var isSelected = selectedId === row.id;
                     return (
@@ -1136,13 +1585,30 @@ export default function PayoutsPage() {
                       >
                         <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                           <div>
-                            <h3>{name}</h3>
+                            <h3>{name || "Employee"}</h3>
+                            <div
+                              className="mini-muted"
+                              style={{ fontSize: 11, marginTop: 1 }}
+                            >
+                              Ref {row.id}
+                            </div>
                             <div className="record-meta">
                               <span>{row.period_month}</span>
                               <span>Net {formatCurrency(row.net_amount)}</span>
                               <span>
                                 {row.duty_count || 0} duties · {row.hours || 0}h
                               </span>
+                            </div>
+                            <div
+                              className="mini-muted"
+                              style={{ fontSize: 11, marginTop: 2 }}
+                            >
+                              {row.created_by
+                                ? "Created by " + row.created_by
+                                : ""}
+                              {row.updated_by && row.updated_by !== row.created_by
+                                ? " · last edited by " + row.updated_by
+                                : ""}
                             </div>
                           </div>
                           <span className={"status " + String(row.status || "open").toLowerCase()}>
@@ -1170,13 +1636,18 @@ export default function PayoutsPage() {
               ) : (
                 <div className="stack">
                   <div className="helper-box">
-                    <div>
-                      <strong>Employee:</strong> {employeeNameForDetail} &nbsp;·&nbsp;
-                      <strong>Period:</strong> {payout.period_month} &nbsp;·&nbsp;
-                      <strong>Status:</strong> {status}
+                    <div style={{ fontSize: 17, fontWeight: 600 }}>
+                      {employeeNameForDetail || "—"}
                     </div>
-                    <div style={{ marginTop: 4, color: "#64748b", fontSize: 12 }}>
+                    <div style={{ marginTop: 2, color: "#64748b", fontSize: 12 }}>
                       Payout ref {payout.id}
+                    </div>
+                    <div style={{ marginTop: 6 }}>
+                      <strong>Period:</strong> {payout.period_month} &nbsp;·&nbsp;
+                      <strong>Status:</strong>{" "}
+                      <span className={"status " + String(status).toLowerCase()}>
+                        {status}
+                      </span>
                     </div>
                     <div className="grid-2" style={{ marginTop: 8 }}>
                       <div>
@@ -1212,6 +1683,104 @@ export default function PayoutsPage() {
                       <div>
                         <strong>Paid on:</strong> {payout.paid_at ? formatDate(payout.paid_at) : "-"}
                       </div>
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 10,
+                        paddingTop: 8,
+                        borderTop: "1px dashed #cbd5e1",
+                        fontSize: 12,
+                        color: "#475569"
+                      }}
+                    >
+                      <strong style={{ color: "#0f172a" }}>Accountability</strong>
+                      <div style={{ marginTop: 4, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                        <div>
+                          Created by{" "}
+                          <strong>{payout.created_by || "—"}</strong>
+                          {payout.created_at
+                            ? " · " + formatDate(payout.created_at)
+                            : ""}
+                        </div>
+                        <div>
+                          Last updated by{" "}
+                          <strong>{payout.updated_by || payout.created_by || "—"}</strong>
+                          {payout.updated_at
+                            ? " · " + formatDate(payout.updated_at)
+                            : ""}
+                        </div>
+                        {isPaid ? (
+                          <div style={{ gridColumn: "1 / -1" }}>
+                            Settled at{" "}
+                            <strong>
+                              {payout.paid_at ? formatDate(payout.paid_at) : "—"}
+                            </strong>{" "}
+                            by <strong>{payout.updated_by || "—"}</strong>
+                          </div>
+                        ) : null}
+                      </div>
+                      {auditTrail.length ? (
+                        <details
+                          style={{ marginTop: 8 }}
+                          open={auditTrail.length <= 4}
+                        >
+                          <summary
+                            style={{
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              color: "#0f172a"
+                            }}
+                          >
+                            Full audit trail ({auditTrail.length}{" "}
+                            entr{auditTrail.length === 1 ? "y" : "ies"})
+                          </summary>
+                          <table
+                            style={{
+                              width: "100%",
+                              marginTop: 6,
+                              fontSize: 11,
+                              borderCollapse: "collapse"
+                            }}
+                          >
+                            <thead>
+                              <tr style={{ background: "#f1f5f9" }}>
+                                <th style={{ textAlign: "left", padding: 4 }}>
+                                  When
+                                </th>
+                                <th style={{ textAlign: "left", padding: 4 }}>
+                                  Action
+                                </th>
+                                <th style={{ textAlign: "left", padding: 4 }}>
+                                  Actor
+                                </th>
+                                <th style={{ textAlign: "left", padding: 4 }}>
+                                  Notes
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {auditTrail.map(function (a) {
+                                return (
+                                  <tr key={a.id}>
+                                    <td style={{ padding: 4 }}>
+                                      {a.created_at ? formatDate(a.created_at) : "—"}
+                                    </td>
+                                    <td style={{ padding: 4 }}>
+                                      {a.action || ""}
+                                    </td>
+                                    <td style={{ padding: 4 }}>
+                                      {a.actor || "—"}
+                                    </td>
+                                    <td style={{ padding: 4, color: "#475569" }}>
+                                      {a.stamp || ""}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </details>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1369,9 +1938,108 @@ export default function PayoutsPage() {
                     </div>
                   ) : null}
 
+                  {canDisburse && outstanding > 0 && !isPaid ? (
+                    <div
+                      className="helper-box"
+                      style={{
+                        background: "#eff6ff",
+                        borderColor: "#0c5adb",
+                        borderWidth: 2
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                        Next step ·{" "}
+                        {status === "OPEN"
+                          ? "Pay this payout"
+                          : "Mark this payout paid"}
+                      </div>
+                      <div style={{ fontSize: 13, color: "#475569" }}>
+                        {status === "OPEN"
+                          ? "Choose either path below. Every payment requires an image proof (bank slip / UPI screenshot / signed receipt); the server rejects disbursements without one. Each accepted payment auto-generates a Receipt PDF with the proof embedded."
+                          : "The payout is locked. Attach the payment-proof image and click 'Mark as paid' to record the final disbursement and generate the receipt PDF."}
+                      </div>
+                      <div className="button-row" style={{ marginTop: 8 }}>
+                        {status === "OPEN" ? (
+                          <button
+                            type="button"
+                            className="button primary"
+                            onClick={function () {
+                              setAdvanceOpen(true);
+                              window.setTimeout(function () {
+                                if (
+                                  advanceFormRef.current &&
+                                  typeof advanceFormRef.current.scrollIntoView === "function"
+                                ) {
+                                  advanceFormRef.current.scrollIntoView({
+                                    behavior: "smooth",
+                                    block: "center"
+                                  });
+                                }
+                              }, 80);
+                            }}
+                          >
+                            Pay advance (partial) with proof
+                          </button>
+                        ) : null}
+                        {status === "OPEN" && canWrite ? (
+                          <button
+                            type="button"
+                            className="button primary"
+                            onClick={handleLock}
+                            disabled={busy}
+                            title="Lock the period so the final 'Mark as paid' form (with proof uploader) appears"
+                          >
+                            Lock → Mark as paid with proof
+                          </button>
+                        ) : null}
+                        {status === "LOCKED" ? (
+                          <button
+                            type="button"
+                            className="button primary"
+                            onClick={function () {
+                              if (
+                                payFormRef.current &&
+                                typeof payFormRef.current.scrollIntoView === "function"
+                              ) {
+                                payFormRef.current.scrollIntoView({
+                                  behavior: "smooth",
+                                  block: "center"
+                                });
+                              }
+                            }}
+                          >
+                            Attach proof & mark as paid
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                  {isPaid ? (
+                    <div
+                      className="helper-box"
+                      style={{
+                        background: "#ecfdf5",
+                        borderColor: "#15803d",
+                        borderWidth: 2
+                      }}
+                    >
+                      <div style={{ fontWeight: 600 }}>
+                        ✓ Settled — full payout disbursed.
+                      </div>
+                      <div style={{ fontSize: 13, color: "#15803d", marginTop: 4 }}>
+                        Open any row in Disbursements below and click &lsquo;Receipt PDF&rsquo; to print or save the audit-grade receipt (image proof embedded).
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="button-row">
-                    <button className="button secondary" type="button" onClick={printPayout}>
-                      Print
+                    <button
+                      className="button primary"
+                      type="button"
+                      onClick={printPayout}
+                      title="Generate an audit-ready PDF of this payout (amounts, patients, disbursements, accountability trail)"
+                    >
+                      📄 Download Payout PDF
                     </button>
                     {canWrite ? (
                       <button className="button secondary" type="button" onClick={handleRecompute} disabled={busy || isLocked}>
@@ -1463,7 +2131,7 @@ export default function PayoutsPage() {
                   ) : null}
 
                   {canDisburse && advanceOpen && status === "OPEN" ? (
-                    <form className="stack" onSubmit={handleAdvance}>
+                    <form className="stack" onSubmit={handleAdvance} ref={advanceFormRef}>
                       <strong>Pay advance</strong>
                       <div className="helper-box" style={{ background: "#fff7e6", borderColor: "#f59e0b" }}>
                         Payment proof (bank slip / UPI screenshot / signed receipt) is <strong>required</strong> before submission. The disbursement is rejected by the server if proof is missing.
@@ -1528,7 +2196,7 @@ export default function PayoutsPage() {
                               handleProofUpload("advance", event.target.files);
                             }}
                           />
-                          <small>{describeProof(advanceForm.proof)}</small>
+                          <ProofPreview proof={advanceForm.proof} />
                         </div>
                       </div>
                       <div className="button-row">
@@ -1544,7 +2212,7 @@ export default function PayoutsPage() {
                   ) : null}
 
                   {canDisburse && status === "LOCKED" ? (
-                    <form className="stack" onSubmit={handlePay}>
+                    <form className="stack" onSubmit={handlePay} ref={payFormRef}>
                       <strong>Mark as paid</strong>
                       <div className="helper-box" style={{ background: "#fff7e6", borderColor: "#f59e0b" }}>
                         Payment proof (bank slip / UPI screenshot / signed receipt) is <strong>required</strong> before submission. The disbursement is rejected by the server if proof is missing.
@@ -1609,7 +2277,7 @@ export default function PayoutsPage() {
                               handleProofUpload("pay", event.target.files);
                             }}
                           />
-                          <small>{describeProof(payForm.proof)}</small>
+                          <ProofPreview proof={payForm.proof} />
                         </div>
                       </div>
                       <div className="button-row">
@@ -1624,13 +2292,28 @@ export default function PayoutsPage() {
                     <strong>Disbursements ({paidTransactions.length})</strong>
                     {paidTransactions.length === 0 ? (
                       <div className="helper-box">
-                        No disbursements recorded yet. Record an advance or mark paid to add one.
+                        No disbursements recorded yet. Use the{" "}
+                        <strong>Next step</strong> panel above —{" "}
+                        {status === "LOCKED"
+                          ? "attach proof and click 'Mark as paid'"
+                          : "either record an advance with proof, or lock and mark paid"}
+                        . Every saved disbursement gets a unique serial, an
+                        embedded proof image, and a downloadable Receipt PDF.
                       </div>
                     ) : (
                       <div className="record-list">
                         {paidTransactions.map(function (tx) {
+                          var hasProof = !!(tx.proof_bucket && tx.proof_path);
                           return (
-                            <div key={tx.id} className="record-card">
+                            <div
+                              key={tx.id}
+                              className="record-card"
+                              style={
+                                hasProof
+                                  ? undefined
+                                  : { borderColor: "#dc2626", background: "#fff4f4" }
+                              }
+                            >
                               <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                                 <div>
                                   <h3>{tx.serial_no || tx.id}</h3>
@@ -1639,8 +2322,29 @@ export default function PayoutsPage() {
                                     <span>{tx.paid_on || ""}</span>
                                     <span>{tx.method || ""}</span>
                                     <span>{formatCurrency(tx.amount)}</span>
+                                    {hasProof ? (
+                                      <span className="status paid">Proof ✓</span>
+                                    ) : (
+                                      <span className="status unpaid">
+                                        Proof missing
+                                      </span>
+                                    )}
                                   </div>
                                   {tx.remarks ? <div className="record-meta"><span>{tx.remarks}</span></div> : null}
+                                  <div
+                                    className="mini-muted"
+                                    style={{ marginTop: 4, fontSize: 11 }}
+                                  >
+                                    Recorded by{" "}
+                                    <strong>{tx.created_by || "—"}</strong>
+                                    {tx.created_at
+                                      ? " on " + formatDate(tx.created_at)
+                                      : ""}
+                                    {tx.updated_by &&
+                                    tx.updated_by !== tx.created_by
+                                      ? " · last edited by " + tx.updated_by
+                                      : ""}
+                                  </div>
                                 </div>
                                 <div className="button-row">
                                   <button
@@ -1652,7 +2356,7 @@ export default function PayoutsPage() {
                                   >
                                     Receipt PDF
                                   </button>
-                                  {tx.proof_bucket && tx.proof_path ? (
+                                  {hasProof ? (
                                     <button
                                       type="button"
                                       className="button secondary"
@@ -1662,9 +2366,7 @@ export default function PayoutsPage() {
                                     >
                                       View proof
                                     </button>
-                                  ) : (
-                                    <span className="status open">No proof</span>
-                                  )}
+                                  ) : null}
                                 </div>
                               </div>
                             </div>

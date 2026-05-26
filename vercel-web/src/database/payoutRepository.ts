@@ -18,6 +18,21 @@ const PAID_TX = "hh_paid_transactions";
 const CHARGES = "hh_payout_charges";
 const SCOPE = "payoutRepository";
 
+/**
+ * `period` is YYYY-MM; return the first day of the *next* month as YYYY-MM-DD.
+ * Used to bound a half-open `[period-01, nextMonth-01)` date range filter
+ * against Supabase's text date columns.
+ */
+function monthEndExclusive(period: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(period);
+  if (!m) return `${period}-32`;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  return `${nextYear.toString().padStart(4, "0")}-${nextMonth.toString().padStart(2, "0")}-01`;
+}
+
 export interface PayoutListFilters extends ListQuery {
   period?: string;
   employeeId?: string;
@@ -404,6 +419,82 @@ export const payoutRepository = {
 
   insertCharge(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return insertRow(CHARGES, row, `${SCOPE}.insertCharge`, opts);
+  },
+
+  /**
+   * Period-scoped charges across *every* employee. Used as a fallback for the
+   * "Unpaid employees" board when the `hh_employees_pending_for_period` RPC
+   * is unavailable (e.g. migration 043 not yet applied on this Supabase).
+   */
+  async listAllChargesForPeriod(
+    period: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    if (!period) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(CHARGES)
+          .select("*")
+          .gte("date", `${period}-01`)
+          .lt("date", monthEndExclusive(period))
+          .order("date", { ascending: true }),
+      `${SCOPE}.listAllChargesForPeriod`
+    );
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        code: result.code,
+        details: result.details
+      };
+    }
+    return { success: true, data: result.data || [] };
+  },
+
+  /**
+   * Period-scoped disbursements across *every* employee. Same fallback role
+   * as `listAllChargesForPeriod` — keeps the unpaid-employees board working
+   * even without the aggregating RPC.
+   */
+  async listAllPaidTransactionsForPeriod(
+    period: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    if (!period) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(PAID_TX)
+          .select("*")
+          .order("created_at", { ascending: true }),
+      `${SCOPE}.listAllPaidTransactionsForPeriod`
+    );
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        code: result.code,
+        details: result.details
+      };
+    }
+    const rows = (result.data || []).filter((row) => {
+      const pm = String(row.period_month || "").trim();
+      if (pm === period) return true;
+      if (pm) return false;
+      const paidOn = String(row.paid_on || "").trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(paidOn)) {
+        return paidOn.slice(0, 7) === period;
+      }
+      const created = String(row.created_at || "");
+      if (created) {
+        return created.slice(0, 7) === period;
+      }
+      return false;
+    });
+    return { success: true, data: rows };
   },
 
   /**
