@@ -1,5 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
+import { requireRole } from "@/lib/api/auth";
+import { PAYOUT_READ_ROLES } from "@/lib/api/payoutRoles";
 import { payoutService } from "@/services/payoutService";
 import { respond } from "@/lib/api/apiResultBridge";
 import { ErrorCodes } from "@/types/common";
@@ -15,6 +17,7 @@ export const dynamic = "force-dynamic";
  * table always agree.
  */
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
+  requireRole(actor, [...PAYOUT_READ_ROLES]);
   const url = new URL(req.url);
   const period = (url.searchParams.get("period") || "").slice(0, 7);
   if (!/^\d{4}-\d{2}$/.test(period)) {

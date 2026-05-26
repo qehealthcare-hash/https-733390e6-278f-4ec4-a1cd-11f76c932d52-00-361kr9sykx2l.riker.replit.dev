@@ -248,6 +248,13 @@ export interface PayoutPatientBreakdownRow {
   duty_ids: string[];
 }
 
+/** Attendance statuses that count as a payable work day (shared with payoutService). */
+export const PAYABLE_ATTENDANCE_STATUSES = new Set([
+  "PRESENT",
+  "LATE",
+  "HALF_DAY"
+]);
+
 /**
  * Aggregate the duties + attendance for an employee + period into a per-patient
  * breakdown. Used by the UI to show "this payout came from these patients" so
@@ -270,7 +277,8 @@ export function breakdownByPatient(
     const status = String(d.status || "").toUpperCase();
     if (status === "CANCELLED" || status === "NO_SHOW") continue;
     const att = d.id ? attendanceByDuty.get(String(d.id)) : undefined;
-    const present = String(att?.status || "").toUpperCase() === "PRESENT";
+    const attStatus = String(att?.status || "").toUpperCase();
+    const payable = PAYABLE_ATTENDANCE_STATUSES.has(attStatus);
     const hours = Number(att?.hours || 0);
 
     const row = map.get(patientId) || {
@@ -279,7 +287,7 @@ export function breakdownByPatient(
       hours: 0,
       duty_ids: []
     };
-    if (present) {
+    if (payable) {
       row.duty_count += 1;
       row.hours += hours;
     }

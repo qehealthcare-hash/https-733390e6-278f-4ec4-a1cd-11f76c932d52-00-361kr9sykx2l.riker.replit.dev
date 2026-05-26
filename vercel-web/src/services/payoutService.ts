@@ -45,7 +45,7 @@ import {
 } from "@/validation/payoutValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
-  breakdownByPatient,
+  PAYABLE_ATTENDANCE_STATUSES,
   canEditPayout,
   canLockPayout,
   canMarkPayoutPaid,
@@ -480,10 +480,9 @@ async function buildPatientBreakdown(
   // Attendance gives the *actual* days worked (PRESENT/LATE/HALF_DAY) per
   // duty — fold into the patient bucket so the PDF can show "22 days
   // present" even when charges materialized 30 calendar days.
-  const payableStatuses = new Set(["PRESENT", "LATE", "HALF_DAY"]);
   for (const a of attendance) {
     const status = String(a.status || "").toUpperCase();
-    if (!payableStatuses.has(status)) continue;
+    if (!PAYABLE_ATTENDANCE_STATUSES.has(status)) continue;
     const dutyId = String(a.duty_id || "");
     const pid = dutyId ? dutyToPatient.get(dutyId) : undefined;
     if (!pid) continue;
@@ -612,23 +611,14 @@ async function loadPayoutDetail(
     employee_name: employeeName,
     patient_breakdown: patientBreakdown,
     diagnostics,
-    breakdown: breakdownByPatient(
-      dutyRows.map((d) => ({
-        id: String(d.id),
-        patient_id: (d.patient_id as string | null) ?? null,
-        employee_id: (d.employee_id as string | null) ?? null,
-        start_at: (d.start_at as string | null) ?? null,
-        shift_type: (d.shift_type as string | null) ?? null,
-        status: (d.status as string | null) ?? null
-      })),
-      attendanceRows.map((a) => ({
-        duty_id: (a.duty_id as string | null) ?? null,
-        employee_id: (a.employee_id as string | null) ?? null,
-        hours: (a.hours as number | string | null) ?? null,
-        status: (a.status as string | null) ?? null,
-        check_in_at: (a.check_in_at as string | null) ?? null
-      }))
-    )
+    // Legacy `breakdown` mirrors patient_breakdown so consumers never see
+    // divergent day counts (PRESENT-only vs PRESENT/LATE/HALF_DAY).
+    breakdown: patientBreakdown.map((p) => ({
+      patient_id: p.patient_id,
+      duty_count: p.days_worked,
+      hours: p.hours,
+      duty_ids: p.duty_ids
+    }))
   });
 }
 
@@ -1397,7 +1387,10 @@ export const payoutService = {
       );
     }
 
-    if (requestedAmount > 0 && !input.proof_bucket && !input.proof_path && !input.photo) {
+    if (
+      requestedAmount > 0 &&
+      (!String(input.proof_bucket || "").trim() || !String(input.proof_path || "").trim())
+    ) {
       return failure(
         "Payout proof is required — upload a receipt/photo before marking paid",
         ErrorCodes.business
@@ -1518,7 +1511,7 @@ export const payoutService = {
       );
     }
 
-    if (!input.proof_bucket && !input.proof_path && !input.photo) {
+    if (!String(input.proof_bucket || "").trim() || !String(input.proof_path || "").trim()) {
       return failure(
         "Payout proof is required — upload a receipt/photo before paying advance",
         ErrorCodes.business

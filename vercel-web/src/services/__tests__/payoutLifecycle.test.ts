@@ -130,7 +130,7 @@ describe("payoutService.markPaid", () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.code).toBe("business_rule_violation");
+    expect(result.code).toBe("validation_error");
     expect(payoutRepository.insertPaidTransaction).not.toHaveBeenCalled();
   });
 

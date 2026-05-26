@@ -59,6 +59,16 @@ export const payoutAdjustmentSchema = z
 export const PAID_TX_KINDS = ["ADVANCE", "FINAL"] as const;
 export type PaidTxKind = (typeof PAID_TX_KINDS)[number];
 
+function hasPayoutProof(v: {
+  proof_bucket?: string;
+  proof_path?: string;
+  photo?: string;
+}): boolean {
+  const bucket = String(v.proof_bucket || "").trim();
+  const path = String(v.proof_path || "").trim();
+  return Boolean(bucket && path);
+}
+
 /**
  * `POST /payouts/pay` — final disbursement (closes the payout to PAID).
  *
@@ -66,16 +76,21 @@ export type PaidTxKind = (typeof PAID_TX_KINDS)[number];
  * outstanding net. `proof_bucket`/`proof_path` are filled in by the UI
  * after the file is uploaded via `/api/v1/uploads/signed-url`.
  */
-export const payoutPaySchema = z.object({
-  payout_id: idSchema,
-  paid_on: z.string().optional(),
-  method: z.string().optional().default(""),
-  amount: moneySchema.optional(),
-  photo: z.string().optional().default(""),
-  proof_bucket: z.string().trim().max(64).optional(),
-  proof_path: z.string().trim().max(512).optional(),
-  remarks: z.string().trim().max(500).optional().default("")
-});
+export const payoutPaySchema = z
+  .object({
+    payout_id: idSchema,
+    paid_on: z.string().optional(),
+    method: z.string().optional().default(""),
+    amount: moneySchema.optional(),
+    photo: z.string().optional().default(""),
+    proof_bucket: z.string().trim().max(64).optional(),
+    proof_path: z.string().trim().max(512).optional(),
+    remarks: z.string().trim().max(500).optional().default("")
+  })
+  .refine(hasPayoutProof, {
+    message:
+      "proof_bucket and proof_path are required — upload payment proof before marking paid"
+  });
 
 /**
  * `POST /payouts/[id]/pay-advance` — partial disbursement BEFORE the payout
@@ -83,18 +98,23 @@ export const payoutPaySchema = z.object({
  * the outstanding net, and (unlike `payoutPaySchema`) does NOT flip the
  * payout to PAID. `amount` is required.
  */
-export const payoutAdvanceSchema = z.object({
-  payout_id: idSchema,
-  amount: moneySchema.refine((v) => v > 0, {
-    message: "Advance amount must be greater than zero"
-  }),
-  paid_on: z.string().optional(),
-  method: z.string().optional().default(""),
-  proof_bucket: z.string().trim().max(64).optional(),
-  proof_path: z.string().trim().max(512).optional(),
-  photo: z.string().optional().default(""),
-  remarks: z.string().trim().max(500).optional().default("")
-});
+export const payoutAdvanceSchema = z
+  .object({
+    payout_id: idSchema,
+    amount: moneySchema.refine((v) => v > 0, {
+      message: "Advance amount must be greater than zero"
+    }),
+    paid_on: z.string().optional(),
+    method: z.string().optional().default(""),
+    proof_bucket: z.string().trim().max(64).optional(),
+    proof_path: z.string().trim().max(512).optional(),
+    photo: z.string().optional().default(""),
+    remarks: z.string().trim().max(500).optional().default("")
+  })
+  .refine(hasPayoutProof, {
+    message:
+      "proof_bucket and proof_path are required — upload payment proof before recording advance"
+  });
 
 /**
  * `GET /payouts/pending` — period-scoped "what do we still owe this
@@ -107,9 +127,13 @@ export const payoutPendingQuerySchema = z.object({
   period: monthPeriodSchema
 });
 
-/** Lock a payout. */
+/** Lock a payout — reason required for accountability. */
 export const payoutLockSchema = z.object({
-  reason: z.string().trim().max(500).optional().default("")
+  reason: z
+    .string()
+    .trim()
+    .min(1, "reason is required to lock a payout for payment")
+    .max(500)
 });
 
 /** Reopening a Locked payout always requires an audited reason. */

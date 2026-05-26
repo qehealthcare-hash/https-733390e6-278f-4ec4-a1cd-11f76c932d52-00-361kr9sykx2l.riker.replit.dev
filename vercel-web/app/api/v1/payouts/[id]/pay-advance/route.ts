@@ -15,6 +15,8 @@ import { requireRole } from "@/lib/api/auth";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { payoutService } from "@/services/payoutService";
 import { respond } from "@/lib/api/apiResultBridge";
+import { parseInput } from "@/validation/parseValidation";
+import { payoutAdvanceSchema } from "@/validation/payoutValidation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,10 +30,12 @@ export const POST = withAuth<{ id: string }>(
       { route: `POST /payouts/${params.id}/pay-advance` },
       async () => {
         const body = await parseJsonBody(req);
-        const result = await payoutService.payAdvance(
-          { ...(body as Record<string, unknown>), payout_id: params.id },
-          { actor }
-        );
+        const parsed = parseInput(payoutAdvanceSchema, {
+          ...(body as Record<string, unknown>),
+          payout_id: params.id
+        });
+        if (!parsed.success) return respond(parsed);
+        const result = await payoutService.payAdvance(parsed.data, { actor });
         return respond(result);
       }
     );

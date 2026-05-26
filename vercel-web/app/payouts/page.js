@@ -112,7 +112,12 @@ function PayoutsPageContent() {
   });
   var [busy, setBusy] = useState(false);
   var [error, setError] = useState("");
+  var [detailError, setDetailError] = useState("");
   var [message, setMessage] = useState("");
+  var [lockReason, setLockReason] = useState("");
+  var [reopenReason, setReopenReason] = useState("");
+  /** null | "pay" | "advance" — second-step confirmation before disbursement */
+  var [confirmDisburse, setConfirmDisburse] = useState(null);
   // Refs let "Lock → Mark paid" and "Pay advance" actions auto-scroll the
   // proof uploader into view so the operator never has to hunt for it.
   var payFormRef = useRef(null);
@@ -199,8 +204,8 @@ function PayoutsPageContent() {
       );
       setPending(data || null);
     } catch (err) {
-      // Pending panel is informational — never block the page on its failure.
       setPending(null);
+      setDetailError(err.message || "Could not load pending totals from duty calendar");
     }
   }
 
@@ -223,12 +228,14 @@ function PayoutsPageContent() {
         return at - bt;
       });
       setAuditTrail(rows);
-    } catch (_err) {
+    } catch (err) {
       setAuditTrail([]);
+      setDetailError(err.message || "Could not load accountability audit trail");
     }
   }
 
   async function openPayout(id) {
+    setDetailError("");
     if (!id) {
       setDetail(null);
       setSelectedId("");
@@ -507,7 +514,11 @@ function PayoutsPageContent() {
 
   async function handleLock() {
     if (!selectedId) return;
-    var reason = window.prompt("Reason for locking this payout (optional)") || "";
+    var reason = String(lockReason || "").trim();
+    if (!reason) {
+      setError("Enter a reason for locking this payout before payment");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -537,8 +548,11 @@ function PayoutsPageContent() {
 
   async function handleReopen() {
     if (!selectedId) return;
-    var reason = window.prompt("Reason for reopening locked payout (required)");
-    if (!reason) return;
+    var reason = String(reopenReason || "").trim();
+    if (!reason) {
+      setError("Enter a reason for reopening this locked payout");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -679,6 +693,13 @@ function PayoutsPageContent() {
       setError("Attach a payout proof before marking paid");
       return;
     }
+    if (confirmDisburse !== "pay") {
+      setConfirmDisburse("pay");
+      setError("");
+      setMessage("Review the payment summary below, then confirm to mark as paid.");
+      return;
+    }
+    setConfirmDisburse(null);
     setBusy(true);
     setError("");
     try {
@@ -725,6 +746,13 @@ function PayoutsPageContent() {
       setError("Attach a payout proof before recording advance");
       return;
     }
+    if (confirmDisburse !== "advance") {
+      setConfirmDisburse("advance");
+      setError("");
+      setMessage("Review the advance summary below, then confirm to record.");
+      return;
+    }
+    setConfirmDisburse(null);
     setBusy(true);
     setError("");
     try {
@@ -787,7 +815,57 @@ function PayoutsPageContent() {
       .replace(/'/g, "&#39;");
   }
 
-  function printPayout() {
+  async function buildProofHtmlForTx(tx) {
+    if (!tx?.proof_bucket || !tx?.proof_path) {
+      return "<div class='meta' style='color:#b91c1c'><strong>No payment proof attached.</strong></div>";
+    }
+    try {
+      var signed = await getDocumentSignedUrl(
+        { bucket: tx.proof_bucket, path: tx.proof_path, file_name: tx.photo },
+        auth.session
+      );
+      var url = signed && signed.signedUrl;
+      var lower = String(tx.photo || tx.proof_path || "").toLowerCase();
+      var isImage = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(lower);
+      if (url && isImage) {
+        return (
+          "<div style='margin:6px 0'>" +
+          "<img src='" +
+          url +
+          "' alt='Payment proof' style='max-width:100%;max-height:420px;border:1px solid #dbe3ee;border-radius:6px'/>" +
+          "</div>" +
+          "<div class='meta'>Source: " +
+          escapeHtml(tx.photo || tx.proof_path) +
+          "</div>"
+        );
+      }
+      if (url) {
+        return (
+          "<div class='meta'>File: " +
+          escapeHtml(tx.photo || tx.proof_path) +
+          "</div>" +
+          "<div class='meta'><a href='" +
+          url +
+          "' target='_blank'>Open proof in new tab</a></div>"
+        );
+      }
+      return (
+        "<div class='meta'>Reference: " +
+        escapeHtml(tx.photo || tx.proof_path) +
+        " (signing failed)</div>"
+      );
+    } catch (err) {
+      return (
+        "<div class='meta'>Reference: " +
+        escapeHtml(tx.photo || tx.proof_path) +
+        " (" +
+        escapeHtml(err.message || "could not fetch signed URL") +
+        ")</div>"
+      );
+    }
+  }
+
+  async function printPayout() {
     if (!detail?.payout) return;
     var row = detail.payout;
     var name = row.employee_name || employeeDisplayName(row.employee_id);
@@ -987,7 +1065,21 @@ function PayoutsPageContent() {
           "<div class='meta' style='color:#475569;font-size:11px;margin-bottom:4px'>Each row is one assignment in the duty calendar. Charge/day and Payout/day are the rates the duty was logged with at time of work.</div>" +
           workLogTable
         : "") +
-      (paidTable ? "<h3>Disbursements (" + paidRows.length + ")</h3>" + paidTable : "<h3>Disbursements</h3><div class='meta' style='color:#b91c1c'>No disbursements recorded yet for this payout.</div>") +
+      (paidTable ? "<h3>Disbursements (" + paidRows.length + ")</h3>" + paidTable : "<h3>Disbursements</h3><div class='meta' style='color:#b91c1c'>No disbursements recorded yet for this payout.</div>");
+
+    var proofBundle = "";
+    for (var pi = 0; pi < paidRows.length; pi += 1) {
+      var ptx = paidRows[pi];
+      if (!ptx.proof_bucket || !ptx.proof_path) continue;
+      proofBundle +=
+        "<h3>Payment proof — " +
+        escapeHtml(ptx.serial_no || ptx.id || "disbursement") +
+        "</h3>" +
+        (await buildProofHtmlForTx(ptx));
+    }
+
+    body +=
+      proofBundle +
       (row.paid_at ? "<div class='meta'><strong>Paid on:</strong> " + formatDate(row.paid_at) + "</div>" : "") +
       (row.remarks ? "<div class='meta'><strong>Remarks:</strong> " + escapeHtml(row.remarks) + "</div>" : "") +
       auditTable;
@@ -1579,8 +1671,15 @@ function PayoutsPageContent() {
                         className={"record-card" + (isSelected ? " selected" : "")}
                         role="button"
                         tabIndex={0}
+                        aria-selected={isSelected}
                         onClick={function () {
                           openPayout(row.id);
+                        }}
+                        onKeyDown={function (event) {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openPayout(row.id);
+                          }
                         }}
                       >
                         <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -1635,6 +1734,16 @@ function PayoutsPageContent() {
                 />
               ) : (
                 <div className="stack">
+                  {(error || detailError) ? (
+                    <div className="error-text" role="alert" aria-live="polite">
+                      {error || detailError}
+                    </div>
+                  ) : null}
+                  {message ? (
+                    <div className="success-text" role="status" aria-live="polite">
+                      {message}
+                    </div>
+                  ) : null}
                   <div className="helper-box">
                     <div style={{ fontSize: 17, fontWeight: 600 }}>
                       {employeeNameForDetail || "—"}
@@ -1982,15 +2091,25 @@ function PayoutsPageContent() {
                           </button>
                         ) : null}
                         {status === "OPEN" && canWrite ? (
-                          <button
-                            type="button"
-                            className="button primary"
-                            onClick={handleLock}
-                            disabled={busy}
-                            title="Lock the period so the final 'Mark as paid' form (with proof uploader) appears"
-                          >
-                            Lock → Mark as paid with proof
-                          </button>
+                          <div className="stack" style={{ width: "100%", marginTop: 6 }}>
+                            <input
+                              value={lockReason}
+                              onChange={function (event) {
+                                setLockReason(event.target.value);
+                              }}
+                              placeholder="Lock reason (required)"
+                              aria-label="Reason for locking payout"
+                            />
+                            <button
+                              type="button"
+                              className="button primary"
+                              onClick={handleLock}
+                              disabled={busy || !String(lockReason || "").trim()}
+                              title="Lock the period so the final Mark as paid form appears"
+                            >
+                              Lock → Mark as paid with proof
+                            </button>
+                          </div>
                         ) : null}
                         {status === "LOCKED" ? (
                           <button
@@ -2039,7 +2158,7 @@ function PayoutsPageContent() {
                       onClick={printPayout}
                       title="Generate an audit-ready PDF of this payout (amounts, patients, disbursements, accountability trail)"
                     >
-                      📄 Download Payout PDF
+                      Print payout statement
                     </button>
                     {canWrite ? (
                       <button className="button secondary" type="button" onClick={handleRecompute} disabled={busy || isLocked}>
@@ -2047,14 +2166,44 @@ function PayoutsPageContent() {
                       </button>
                     ) : null}
                     {canWrite && status === "OPEN" ? (
-                      <button className="button secondary" type="button" onClick={handleLock} disabled={busy}>
-                        Lock
-                      </button>
+                      <div className="stack" style={{ flex: 1, minWidth: 220 }}>
+                        <label className="mini-muted">Reason for locking (required)</label>
+                        <input
+                          value={lockReason}
+                          onChange={function (event) {
+                            setLockReason(event.target.value);
+                          }}
+                          placeholder="e.g. Verified duty days and net amount"
+                        />
+                        <button
+                          className="button secondary"
+                          type="button"
+                          onClick={handleLock}
+                          disabled={busy || !String(lockReason || "").trim()}
+                        >
+                          Lock for payment
+                        </button>
+                      </div>
                     ) : null}
                     {canWrite && status === "LOCKED" ? (
-                      <button className="button secondary" type="button" onClick={handleReopen} disabled={busy}>
-                        Reopen
-                      </button>
+                      <div className="stack" style={{ flex: 1, minWidth: 220 }}>
+                        <label className="mini-muted">Reason for reopening (required)</label>
+                        <input
+                          value={reopenReason}
+                          onChange={function (event) {
+                            setReopenReason(event.target.value);
+                          }}
+                          placeholder="e.g. Correction needed before final pay"
+                        />
+                        <button
+                          className="button secondary"
+                          type="button"
+                          onClick={handleReopen}
+                          disabled={busy || !String(reopenReason || "").trim()}
+                        >
+                          Reopen payout
+                        </button>
+                      </div>
                     ) : null}
                     {canDisburse && status === "OPEN" ? (
                       <button
@@ -2191,7 +2340,7 @@ function PayoutsPageContent() {
                           <label>Proof (image or PDF) — required</label>
                           <input
                             type="file"
-                            accept="image/*,application/pdf"
+                            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf"
                             onChange={function (event) {
                               handleProofUpload("advance", event.target.files);
                             }}
@@ -2199,13 +2348,38 @@ function PayoutsPageContent() {
                           <ProofPreview proof={advanceForm.proof} />
                         </div>
                       </div>
+                      {confirmDisburse === "advance" ? (
+                        <div
+                          className="helper-box"
+                          style={{ background: "#ecfdf5", borderColor: "#16a34a" }}
+                        >
+                          <strong>Confirm advance disbursement</strong>
+                          <div style={{ marginTop: 4, fontSize: 13 }}>
+                            {formatCurrency(advanceForm.amount)} on {advanceForm.paid_on} via{" "}
+                            {advanceForm.method}. Proof attached.
+                          </div>
+                          <div className="button-row" style={{ marginTop: 8 }}>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={function () {
+                                setConfirmDisburse(null);
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="button-row">
                         <button
                           className="button primary"
                           type="submit"
                           disabled={busy || !advanceForm.proof || !advanceForm.amount}
                         >
-                          Record advance
+                          {confirmDisburse === "advance"
+                            ? "Confirm and record advance"
+                            : "Review and record advance"}
                         </button>
                       </div>
                     </form>
@@ -2272,7 +2446,7 @@ function PayoutsPageContent() {
                           <label>Proof (image or PDF) — required</label>
                           <input
                             type="file"
-                            accept="image/*,application/pdf"
+                            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf"
                             onChange={function (event) {
                               handleProofUpload("pay", event.target.files);
                             }}
@@ -2280,9 +2454,35 @@ function PayoutsPageContent() {
                           <ProofPreview proof={payForm.proof} />
                         </div>
                       </div>
+                      {confirmDisburse === "pay" ? (
+                        <div
+                          className="helper-box"
+                          style={{ background: "#ecfdf5", borderColor: "#16a34a" }}
+                        >
+                          <strong>Confirm final payment</strong>
+                          <div style={{ marginTop: 4, fontSize: 13 }}>
+                            Settle{" "}
+                            {payForm.amount && Number(payForm.amount) > 0
+                              ? formatCurrency(payForm.amount)
+                              : formatCurrency(outstanding)}{" "}
+                            on {payForm.paid_on} via {payForm.method}. Proof attached.
+                          </div>
+                          <div className="button-row" style={{ marginTop: 8 }}>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={function () {
+                                setConfirmDisburse(null);
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="button-row">
                         <button className="button success" type="submit" disabled={busy || !payForm.proof}>
-                          Mark paid
+                          {confirmDisburse === "pay" ? "Confirm and mark paid" : "Review and mark paid"}
                         </button>
                       </div>
                     </form>

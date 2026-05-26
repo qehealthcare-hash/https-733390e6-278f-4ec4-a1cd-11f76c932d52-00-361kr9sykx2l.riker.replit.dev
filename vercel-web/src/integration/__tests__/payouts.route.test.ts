@@ -29,7 +29,9 @@ vi.mock("@/services/payoutService", () => ({
     payAdvance: vi.fn(),
     pendingForEmployeePeriod: vi.fn(),
     pendingEmployeesForPeriod: vi.fn(),
-    setEmployeePeriodPayoutRate: vi.fn()
+    setEmployeePeriodPayoutRate: vi.fn(),
+    monthlyTotal: vi.fn(),
+    replacePayoutCharges: vi.fn()
   }
 }));
 
@@ -55,6 +57,8 @@ import { POST as PayoutPayAdvance } from "../../../app/api/v1/payouts/[id]/pay-a
 import { GET as PayoutPending } from "../../../app/api/v1/payouts/pending/route";
 import { GET as PayoutPendingEmployees } from "../../../app/api/v1/payouts/pending-employees/route";
 import { POST as PayoutSetRate } from "../../../app/api/v1/payouts/set-rate/route";
+import { GET as PayoutTotalsGet } from "../../../app/api/v1/payouts/totals/route";
+import { POST as PayoutChargesReplace } from "../../../app/api/v1/payouts/charges/replace/route";
 
 const m = payoutService as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
@@ -172,12 +176,64 @@ describe("POST /api/v1/payouts/[id]/lock", () => {
     vi.clearAllMocks();
   });
 
-  it("locks when authorised", async () => {
+  it("locks when authorised with reason", async () => {
     setActor(ACTORS.manager);
     m.lock.mockResolvedValue({ success: true, data: { id: "PAY1", status: "Locked" } });
-    const req = makeRequest("POST", "/api/v1/payouts/PAY1/lock", { body: {} });
+    const req = makeRequest("POST", "/api/v1/payouts/PAY1/lock", {
+      body: { reason: "Verified duty days for payment" }
+    });
     const res = await PayoutLock(req, ctx({ id: "PAY1" }));
     await expectOkEnvelope(res);
+  });
+
+  it("rejects lock without reason", async () => {
+    setActor(ACTORS.manager);
+    const req = makeRequest("POST", "/api/v1/payouts/PAY1/lock", { body: { reason: "" } });
+    const res = await PayoutLock(req, ctx({ id: "PAY1" }));
+    await expectErrorEnvelope(res, 422, "validation_error");
+    expect(m.lock).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/v1/payouts/totals", () => {
+  beforeEach(() => {
+    setActor(null);
+    vi.clearAllMocks();
+  });
+
+  it("requires payout read role", async () => {
+    setActor(ACTORS.viewer);
+    const req = makeRequest("GET", "/api/v1/payouts/totals?period=2026-05");
+    const res = await PayoutTotalsGet(req, ctx({}));
+    await expectErrorEnvelope(res, 403, "forbidden");
+  });
+
+  it("returns totals for Accountant", async () => {
+    setActor(ACTORS.accountant);
+    m.monthlyTotal.mockResolvedValue({
+      success: true,
+      data: { period: "2026-05", net_amount: 1000 }
+    });
+    const req = makeRequest("GET", "/api/v1/payouts/totals?period=2026-05");
+    const res = await PayoutTotalsGet(req, ctx({}));
+    await expectOkEnvelope(res);
+  });
+});
+
+describe("POST /api/v1/payouts/charges/replace", () => {
+  beforeEach(() => {
+    setActor(null);
+    vi.clearAllMocks();
+  });
+
+  it("denies Staff", async () => {
+    setActor(ACTORS.staff);
+    const req = makeRequest("POST", "/api/v1/payouts/charges/replace", {
+      body: { svc_key: "SVC1", rows: [] }
+    });
+    const res = await PayoutChargesReplace(req, ctx({}));
+    await expectErrorEnvelope(res, 403, "forbidden");
+    expect(m.replacePayoutCharges).not.toHaveBeenCalled();
   });
 });
 
@@ -197,30 +253,32 @@ describe("POST /api/v1/payouts/pay", () => {
     expect(m.markPaid).not.toHaveBeenCalled();
   });
 
-  it("pays when Accountant", async () => {
+  it("pays when Accountant with proof", async () => {
     setActor(ACTORS.accountant);
     m.markPaid.mockResolvedValue({ success: true, data: { id: "PAY1", status: "Paid" } });
     const req = makeRequest("POST", "/api/v1/payouts/pay", {
-      body: { payout_id: "PAY1", amount: 1000 }
+      body: {
+        payout_id: "PAY1",
+        amount: 1000,
+        proof_bucket: "payout-proofs",
+        proof_path: "2026-05/slip.jpg"
+      }
     });
     const res = await PayoutPay(req, ctx({}));
     await expectOkEnvelope(res);
     expect(m.markPaid).toHaveBeenCalled();
   });
 
-  it("propagates business failure when proof is missing", async () => {
+  it("rejects pay at validation when proof is missing", async () => {
     setActor(ACTORS.accountant);
-    m.markPaid.mockResolvedValue({
-      success: false,
-      code: "business_rule_violation",
-      error: "Payout proof is required — upload a receipt/photo before marking paid"
-    });
     const req = makeRequest("POST", "/api/v1/payouts/pay", {
       body: { payout_id: "PAY1", amount: 1000 }
     });
     const res = await PayoutPay(req, ctx({}));
-    await expectErrorEnvelope(res, 422, "business_rule_violation");
+    await expectErrorEnvelope(res, 422, "validation_error");
+    expect(m.markPaid).not.toHaveBeenCalled();
   });
+
 });
 
 describe("POST /api/v1/payouts/[id]/pay-advance", () => {
