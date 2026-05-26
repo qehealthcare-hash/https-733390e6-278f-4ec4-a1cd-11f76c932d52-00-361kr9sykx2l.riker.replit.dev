@@ -243,19 +243,56 @@ export interface AttendanceForPayout {
 
 export interface PayoutPatientBreakdownRow {
   patient_id: string;
+  /** Hydrated by the service (left empty by this pure function). */
+  patient_name: string;
   duty_count: number;
   hours: number;
+  /** ₹ earned from this patient's duties this period (from hh_payout_charges). */
+  amount: number;
+  /** Distinct YYYY-MM-DD days the employee was assigned to this patient. */
+  dates: string[];
   duty_ids: string[];
 }
 
 /**
- * Aggregate the duties + attendance for an employee + period into a per-patient
- * breakdown. Used by the UI to show "this payout came from these patients" so
- * accountants can answer parent questions about which contract earned what.
+ * Minimal shape required from a hh_payout_charges row to attribute its
+ * amount to a patient. We only need the remarks (which encode `duty:<id>:…`)
+ * and the amount; everything else is ignored.
+ */
+export interface ChargeForPayout {
+  remarks?: string | null;
+  amount?: number | string | null;
+  date?: string | null;
+}
+
+const DIARY_REMARKS_RE = /^duty:([^:]+):(\d{4}-\d{2}-\d{2})/;
+
+function parseDutyIdFromRemarks(remarks: string | null | undefined): {
+  dutyId: string;
+  isoDate: string;
+} | null {
+  if (!remarks) return null;
+  const match = DIARY_REMARKS_RE.exec(String(remarks));
+  if (!match) return null;
+  return { dutyId: match[1], isoDate: match[2] };
+}
+
+/**
+ * Aggregate the duties + attendance + materialized charges for an employee +
+ * period into a per-patient breakdown. Used by the UI / PDFs / receipts to
+ * show "this payout came from these patients" so accountants can answer
+ * parent questions about which contract earned what.
+ *
+ * - `duty_count` and `hours` come from attendance (PRESENT-only).
+ * - `amount` and `dates` come from hh_payout_charges (the same source that
+ *   feeds Gross), attributed to a patient via duty_id in the charge remarks.
+ *   This way the per-patient totals always sum to Gross.
+ * - `patient_name` is left blank for the service layer to hydrate.
  */
 export function breakdownByPatient(
   duties: DutyForPayout[],
-  attendance: AttendanceForPayout[]
+  attendance: AttendanceForPayout[],
+  charges: ChargeForPayout[] = []
 ): PayoutPatientBreakdownRow[] {
   const attendanceByDuty = new Map<string, AttendanceForPayout>();
   for (const a of attendance) {
@@ -263,7 +300,32 @@ export function breakdownByPatient(
     if (!dutyId) continue;
     attendanceByDuty.set(dutyId, a);
   }
+  const dutyToPatient = new Map<string, string>();
+  for (const d of duties) {
+    if (d.id && d.patient_id) {
+      dutyToPatient.set(String(d.id), String(d.patient_id));
+    }
+  }
+
+  function ensureRow(map: Map<string, PayoutPatientBreakdownRow>, patientId: string) {
+    let row = map.get(patientId);
+    if (!row) {
+      row = {
+        patient_id: patientId,
+        patient_name: "",
+        duty_count: 0,
+        hours: 0,
+        amount: 0,
+        dates: [],
+        duty_ids: []
+      };
+      map.set(patientId, row);
+    }
+    return row;
+  }
+
   const map = new Map<string, PayoutPatientBreakdownRow>();
+
   for (const d of duties) {
     const patientId = String(d.patient_id || "");
     if (!patientId) continue;
@@ -272,21 +334,48 @@ export function breakdownByPatient(
     const att = d.id ? attendanceByDuty.get(String(d.id)) : undefined;
     const present = String(att?.status || "").toUpperCase() === "PRESENT";
     const hours = Number(att?.hours || 0);
-
-    const row = map.get(patientId) || {
-      patient_id: patientId,
-      duty_count: 0,
-      hours: 0,
-      duty_ids: []
-    };
+    const row = ensureRow(map, patientId);
     if (present) {
       row.duty_count += 1;
       row.hours += hours;
     }
     if (d.id) row.duty_ids.push(String(d.id));
-    map.set(patientId, row);
   }
-  return Array.from(map.values()).sort((a, b) => b.duty_count - a.duty_count);
+
+  for (const c of charges) {
+    const parsed = parseDutyIdFromRemarks(c.remarks);
+    let patientId = parsed ? dutyToPatient.get(parsed.dutyId) || "" : "";
+    if (!patientId) {
+      // Best-effort fallback: derive from charge date by finding any duty in
+      // window for that date. Keeps the sum honest when remarks are missing.
+      const dateStr = parsed?.isoDate || String(c.date || "").slice(0, 10);
+      if (dateStr) {
+        const fallback = duties.find((d) => {
+          if (!d.patient_id) return false;
+          const start = String(d.start_at || "").slice(0, 10);
+          return start <= dateStr; // crude — only used when remarks are absent
+        });
+        if (fallback) patientId = String(fallback.patient_id || "");
+      }
+    }
+    if (!patientId) continue;
+    const row = ensureRow(map, patientId);
+    row.amount += Number(c.amount || 0);
+    const iso = parsed?.isoDate || String(c.date || "").slice(0, 10);
+    if (iso && !row.dates.includes(iso)) row.dates.push(iso);
+  }
+
+  // Round amounts + sort dates for stable rendering.
+  for (const row of map.values()) {
+    row.amount = Math.round(row.amount * 100) / 100;
+    row.hours = Math.round(row.hours * 100) / 100;
+    row.dates.sort();
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    if (b.amount !== a.amount) return b.amount - a.amount;
+    return b.duty_count - a.duty_count;
+  });
 }
 
 export interface PayoutTotals {

@@ -331,6 +331,22 @@ th {
   color: var(--primary);
 }
 
+.status.paid {
+  background: rgba(0, 163, 122, 0.18);
+  color: var(--accent);
+  border: 1px solid rgba(0, 163, 122, 0.45);
+}
+
+.status.locked {
+  background: rgba(229, 159, 0, 0.18);
+  color: #8b5e00;
+}
+
+.status.unpaid {
+  background: rgba(214, 69, 69, 0.12);
+  color: var(--danger);
+}
+
 .status.hot {
   background: rgba(214, 69, 69, 0.12);
   color: var(--danger);

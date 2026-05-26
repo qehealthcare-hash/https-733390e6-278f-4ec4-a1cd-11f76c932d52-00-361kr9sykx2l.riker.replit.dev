@@ -72,6 +72,7 @@ import { payoutRepository } from "@/database/payoutRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { attendanceRepository } from "@/database/attendanceRepository";
 import { employeeRepository } from "@/database/employeeRepository";
+import { patientRepository } from "@/database/patientRepository";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
@@ -439,6 +440,52 @@ async function loadPayoutDetail(
   );
   const outstanding = Math.max(0, Number(payout.net_amount || 0) - paidTotal);
 
+  const baseBreakdown = breakdownByPatient(
+    dutyRows.map((d) => ({
+      id: String(d.id),
+      patient_id: (d.patient_id as string | null) ?? null,
+      employee_id: (d.employee_id as string | null) ?? null,
+      start_at: (d.start_at as string | null) ?? null,
+      shift_type: (d.shift_type as string | null) ?? null,
+      status: (d.status as string | null) ?? null
+    })),
+    attendanceRows.map((a) => ({
+      duty_id: (a.duty_id as string | null) ?? null,
+      hours: (a.hours as number | string | null) ?? null,
+      status: (a.status as string | null) ?? null,
+      check_in_at: (a.check_in_at as string | null) ?? null
+    })),
+    chargeRows.map((c) => ({
+      remarks: (c.remarks as string | null) ?? null,
+      amount: (c.amount as number | string | null) ?? null,
+      date: (c.date as string | null) ?? null
+    }))
+  );
+
+  // Hydrate patient names in one batch so the UI / PDF can read
+  // breakdown[i].patient_name without an extra request per row.
+  const patientIds = baseBreakdown.map((r) => r.patient_id).filter(Boolean);
+  if (patientIds.length) {
+    const patients = await patientRepository.findByIds(patientIds, access);
+    if (patients.success && Array.isArray(patients.data)) {
+      const nameById = new Map<string, string>();
+      for (const p of patients.data) {
+        const id = String(p.id || "");
+        if (!id) continue;
+        const direct = String((p.full_name as string | undefined) || "").trim();
+        const parts = [p.fn, p.mn, p.ln]
+          .map((part) => String(part || "").trim())
+          .filter(Boolean);
+        nameById.set(id, direct || parts.join(" ") || id);
+      }
+      for (const row of baseBreakdown) {
+        row.patient_name = nameById.get(row.patient_id) || row.patient_id;
+      }
+    } else {
+      for (const row of baseBreakdown) row.patient_name = row.patient_id;
+    }
+  }
+
   return success({
     payout: { ...payout, employee_name: employeeName },
     duties: dutyRows,
@@ -448,23 +495,7 @@ async function loadPayoutDetail(
     outstanding: Math.round(outstanding * 100) / 100,
     employee_name: employeeName,
     diagnostics,
-    breakdown: breakdownByPatient(
-      dutyRows.map((d) => ({
-        id: String(d.id),
-        patient_id: (d.patient_id as string | null) ?? null,
-        employee_id: (d.employee_id as string | null) ?? null,
-        start_at: (d.start_at as string | null) ?? null,
-        shift_type: (d.shift_type as string | null) ?? null,
-        status: (d.status as string | null) ?? null
-      })),
-      attendanceRows.map((a) => ({
-        duty_id: (a.duty_id as string | null) ?? null,
-        employee_id: (a.employee_id as string | null) ?? null,
-        hours: (a.hours as number | string | null) ?? null,
-        status: (a.status as string | null) ?? null,
-        check_in_at: (a.check_in_at as string | null) ?? null
-      }))
-    )
+    breakdown: baseBreakdown
   });
 }
 

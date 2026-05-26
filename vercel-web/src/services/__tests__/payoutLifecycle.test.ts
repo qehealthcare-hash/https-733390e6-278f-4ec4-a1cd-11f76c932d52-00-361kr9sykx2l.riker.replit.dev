@@ -22,6 +22,11 @@ vi.mock("@/database/payoutRepository");
 vi.mock("@/database/employeeRepository");
 vi.mock("@/database/dutyRepository");
 vi.mock("@/database/attendanceRepository");
+vi.mock("@/database/patientRepository", () => ({
+  patientRepository: {
+    findByIds: vi.fn().mockResolvedValue({ success: true, data: [] })
+  }
+}));
 vi.mock("@/services/dutyDiaryService", () => ({
   dutyDiaryService: {
     rematerializeForEmployeePeriod: vi.fn().mockResolvedValue({

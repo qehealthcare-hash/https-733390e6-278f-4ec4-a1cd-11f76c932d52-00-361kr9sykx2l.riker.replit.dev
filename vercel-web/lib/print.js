@@ -41,7 +41,45 @@ export function openPrintWindow(title, bodyHtml) {
   );
   printWindow.document.close();
   printWindow.focus();
-  setTimeout(function () {
-    printWindow.print();
-  }, 350);
+  // Wait for every embedded image (logo + payment proofs) to finish loading
+  // before opening the print dialog — otherwise the proof never makes it
+  // into the saved PDF. Falls back to a hard 5s ceiling so a broken image
+  // can't block the dialog forever.
+  function waitForImagesAndPrint() {
+    try {
+      var imgs = Array.prototype.slice.call(printWindow.document.images || []);
+      var pending = imgs.filter(function (i) {
+        return !i.complete;
+      });
+      if (!pending.length) {
+        setTimeout(function () {
+          printWindow.print();
+        }, 100);
+        return;
+      }
+      var remaining = pending.length;
+      var done = false;
+      var finalize = function () {
+        if (done) return;
+        done = true;
+        setTimeout(function () {
+          printWindow.print();
+        }, 150);
+      };
+      pending.forEach(function (img) {
+        var onAny = function () {
+          remaining -= 1;
+          if (remaining <= 0) finalize();
+        };
+        img.addEventListener("load", onAny, { once: true });
+        img.addEventListener("error", onAny, { once: true });
+      });
+      setTimeout(finalize, 5000);
+    } catch (_err) {
+      setTimeout(function () {
+        printWindow.print();
+      }, 500);
+    }
+  }
+  setTimeout(waitForImagesAndPrint, 250);
 }
