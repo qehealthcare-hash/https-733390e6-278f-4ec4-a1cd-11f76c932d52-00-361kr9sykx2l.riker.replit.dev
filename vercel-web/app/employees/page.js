@@ -645,6 +645,8 @@ export default function EmployeesPage() {
   async function applyStatusChange(id, nextStatus, reason) {
     setBusy(true);
     setError("");
+    setActivateDialog(function (current) { return current ? { ...current, error: "" } : current; });
+    setStatusDialog(function (current) { return current ? { ...current, error: "" } : current; });
     try {
       await requestWithOfflineFallback(
         "/employees/" + id + "/status",
@@ -657,7 +659,10 @@ export default function EmployeesPage() {
       setStatusDialog(null);
       setActivateDialog(null);
     } catch (err) {
-      setError(err.message || "Unable to change status");
+      var msg = err && err.message ? err.message : "Unable to change status";
+      setError(msg);
+      setActivateDialog(function (current) { return current ? { ...current, error: msg } : current; });
+      setStatusDialog(function (current) { return current ? { ...current, error: msg } : current; });
     } finally {
       setBusy(false);
     }
@@ -1531,6 +1536,11 @@ export default function EmployeesPage() {
             <p className="mini-muted">
               {activateDialog.name ? activateDialog.name + " — " : ""}This will set status to Active and clear the leave date.
             </p>
+            {activateDialog.error ? (
+              <div className="alert alert-error" role="alert" style={{ marginBottom: 8 }}>
+                {activateDialog.error}
+              </div>
+            ) : null}
             <div className="field">
               <label>Note (optional)</label>
               <textarea
@@ -1600,6 +1610,11 @@ export default function EmployeesPage() {
             <p className="mini-muted">
               {statusDialog.name ? statusDialog.name + " — " : ""}This change is written to the audit log.
             </p>
+            {statusDialog.error ? (
+              <div className="alert alert-error" role="alert" style={{ marginBottom: 8 }}>
+                {statusDialog.error}
+              </div>
+            ) : null}
             <div className="field">
               <label>Reason (optional)</label>
               <textarea
