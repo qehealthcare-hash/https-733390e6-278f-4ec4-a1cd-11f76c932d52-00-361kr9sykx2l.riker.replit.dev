@@ -100,21 +100,21 @@ export const RESOURCES_PREVIEW = [
     title: "Banking Quant Cheatsheet",
     pages: 8,
     size: "980 KB",
-    href: "/resources",
+    href: "/resources?type=cheatsheet",
   },
   {
     id: "ssc-analysis",
     title: "SSC CGL Quant Analysis 2025",
     pages: 24,
     size: "2.1 MB",
-    href: "/resources",
+    href: "/resources?type=previous-year",
   },
   {
     id: "vedic-starter",
     title: "Vedic Maths Starter Pack",
     pages: 6,
     size: "720 KB",
-    href: "/resources",
+    href: "/resources?type=revision",
   },
 ] as const;
 
