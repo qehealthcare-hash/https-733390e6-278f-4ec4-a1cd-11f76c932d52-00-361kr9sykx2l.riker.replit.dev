@@ -87,3 +87,81 @@ export const SITE = {
 
 export type Pillar = (typeof SITE.pillars)[number];
 export type PillarSlug = Pillar["slug"];
+
+// ──────────────────────────────────────────────────────────
+// Navigation structure — single source of truth for navbar + footer.
+// Anything in NAV.primary appears in the top navbar on desktop.
+// Items with `cta: true` get rendered as a primary button.
+// ──────────────────────────────────────────────────────────
+
+export type NavItem = {
+  label: string;
+  href: string;
+  external?: boolean;
+  description?: string;
+  /** Treat as the primary CTA — rendered as a brand-red button. */
+  cta?: boolean;
+};
+
+export const NAV = {
+  primary: [
+    { label: "Live Exams", href: "/exams", description: "Free synchronized All-India mocks every week" },
+    { label: "Courses", href: "/courses", description: "Five tracks: school, banking, SSC, tricks, exams" },
+    { label: "Videos", href: "/videos", description: "Everything from the YouTube channel" },
+    { label: "Resources", href: "/resources", description: "Free PDFs, formula sheets, cheat sheets" },
+    { label: "Blog", href: "/blog", description: "Smart maths tricks, breakdowns and exam strategy" },
+    { label: "About", href: "/about", description: "Our story and teaching philosophy" },
+  ] as readonly NavItem[],
+
+  /** Renders as the brand-red CTA on the right of the navbar. */
+  cta: {
+    label: "Reserve seat",
+    href: "/exams",
+    cta: true,
+  } satisfies NavItem,
+
+  footer: {
+    learn: {
+      title: "Learn",
+      items: [
+        { label: "School Maths", href: "/courses/school" },
+        { label: "Banking Quant", href: "/courses/banking" },
+        { label: "SSC & Aptitude", href: "/courses/ssc" },
+        { label: "Smart Tricks", href: "/courses/tricks" },
+        { label: "Live Exams", href: "/courses/exams" },
+      ] as readonly NavItem[],
+    },
+    compete: {
+      title: "Compete",
+      items: [
+        { label: "Upcoming Exams", href: "/exams" },
+        { label: "Past Results", href: "/exams?tab=past" },
+        { label: "Merit Lists", href: "/exams?tab=merit" },
+        { label: "My Dashboard", href: "/dashboard" },
+        { label: "Certificate verify", href: "/verify" },
+      ] as readonly NavItem[],
+    },
+    resources: {
+      title: "Resources",
+      items: [
+        { label: "Free Notes & PDFs", href: "/resources" },
+        { label: "Practice Quiz", href: "/quiz" },
+        { label: "Maths Tricks Blog", href: "/blog" },
+        { label: "Formula Sheets", href: "/resources?type=formula" },
+        { label: "Testimonials", href: "/testimonials" },
+      ] as readonly NavItem[],
+    },
+    company: {
+      title: "Company",
+      items: [
+        { label: "About", href: "/about" },
+        { label: "Contact", href: "/contact" },
+        { label: "Privacy Policy", href: "/privacy" },
+        { label: "Terms of Service", href: "/terms" },
+      ] as readonly NavItem[],
+    },
+  },
+} as const;
+
+export type NavSection = keyof typeof NAV.footer;
+
