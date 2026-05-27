@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/brand/logo";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { MobileNav } from "@/components/sections/mobile-nav";
+import { UserMenu } from "@/components/auth/user-menu";
 import { NAV } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
@@ -102,6 +103,7 @@ export function Navbar() {
 
         {/* Right cluster: theme toggle + primary CTA + mobile drawer */}
         <div className="flex items-center gap-2">
+          <UserMenu />
           <ThemeToggle className="hidden md:inline-flex" />
           <Button
             asChild

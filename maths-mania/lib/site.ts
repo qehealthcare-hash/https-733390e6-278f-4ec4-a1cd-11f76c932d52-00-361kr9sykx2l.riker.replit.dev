@@ -138,7 +138,7 @@ export const NAV = {
         { label: "Past Results", href: "/exams?tab=past" },
         { label: "Merit Lists", href: "/exams?tab=merit" },
         { label: "My Dashboard", href: "/dashboard" },
-        { label: "Certificate verify", href: "/verify" },
+        { label: "Certificate verify", href: "/certificates/verify" },
       ] as readonly NavItem[],
     },
     resources: {

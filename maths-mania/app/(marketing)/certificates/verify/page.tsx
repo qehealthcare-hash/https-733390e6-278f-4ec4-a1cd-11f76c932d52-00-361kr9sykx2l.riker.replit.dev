@@ -7,7 +7,7 @@ export const metadata: Metadata = {
     "Verify the authenticity of a Maths Mania merit-list certificate by entering the 12-character verification code.",
 };
 
-export default function VerifyPage() {
+export default function CertificateVerifyPage() {
   return (
     <ComingSoon
       milestone="Milestone 14"

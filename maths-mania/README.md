@@ -10,7 +10,9 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 9 of 22 — Supabase foundation.** ✅ Complete (m1–m9 marketing + data layer)
+**Milestone 10 of 22 — Supabase Auth.** ✅ Complete (m1–m10)
+
+**Milestone 9 — Supabase foundation.** ✅
 
 Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** adds:
 
@@ -18,6 +20,14 @@ Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** 
 - `lib/supabase/*` — browser, server, and admin clients
 - `lib/database.types.ts` — typed schema (regenerate with `npm run db:types`)
 - Dual-write: newsletter + lead APIs use Supabase when `SUPABASE_SERVICE_ROLE_KEY` is set, else jsonl fallback
+
+**Milestone 10 — auth.** ✅
+
+- `/login`, `/signup`, `/verify` (auth), `/onboarding`, `/auth/callback`
+- Email magic link + Google OAuth + phone OTP (MSG91 when configured; dev OTP in logs / `000000`)
+- `requireAuth()` / `authGuard` server helper, `UserMenu` in navbar
+- `/dashboard` stub with sidebar (milestone 15 expands)
+- Certificate verification moved to `/certificates/verify` (auth uses `/verify`)
 
 **Milestone 1 — brand foundation.** ✅
 
