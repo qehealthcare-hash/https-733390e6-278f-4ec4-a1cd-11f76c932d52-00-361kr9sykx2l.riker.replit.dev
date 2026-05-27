@@ -40,7 +40,6 @@ yarn-error.log*
 
 # Local data scratch (lead capture, exam dumps)
 /data/
-/data/*.jsonl
 
 # Editor
 .vscode/

@@ -10,9 +10,15 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 1 of 22 — brand foundation.** ✅ Complete
+**Milestone 3 of 22 — full marketing home.** ✅ Complete (m1–m3)
 
-Currently includes:
+Previously shipped:
+
+**Milestone 1 — brand foundation.** ✅
+
+**Milestone 2 — navbar + footer + route stubs.** ✅
+
+Currently includes (m3 home):
 
 - Next.js 16 (App Router, TypeScript, Turbopack)
 - Tailwind CSS v4 with the full `@theme` token system (oklch palette, radii, shadows, motion)
