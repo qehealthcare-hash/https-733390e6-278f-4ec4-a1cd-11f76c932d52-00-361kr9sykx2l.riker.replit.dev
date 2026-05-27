@@ -32,6 +32,17 @@ Studio: http://localhost:54323
 |------|---------|
 | `20250527000001_exam_platform_schema.sql` | Profiles, exams, attempts, merit, RLS, `public_merit` view |
 | `20250527000002_marketing_tables.sql` | `newsletter_subscribers`, `resource_leads` |
+| `20250527000003_seed_demo_exams.sql` | Demo exams: IBPS 30 min + SSC 20 min with 8 questions each |
+
+## Admin access
+
+Promote your user after signing up:
+
+```sql
+update public.profiles set role = 'admin' where id = '<your-auth-user-uuid>';
+```
+
+Then open `/admin/exams`.
 
 ## Regenerate TypeScript types
 

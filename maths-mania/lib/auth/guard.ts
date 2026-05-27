@@ -8,6 +8,7 @@
 export {
   requireAuth,
   requireAuth as authGuard,
+  requireAdmin,
   getAuthContext,
   getUser,
   getProfile,

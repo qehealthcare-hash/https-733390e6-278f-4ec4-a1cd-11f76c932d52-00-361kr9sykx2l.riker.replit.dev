@@ -10,7 +10,9 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 10 of 22 — Supabase Auth.** ✅ Complete (m1–m10)
+**Milestone 11 of 22 — Exam admin panel.** ✅ Complete (m1–m11)
+
+**Milestone 10 — Supabase Auth.** ✅
 
 **Milestone 9 — Supabase foundation.** ✅
 
@@ -28,6 +30,13 @@ Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** 
 - `requireAuth()` / `authGuard` server helper, `UserMenu` in navbar
 - `/dashboard` stub with sidebar (milestone 15 expands)
 - Certificate verification moved to `/certificates/verify` (auth uses `/verify`)
+
+**Milestone 11 — exam admin.** ✅
+
+- `/admin/exams` — list, create, edit exams (admin/moderator role)
+- Question editor with live KaTeX preview
+- Schedule windows + marking scheme on exam form
+- Seed migration: `ibps-quant-speed-test-2` (30 min) + `ssc-cgl-quant-sprint-1` (20 min)
 
 **Milestone 1 — brand foundation.** ✅
 

@@ -88,6 +88,17 @@ export async function requireAuth(
   return ctx;
 }
 
+/** Admin or moderator only — for /admin routes. */
+export async function requireAdmin(
+  options: Omit<RequireAuthOptions, "requireOnboarded"> = {},
+): Promise<AuthContext> {
+  const ctx = await requireAuth({ ...options, requireOnboarded: true });
+  if (ctx.profile.role !== "admin" && ctx.profile.role !== "moderator") {
+    redirect("/dashboard?error=forbidden");
+  }
+  return ctx;
+}
+
 /** Redirect signed-in users away from login/signup. */
 export async function redirectIfAuthenticated(destination = "/dashboard") {
   const user = await getUser();

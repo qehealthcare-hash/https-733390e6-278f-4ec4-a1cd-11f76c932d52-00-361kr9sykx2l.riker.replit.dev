@@ -30,13 +30,14 @@ export function UserMenu({ className }: UserMenuProps) {
 
   React.useEffect(() => {
     if (!supabase) return;
+    const client = supabase;
 
     let cancelled = false;
 
     async function load() {
       const {
         data: { user: authUser },
-      } = await supabase.auth.getUser();
+      } = await client.auth.getUser();
       if (cancelled) return;
 
       if (!authUser) {
@@ -45,7 +46,7 @@ export function UserMenu({ className }: UserMenuProps) {
         return;
       }
 
-      const { data: profile } = await supabase
+      const { data: profile } = await client
         .from("profiles")
         .select("display_name, full_name")
         .eq("id", authUser.id)
@@ -68,7 +69,7 @@ export function UserMenu({ className }: UserMenuProps) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
+    } = client.auth.onAuthStateChange(() => {
       setLoading(true);
       load();
     });
