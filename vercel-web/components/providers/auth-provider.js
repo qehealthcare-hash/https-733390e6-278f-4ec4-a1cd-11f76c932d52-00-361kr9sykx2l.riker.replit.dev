@@ -13,6 +13,8 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState("");
   const [syncLabel, setSyncLabel] = useState("Connecting...");
 
   useEffect(function () {
@@ -20,17 +22,25 @@ export function AuthProvider({ children }) {
 
     async function loadProfile(nextSession) {
       if (!nextSession?.access_token) return;
+      if (mounted) {
+        setProfileLoading(true);
+        setProfileError("");
+      }
       try {
         const me = await request("/auth/me", null, nextSession);
         if (mounted) {
           setProfile(me);
+          setProfileError("");
           setSyncLabel("Connected");
         }
       } catch (error) {
         if (mounted) {
           setProfile(null);
+          setProfileError(error?.message || "Profile lookup failed");
           setSyncLabel("Connected with warnings");
         }
+      } finally {
+        if (mounted) setProfileLoading(false);
       }
     }
 
@@ -98,6 +108,8 @@ export function AuthProvider({ children }) {
     session,
     profile,
     loading,
+    profileLoading,
+    profileError,
     syncLabel,
     async signIn(email, password) {
       const result = await supabase.auth.signInWithPassword({ email, password });
@@ -112,6 +124,7 @@ export function AuthProvider({ children }) {
       }
       await supabase.auth.signOut();
       setProfile(null);
+      setProfileError("");
       setSession(null);
       setSyncLabel("Signed out");
     }
