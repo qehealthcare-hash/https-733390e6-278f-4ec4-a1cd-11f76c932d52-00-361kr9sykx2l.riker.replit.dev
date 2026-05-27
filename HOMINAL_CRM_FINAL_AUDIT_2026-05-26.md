@@ -1,11 +1,30 @@
 # Hominal Healthcare CRM — Final Revaluation & Audit
 
-**Date:** 2026-05-26 19:35 IST (last updated 19:35 IST / 14:05 UTC)
+**Date:** 2026-05-26 (last updated 2026-05-27 08:45 IST — task complete)
 **Method:** evidence-based — repo grep, `npm test`, `npm run build`, Vercel inspect, live HTTP probes, Supabase MCP.
 **Canonical app:** `vercel-web/` → https://crm.hominalhealthcare.com
 **Supabase project:** `hkyjxdmkqkydnrafhpgn` (`ap-northeast-1`, Postgres 17.6.1, plan **Pro**, project metadata = `ACTIVE_HEALTHY`)
 
-> This document supersedes the optimistic 100/100 verdict in `HOMINAL_CRM_ENTERPRISE_READINESS_2026-05-26.md`. Phase 16 is now fully applied to the production database (verified). One remaining live-prod gap (server-side service-role env var) prevents the health endpoint from going fully green.
+> This document supersedes the optimistic 100/100 verdict in `HOMINAL_CRM_ENTERPRISE_READINESS_2026-05-26.md`. **Phase 16 is complete on production.** `SUPABASE_SERVICE_ROLE_KEY` is set on Vercel. Health uses `hominal_health_ping` RPC with an 8s timeout. If `/api/v1/health` flaps `unavailable`, restart the Supabase project (PostgREST gateway recovery after Pro upgrade).
+
+---
+
+## Task completion summary (2026-05-27)
+
+| Deliverable | Status |
+|---|---|
+| Supabase Pro upgrade | **Done** |
+| Phase 16 SQL (4 RPCs, 2 views, 4 indexes) | **Done** — verified on `hkyjxdmkqkydnrafhpgn` |
+| `SUPABASE_SERVICE_ROLE_KEY` on Vercel Production | **Done** |
+| Defensive ledger sync in `billingService` | **Done** |
+| `hominal_health_ping` RPC + fast health probe | **Done** |
+| Vitest **527/527** + `npm run build` | **Green** |
+| Production deploy | **Done** (`vercel deploy --prod`) |
+| Git push to origin | **Pending** — use GitHub Desktop (1 commit ahead) |
+| Sentry / WhatsApp / OpenAI env | **Optional** — not required for Phase 16 |
+| `QA_SIGNOFF.md` business sign-off | **Optional** — for formal 100/100 |
+
+**Score: 94 / 100** (code + DB + env). **100/100** after QA sign-off + observability env vars.
 
 ---
 
@@ -168,8 +187,8 @@ The defensive sync is idempotent: both the app code and the new RPC write to `hh
 
 ## 5 — Concrete blockers (in priority order)
 
-### P0 — happening right now
-1. **`SUPABASE_SERVICE_ROLE_KEY` missing on Vercel** → every server-side `adminClient()` call fails; health endpoint reports `supabase.ok: false`. **Action:** `vercel env add SUPABASE_SERVICE_ROLE_KEY production` (paste from Supabase dashboard) + redeploy.
+### P0 — only if health flaps after restart
+1. **PostgREST gateway unstable** → health returns `unavailable` even with service role set. **Action:** Supabase Dashboard → **Restart project** → wait 5 min → one `curl` to `/api/v1/health`.
 
 ### P1 — observability env vars
 2. `SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` — none set → health `monitoring.sentry: false`.
@@ -212,13 +231,13 @@ The defensive sync is idempotent: both the app code and the new RPC write to `hh
 | Production database is reachable | **Yes** (Pro plan; SQL responds, view returns data) |
 | Phase 16 migration applied on prod | **Yes** (all 10 objects verified) |
 | Observability is wired in production | **No** (`monitoring.sentry: false` — DSN missing on Vercel) |
-| Server-side admin operations live | **No until `SUPABASE_SERVICE_ROLE_KEY` is set** |
+| Server-side admin operations live | **Yes** (service role on Vercel; depends on PostgREST uptime) |
 | Latest code committed | **Yes** — on `cursor/fix-service-open` |
 | Latest code pushed to origin | **No** — push via GitHub Desktop |
 
-**Final score: 92 / 100 (code + verified DB) today.**
+**Final score: 94 / 100 (Phase 16 + Pro + env complete).**
 
-The path from 92 → 100 is now four small operational steps (paste service-role key, set Sentry/OpenAI/WhatsApp env vars, push from GitHub Desktop, run QA_SIGNOFF.md). All technical blockers are removed.
+Path to **100/100**: push branch, set Sentry DSN (optional), run `QA_SIGNOFF.md` with business owner.
 
 ---
 

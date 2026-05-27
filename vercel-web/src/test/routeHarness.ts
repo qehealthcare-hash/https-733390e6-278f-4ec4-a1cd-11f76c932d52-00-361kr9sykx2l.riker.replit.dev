@@ -204,6 +204,7 @@ export function buildSupabaseMock(): {
     let emailFilter: string | null = null;
     const chain: Record<string, unknown> = {
       select: () => chain,
+      limit: () => chain,
       eq: (column: string, value: unknown) => {
         if (column === "is_active") activeFilter = !!value;
         return chain;
@@ -298,6 +299,7 @@ export function buildSupabaseMock(): {
       order: () => chain,
       range: () => chain,
       limit: () => chain,
+      head: async () => ({ data: null, error: null, count: 0 }),
       maybeSingle: async () => ({ data: null, error: null }),
       single: async () => ({ data: null, error: null }),
       then: (resolve: (v: unknown) => unknown) => resolve({ data: [], error: null })
@@ -335,7 +337,12 @@ export function buildSupabaseMock(): {
         if (table === "hh_idempotency") return idempotencyChain();
         return noopChain();
       },
-      rpc: async () => ({ data: null, error: null }),
+      rpc: async (fn: string) => {
+        if (fn === "hominal_health_ping") {
+          return { data: { ok: true, ts: new Date().toISOString() }, error: null };
+        }
+        return { data: null, error: null };
+      },
       storage: {
         from: () => ({
           createSignedUploadUrl: async (path: string) => ({
