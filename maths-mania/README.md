@@ -10,15 +10,20 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 3 of 22 — full marketing home.** ✅ Complete (m1–m3)
+**Milestone 9 of 22 — Supabase foundation.** ✅ Complete (m1–m9 marketing + data layer)
 
-Previously shipped:
+Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** adds:
+
+- SQL migrations: `profiles`, exams platform tables, marketing capture, RLS, `public_merit` view
+- `lib/supabase/*` — browser, server, and admin clients
+- `lib/database.types.ts` — typed schema (regenerate with `npm run db:types`)
+- Dual-write: newsletter + lead APIs use Supabase when `SUPABASE_SERVICE_ROLE_KEY` is set, else jsonl fallback
 
 **Milestone 1 — brand foundation.** ✅
 
 **Milestone 2 — navbar + footer + route stubs.** ✅
 
-Currently includes (m3 home):
+Currently includes (marketing site):
 
 - Next.js 16 (App Router, TypeScript, Turbopack)
 - Tailwind CSS v4 with the full `@theme` token system (oklch palette, radii, shadows, motion)
@@ -56,7 +61,7 @@ The dev server runs on `http://localhost:3000`.
 
 ### Environment variables
 
-Copy `.env.example` to `.env.local` and fill in values as you reach each milestone. Nothing in the current milestone requires any env var — every feature degrades gracefully when its key is missing.
+Copy `.env.example` to `.env.local` and fill in values as you reach each milestone. The marketing site runs without Supabase; live exams and auth need it from **m9+**. See `supabase/README.md` for local `supabase start` + `supabase db reset`.
 
 ```bash
 cp .env.example .env.local

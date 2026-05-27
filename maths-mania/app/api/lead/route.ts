@@ -1,6 +1,9 @@
 import { mkdir, appendFile } from "node:fs/promises";
 import path from "node:path";
+import { hashIp } from "@/lib/privacy";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { isSupabaseAdminConfigured } from "@/lib/supabase/config";
+import { tryCreateAdminClient } from "@/lib/supabase/admin";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^\+?[\d\s-]{10,15}$/;
@@ -51,6 +54,34 @@ export async function POST(request: Request) {
       { ok: false, message: "Please enter a valid WhatsApp number (with country code)." },
       { status: 400 },
     );
+  }
+
+  if (isSupabaseAdminConfigured()) {
+    try {
+      const admin = tryCreateAdminClient()!;
+      const { error } = await admin.from("resource_leads").insert({
+        email,
+        whatsapp: whatsapp || null,
+        resource_id: resourceId,
+        resource_title: resourceTitle,
+        source: "resource-download",
+        ip_hash: hashIp(ip),
+      });
+      if (error) {
+        console.error("[lead] supabase insert failed", error);
+        return Response.json(
+          { ok: false, message: "Could not save your details. Try again later." },
+          { status: 500 },
+        );
+      }
+      return Response.json({ ok: true, message: "Lead captured." });
+    } catch (err) {
+      console.error("[lead] supabase error", err);
+      return Response.json(
+        { ok: false, message: "Could not save your details. Try again later." },
+        { status: 500 },
+      );
+    }
   }
 
   const dataDir = path.join(process.cwd(), "data");
