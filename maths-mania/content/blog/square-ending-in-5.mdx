@@ -1,0 +1,63 @@
+---
+title: "Square any number ending in 5 — the n(n+1) | 25 method"
+description: "Memorise one pattern and never expand (a+b)² in the exam hall again."
+date: "2025-04-08"
+tags: ["tricks", "school", "ssc"]
+readTimeMinutes: 5
+author: "Maths Mania Team"
+---
+
+Numbers ending in **5** have a structure examiners love — and a shortcut students forget.
+
+## The pattern
+
+If a number ends in 5, write it as **10n + 5**. Then:
+
+<Math math="(10n + 5)^2 = 100n(n+1) + 25" display />
+
+So the answer is:
+
+1. Take **n** = all digits **before** the 5.
+2. Multiply **n × (n + 1)**.
+3. Append **25** at the end.
+
+## Example: 65²
+
+- **n = 6**
+- **6 × 7 = 42**
+- Append **25** → **4225**
+
+<Math math="65^2 = 4225" display />
+
+## Example: 125²
+
+- **n = 12**
+- **12 × 13 = 156**
+- Append **25** → **15625**
+
+<Callout title="Why it works">
+Expanding `(10n+5)²` gives `100n² + 100n + 25 = 100·n(n+1) + 25`. The “append 25” is not magic — it is algebra folded into a finger pattern.
+</Callout>
+
+## Class 10 boards
+
+This appears in **AP/GP** quick checks and in **mensuration** when a side is 35 m, 45 m, etc. Boards reward clean steps — write one line:
+
+> n = 3, n(n+1) = 12, answer 1225
+
+## SSC / banking speed
+
+In DI sets, squares like **85²**, **95²**, **105²** appear inside growth-rate approximations. **105²**: n = 10 → 10×11 = 110 → **11025**.
+
+## Common mistakes
+
+- Using **n = 65** instead of **n = 6** — only digits *before* the 5 count.
+- Forgetting carry when **n(n+1)** is three digits (e.g. **375²**: 37×38 = 1406 → **140625**).
+
+## Drill
+
+**35²**, **45²**, **85²**, **115²** → 1225, 2025, 7225, 13225.
+
+---
+
+Next: [Class 10 trigonometry identities](/blog/class-10-trig-identities) you must know cold.
