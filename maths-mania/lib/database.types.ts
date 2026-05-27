@@ -148,10 +148,28 @@ export interface Database {
         > & {
           id?: string;
           registered_at?: string;
+          reminder_sent_24h?: boolean;
+          reminder_sent_1h?: boolean;
         };
         Update: Partial<
           Database["public"]["Tables"]["exam_registrations"]["Insert"]
         >;
+        Relationships: [];
+      };
+      exam_public_stats: {
+        Row: {
+          exam_id: string;
+          registration_count: number;
+          question_count: number;
+          updated_at: string;
+        };
+        Insert: {
+          exam_id: string;
+          registration_count?: number;
+          question_count?: number;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["exam_public_stats"]["Insert"]>;
         Relationships: [];
       };
       exam_attempts: {
