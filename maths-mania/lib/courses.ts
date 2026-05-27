@@ -136,7 +136,10 @@ const COURSES: Record<PillarSlug, CourseDetail> = {
           "Yes. Our chapter order follows NCERT/CBSE progression. Gujarat Board chapters map closely; we mention alternate naming when it differs.",
       },
     ],
-    primaryCta: { label: "Try Class 10 practice quiz", href: "/quiz" },
+    primaryCta: {
+      label: "Try Class 10 practice quiz",
+      href: "/quiz/class-10-trigonometry",
+    },
     secondaryCta: { label: "Watch all school videos", href: "/videos" },
   },
 
@@ -225,7 +228,10 @@ const COURSES: Record<PillarSlug, CourseDetail> = {
           "Yes — we teach methods that minimise rough work but don't ban it. Speed comes from pattern recognition, not skipping steps blindly.",
       },
     ],
-    primaryCta: { label: "Take IBPS quant mock quiz", href: "/quiz" },
+    primaryCta: {
+      label: "Take IBPS quant mock quiz",
+      href: "/quiz/ibps-quant-mock",
+    },
     secondaryCta: { label: "Register for live banking mock", href: "/exams" },
   },
 
@@ -300,7 +306,10 @@ const COURSES: Record<PillarSlug, CourseDetail> = {
           "We update when the commission notifies. Current mocks follow the latest known pattern; live exams on this site announce any changes in the rules tab.",
       },
     ],
-    primaryCta: { label: "SSC CGL percentage quiz", href: "/quiz" },
+    primaryCta: {
+      label: "SSC CGL percentage quiz",
+      href: "/quiz/ssc-cgl-percentages",
+    },
     secondaryCta: { label: "Join Sunday live mock", href: "/exams" },
   },
 
