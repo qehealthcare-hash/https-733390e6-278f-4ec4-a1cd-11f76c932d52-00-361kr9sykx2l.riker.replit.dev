@@ -10,7 +10,7 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 16 of 22 — Marketing pages.** ✅ Complete (m1–m16)
+**Milestone 17 of 22 — SEO, performance & accessibility.** ✅ Complete (m1–m17)
 
 **Milestone 10 — Supabase Auth.** ✅
 
@@ -38,6 +38,14 @@ Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** 
 - `/about` — teaching philosophy, stats, Sunday live-exam ritual
 - `/contact` — email, WhatsApp (when configured), and `/api/contact` form → `data/contact.jsonl`
 - `/privacy` and `/terms` — structured legal copy with in-page table of contents
+
+**Milestone 17 — SEO, performance & accessibility.** ✅
+
+- `app/sitemap.ts` + `app/robots.ts` — public routes, blog/quiz/courses, live exam slugs from Supabase
+- `lib/seo.ts` — canonical metadata helper, JSON-LD builders (Organization, Course, Event, Breadcrumbs)
+- Structured data on home (FAQ), marketing layout (Organization + WebSite), exams, courses, blog
+- `@vercel/analytics` + `@vercel/speed-insights`, `app/manifest.ts`, YouTube `preconnect`
+- `noindex` on dashboard, admin, and auth; skip links on dashboard/admin
 
 **Milestone 11 — exam admin.** ✅
 

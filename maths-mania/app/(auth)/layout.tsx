@@ -1,5 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Logo } from "@/components/brand/logo";
+import { NOINDEX_ROBOTS } from "@/lib/seo";
+
+export const metadata: Metadata = {
+  robots: NOINDEX_ROBOTS,
+};
 
 /**
  * Auth route group — no marketing navbar/footer.
@@ -15,7 +21,10 @@ export default function AuthLayout({
           <Logo />
         </Link>
       </header>
-      <main className="flex flex-1 flex-col items-center justify-center px-4 py-10 sm:px-6">
+      <main
+        id="auth-main"
+        className="flex flex-1 flex-col items-center justify-center px-4 py-10 sm:px-6"
+      >
         <div className="w-full max-w-md">{children}</div>
       </main>
       <footer className="border-t border-[var(--color-border)] px-4 py-6 text-center text-xs text-[var(--color-text-faint)]">

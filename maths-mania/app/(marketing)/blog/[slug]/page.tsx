@@ -17,6 +17,9 @@ import {
   getPost,
 } from "@/lib/blog";
 import { SITE } from "@/lib/site";
+import { Breadcrumbs } from "@/components/seo/breadcrumbs";
+import { JsonLd } from "@/components/seo/json-ld";
+import { createPageMetadata, pageUrl } from "@/lib/seo";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -28,16 +31,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const post = getPost(slug);
   if (!post) return { title: "Blog" };
-  return {
+  return createPageMetadata({
     title: post.title,
     description: post.description,
-    openGraph: {
-      title: post.title,
-      description: post.description,
-      type: "article",
-      publishedTime: post.date,
-    },
-  };
+    path: `/blog/${slug}`,
+    ogType: "article",
+  });
 }
 
 export default async function BlogPostPage({ params }: Props) {
@@ -65,16 +64,14 @@ export default async function BlogPostPage({ params }: Props) {
     headline: post.title,
     description: post.description,
     datePublished: post.date,
+    url: pageUrl(`/blog/${slug}`),
     author: { "@type": "Organization", name: post.author ?? SITE.name },
     publisher: { "@type": "Organization", name: SITE.name },
   };
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={jsonLd} />
 
       <Section
         padding="lg"
@@ -82,6 +79,14 @@ export default async function BlogPostPage({ params }: Props) {
         className="border-b border-[var(--color-border)]"
       >
         <Container size="sm">
+          <Breadcrumbs
+            className="mb-4"
+            items={[
+              { name: "Home", href: "/" },
+              { name: "Blog", href: "/blog" },
+              { name: post.title },
+            ]}
+          />
           <Link
             href="/blog"
             className="inline-flex items-center gap-1 text-sm font-semibold text-[var(--color-primary-600)] hover:underline"

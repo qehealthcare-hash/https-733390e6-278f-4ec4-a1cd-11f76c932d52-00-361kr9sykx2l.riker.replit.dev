@@ -18,6 +18,9 @@ import {
 } from "@/lib/exams/public";
 import { formatPillar, formatDifficulty } from "@/lib/exams/format";
 import { getUser } from "@/lib/auth/session";
+import { Breadcrumbs } from "@/components/seo/breadcrumbs";
+import { JsonLd } from "@/components/seo/json-ld";
+import { createPageMetadata, examEventSchema } from "@/lib/seo";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -32,12 +35,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const exam = await getPublicExamBySlug(slug);
   if (!exam) return { title: "Exam" };
-  return {
+  const description =
+    exam.description ??
+    `Free live All-India mock — ${exam.duration_min} minutes, ${exam.question_count} questions.`;
+  return createPageMetadata({
     title: exam.title,
-    description:
-      exam.description ??
-      `Free live All-India mock — ${exam.duration_min} minutes, ${exam.question_count} questions.`,
-  };
+    description,
+    path: `/exams/${slug}`,
+  });
 }
 
 export default async function ExamLandingPage({ params }: Props) {
@@ -52,8 +57,27 @@ export default async function ExamLandingPage({ params }: Props) {
 
   return (
     <>
+      <JsonLd
+        data={examEventSchema({
+          name: exam.title,
+          description:
+            exam.description ??
+            `Free synchronized All-India mock exam — ${exam.duration_min} minutes.`,
+          path: `/exams/${exam.slug}`,
+          startsAt: exam.starts_at,
+          endsAt: exam.ends_at,
+        })}
+      />
       <Section padding="lg" tone="notebook">
         <Container size="md">
+          <Breadcrumbs
+            className="mb-6"
+            items={[
+              { name: "Home", href: "/" },
+              { name: "Live exams", href: "/exams" },
+              { name: exam.title },
+            ]}
+          />
           <p className="text-sm font-semibold uppercase tracking-wider text-[var(--color-primary-600)]">
             {formatPillar(exam.pillar)} · {formatDifficulty(exam.difficulty)} ·{" "}
             {exam.is_free ? "Free" : `₹${exam.price_inr}`}

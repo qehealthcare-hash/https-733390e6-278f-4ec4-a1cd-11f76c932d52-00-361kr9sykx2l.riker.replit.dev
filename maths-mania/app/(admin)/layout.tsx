@@ -1,7 +1,14 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Logo } from "@/components/brand/logo";
 import { requireAdmin } from "@/lib/auth/guard";
+import { NOINDEX_ROBOTS } from "@/lib/seo";
 import { cn } from "@/lib/utils";
+
+export const metadata: Metadata = {
+  title: "Admin",
+  robots: NOINDEX_ROBOTS,
+};
 
 const LINKS = [
   { href: "/admin/exams", label: "Exams" },
@@ -15,6 +22,12 @@ export default async function AdminLayout({
 
   return (
     <div className="flex min-h-svh flex-col bg-[var(--color-bg)]">
+      <a
+        href="#admin-main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:rounded-md focus:bg-[var(--color-primary-500)] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+      >
+        Skip to admin content
+      </a>
       <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link href="/admin/exams" aria-label="Maths Mania Admin">
@@ -53,7 +66,9 @@ export default async function AdminLayout({
             </ul>
           </nav>
         </aside>
-        <main className="min-w-0 flex-1">{children}</main>
+        <main id="admin-main" className="min-w-0 flex-1">
+          {children}
+        </main>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { getFaqs } from "@/lib/content";
+import { JsonLd } from "@/components/seo/json-ld";
 
 /** FAQPage JSON-LD for SEO (§7). */
 export function FaqJsonLd() {
@@ -16,10 +17,5 @@ export function FaqJsonLd() {
     })),
   };
 
-  return (
-    <script
-      type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
-    />
-  );
+  return <JsonLd data={schema} />;
 }

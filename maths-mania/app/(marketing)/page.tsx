@@ -12,11 +12,13 @@ import { FaqJsonLd } from "@/components/sections/faq-json-ld";
 import { NewsletterSection } from "@/components/sections/newsletter";
 import { getFaqs } from "@/lib/content";
 import { SITE } from "@/lib/site";
+import { createPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createPageMetadata({
   title: `${SITE.name} — ${SITE.tagline}`,
   description: SITE.shortDescription,
-};
+  path: "/",
+});
 
 export default function Home() {
   const faqs = getFaqs();

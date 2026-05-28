@@ -19,6 +19,9 @@ import {
 } from "@/lib/courses";
 import type { PillarSlug } from "@/lib/site";
 import { cn } from "@/lib/utils";
+import { Breadcrumbs } from "@/components/seo/breadcrumbs";
+import { JsonLd } from "@/components/seo/json-ld";
+import { courseSchema, createPageMetadata } from "@/lib/seo";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -30,10 +33,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const course = getCourse(slug);
   if (!course) return { title: "Course" };
-  return {
+  return createPageMetadata({
     title: course.metaTitle,
     description: course.metaDescription,
-  };
+    path: `/courses/${slug}`,
+  });
 }
 
 export default async function CourseDetailPage({ params }: Props) {
@@ -47,6 +51,13 @@ export default async function CourseDetailPage({ params }: Props) {
 
   return (
     <>
+      <JsonLd
+        data={courseSchema({
+          name: course.heroTitle,
+          description: course.metaDescription,
+          path: `/courses/${course.slug}`,
+        })}
+      />
       <Section
         padding="lg"
         tone="default"
@@ -56,6 +67,14 @@ export default async function CourseDetailPage({ params }: Props) {
         )}
       >
         <Container>
+          <Breadcrumbs
+            className="mb-6"
+            items={[
+              { name: "Home", href: "/" },
+              { name: "Courses", href: "/courses" },
+              { name: pillar?.label ?? course.heroTitle },
+            ]}
+          />
           <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-2xl">
               <div className="flex items-center gap-4">
