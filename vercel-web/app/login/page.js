@@ -57,8 +57,8 @@ export default function LoginPage() {
         </div>
         <form className="stack" onSubmit={handleSubmit}>
           <div className="field">
-            <label>Email</label>
-            <input
+            <label htmlFor="login-email-1">Email</label>
+            <input id="login-email-1"
               type="email"
               autoComplete="username"
               value={email}
@@ -69,8 +69,8 @@ export default function LoginPage() {
             />
           </div>
           <div className="field">
-            <label>Password</label>
-            <input
+            <label htmlFor="login-password-2">Password</label>
+            <input id="login-password-2"
               type="password"
               autoComplete="current-password"
               value={password}

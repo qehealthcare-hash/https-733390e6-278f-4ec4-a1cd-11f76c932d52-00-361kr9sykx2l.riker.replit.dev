@@ -704,16 +704,16 @@ export default function PatientsPage() {
             <form className="stack" onSubmit={handleSubmit}>
               <div className="grid-2">
                 <div className="field">
-                  <label>Name</label>
-                  <input value={form.full_name} onChange={function (event) { updateField("full_name", event.target.value); }} required />
+                  <label htmlFor="patients-name-1">Name</label>
+                  <input id="patients-name-1" value={form.full_name} onChange={function (event) { updateField("full_name", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Mobile</label>
-                  <input type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
+                  <label htmlFor="patients-mobile-2">Mobile</label>
+                  <input id="patients-mobile-2" type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Date of birth</label>
-                  <input
+                  <label htmlFor="patients-date-of-birth-3">Date of birth</label>
+                  <input id="patients-date-of-birth-3"
                     type="date"
                     max={crmTodayIso()}
                     value={form.dob}
@@ -721,8 +721,8 @@ export default function PatientsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>Aadhar</label>
-                  <input
+                  <label htmlFor="patients-aadhar-4">Aadhar</label>
+                  <input id="patients-aadhar-4"
                     value={form.aadhar || ""}
                     onChange={function (event) { updateField("aadhar", event.target.value); }}
                     pattern="\d{12}"
@@ -732,8 +732,8 @@ export default function PatientsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>Age</label>
-                  <input
+                  <label htmlFor="patients-age-5">Age</label>
+                  <input id="patients-age-5"
                     type="number"
                     min="0"
                     value={form.age}
@@ -741,24 +741,24 @@ export default function PatientsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>Gender</label>
-                  <select value={form.gender} onChange={function (event) { updateField("gender", event.target.value); }}>
+                  <label htmlFor="patients-gender-6">Gender</label>
+                  <select id="patients-gender-6" value={form.gender} onChange={function (event) { updateField("gender", event.target.value); }}>
                     <option>Female</option>
                     <option>Male</option>
                     <option>Other</option>
                   </select>
                 </div>
                 <div className="field">
-                  <label>Shift</label>
-                  <select value={form.shift_type} onChange={function (event) { updateField("shift_type", event.target.value); }}>
+                  <label htmlFor="patients-shift-7">Shift</label>
+                  <select id="patients-shift-7" value={form.shift_type} onChange={function (event) { updateField("shift_type", event.target.value); }}>
                     {shiftOptions.map(function (item) {
                       return <option key={item.value} value={item.value}>{item.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Start date</label>
-                  <input
+                  <label htmlFor="patients-start-date-8">Start date</label>
+                  <input id="patients-start-date-8"
                     type="date"
                     value={form.start_date}
                     onChange={function (event) { updateField("start_date", event.target.value); }}
@@ -767,31 +767,31 @@ export default function PatientsPage() {
                 </div>
               </div>
               <div className="field">
-                <label>Disease / condition</label>
-                <textarea rows="3" value={form.disease_condition} onChange={function (event) { updateField("disease_condition", event.target.value); }} />
+                <label htmlFor="patients-disease-condition-9">Disease / condition</label>
+                <textarea id="patients-disease-condition-9" rows="3" value={form.disease_condition} onChange={function (event) { updateField("disease_condition", event.target.value); }} />
               </div>
               <div className="field">
-                <label>Address</label>
-                <textarea rows="3" maxLength="500" value={form.address} onChange={function (event) { updateField("address", event.target.value); }} />
+                <label htmlFor="patients-address-10">Address</label>
+                <textarea id="patients-address-10" rows="3" maxLength="500" value={form.address} onChange={function (event) { updateField("address", event.target.value); }} />
               </div>
               <div className="grid-3">
                 <div className="field">
-                  <label>Area</label>
-                  <input value={form.area} onChange={function (event) { updateField("area", event.target.value); }} required />
+                  <label htmlFor="patients-area-11">Area</label>
+                  <input id="patients-area-11" value={form.area} onChange={function (event) { updateField("area", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>City</label>
-                  <input value={form.city} onChange={function (event) { updateField("city", event.target.value); }} required />
+                  <label htmlFor="patients-city-12">City</label>
+                  <input id="patients-city-12" value={form.city} onChange={function (event) { updateField("city", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Pincode</label>
-                  <input value={form.pincode} onChange={function (event) { updateField("pincode", event.target.value); }} required />
+                  <label htmlFor="patients-pincode-13">Pincode</label>
+                  <input id="patients-pincode-13" value={form.pincode} onChange={function (event) { updateField("pincode", event.target.value); }} required />
                 </div>
               </div>
               <div className="grid-2">
                 <div className="field">
-                  <label>Assigned staff</label>
-                  <select value={form.assigned_staff_id} onChange={function (event) { updateField("assigned_staff_id", event.target.value); }}>
+                  <label htmlFor="patients-assigned-staff-14">Assigned staff</label>
+                  <select id="patients-assigned-staff-14" value={form.assigned_staff_id} onChange={function (event) { updateField("assigned_staff_id", event.target.value); }}>
                     <option value="">No assignment</option>
                     {employees.map(function (employee) {
                       return (
@@ -803,8 +803,8 @@ export default function PatientsPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Status</label>
-                  <select value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
+                  <label htmlFor="patients-status-15">Status</label>
+                  <select id="patients-status-15" value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
                     {patientStatusOptions.map(function (item) {
                       return <option key={item.value} value={item.value}>{item.label}</option>;
                     })}
@@ -814,8 +814,8 @@ export default function PatientsPage() {
               {form.status !== "Active" ? (
                 <div className="grid-2">
                   <div className="field">
-                    <label>Reason</label>
-                    <select value={form.status_reason} onChange={function (event) { updateField("status_reason", event.target.value); }} required>
+                    <label htmlFor="patients-reason-16">Reason</label>
+                    <select id="patients-reason-16" value={form.status_reason} onChange={function (event) { updateField("status_reason", event.target.value); }} required>
                       <option value="">Select reason</option>
                       {patientCloseReasonOptions.map(function (r) {
                         return <option key={r} value={r}>{r}</option>;
@@ -824,8 +824,8 @@ export default function PatientsPage() {
                   </div>
                   {form.status_reason === "Other" ? (
                     <div className="field">
-                      <label>Specify other reason</label>
-                      <input
+                      <label htmlFor="patients-specify-other-reason-17">Specify other reason</label>
+                      <input id="patients-specify-other-reason-17"
                         value={form.status_reason_other}
                         onChange={function (event) { updateField("status_reason_other", event.target.value); }}
                         required
@@ -840,12 +840,12 @@ export default function PatientsPage() {
                   return (
                     <div className="grid-2" key={index}>
                       <div className="field">
-                        <label>Relative {index + 1} name {index === 0 ? "*" : ""}</label>
-                        <input value={contact.name} onChange={function (event) { updateContact(index, "name", event.target.value); }} required={index === 0} />
+                        <label htmlFor="patients-relative-index-1-name-in-18">Relative {index + 1} name {index === 0 ? "*" : ""}</label>
+                        <input id="patients-relative-index-1-name-in-18" value={contact.name} onChange={function (event) { updateContact(index, "name", event.target.value); }} required={index === 0} />
                       </div>
                       <div className="field">
-                        <label>Relative {index + 1} phone {index === 0 ? "*" : ""}</label>
-                        <input type="tel" inputMode="tel" value={contact.phone} onChange={function (event) { updateContact(index, "phone", event.target.value); }} required={index === 0} />
+                        <label htmlFor="patients-relative-index-1-phone-i-19">Relative {index + 1} phone {index === 0 ? "*" : ""}</label>
+                        <input id="patients-relative-index-1-phone-i-19" type="tel" inputMode="tel" value={contact.phone} onChange={function (event) { updateContact(index, "phone", event.target.value); }} required={index === 0} />
                       </div>
                     </div>
                   );
@@ -853,9 +853,9 @@ export default function PatientsPage() {
               </div>
               <div className="grid-2">
                 <div className="field">
-                  <label>Patient photo</label>
+                  <label htmlFor="patients-patient-photo-20">Patient photo</label>
                   <div className="button-row" style={{ gap: 8, flexWrap: "wrap" }}>
-                    <input
+                    <input id="patients-patient-photo-20"
                       type="file"
                       accept="image/*"
                       capture="environment"
@@ -878,8 +878,8 @@ export default function PatientsPage() {
                   )}
                 </div>
                 <div className="field">
-                  <label>Documents ({form.documents.length})</label>
-                  <input
+                  <label htmlFor="patients-documents-form-documents-21">Documents ({form.documents.length})</label>
+                  <input id="patients-documents-form-documents-21"
                     type="file"
                     multiple
                     accept="image/*,application/pdf"
@@ -1008,16 +1008,16 @@ export default function PatientsPage() {
             >
               <div className="toolbar">
                 <div className="field">
-                  <label>Search</label>
-                  <input
+                  <label htmlFor="patients-search-22">Search</label>
+                  <input id="patients-search-22"
                     value={search}
                     onChange={function (event) { setSearch(event.target.value); }}
                     placeholder="Name, mobile, address, area or pincode"
                   />
                 </div>
                 <div className="field">
-                  <label>Status</label>
-                  <select value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
+                  <label htmlFor="patients-status-23">Status</label>
+                  <select id="patients-status-23" value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
                     <option value="">All</option>
                     {patientStatusOptions.map(function (item) {
                       return <option key={item.value} value={item.value}>{item.label}</option>;
@@ -1025,8 +1025,8 @@ export default function PatientsPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Gender</label>
-                  <select value={genderFilter} onChange={function (event) { setGenderFilter(event.target.value); }}>
+                  <label htmlFor="patients-gender-24">Gender</label>
+                  <select id="patients-gender-24" value={genderFilter} onChange={function (event) { setGenderFilter(event.target.value); }}>
                     <option value="">All</option>
                     <option value="Female">Female</option>
                     <option value="Male">Male</option>
@@ -1034,8 +1034,8 @@ export default function PatientsPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Shift</label>
-                  <select value={shiftFilter} onChange={function (event) { setShiftFilter(event.target.value); }}>
+                  <label htmlFor="patients-shift-25">Shift</label>
+                  <select id="patients-shift-25" value={shiftFilter} onChange={function (event) { setShiftFilter(event.target.value); }}>
                     <option value="">All</option>
                     {shiftOptions.map(function (item) {
                       return <option key={item.value} value={item.value}>{item.label}</option>;
@@ -1043,16 +1043,16 @@ export default function PatientsPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Area</label>
-                  <input
+                  <label htmlFor="patients-area-26">Area</label>
+                  <input id="patients-area-26"
                     value={areaFilter}
                     onChange={function (event) { setAreaFilter(event.target.value); }}
                     placeholder="e.g. Naranpura"
                   />
                 </div>
                 <div className="field">
-                  <label>Pincode</label>
-                  <input
+                  <label htmlFor="patients-pincode-27">Pincode</label>
+                  <input id="patients-pincode-27"
                     value={pinFilter}
                     onChange={function (event) { setPinFilter(event.target.value); }}
                     placeholder="e.g. 380013"
@@ -1060,8 +1060,8 @@ export default function PatientsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>Sort by</label>
-                  <select value={sortOrder} onChange={function (event) { setSortOrder(event.target.value); }}>
+                  <label htmlFor="patients-sort-by-28">Sort by</label>
+                  <select id="patients-sort-by-28" value={sortOrder} onChange={function (event) { setSortOrder(event.target.value); }}>
                     <option value="desc">Newest first</option>
                     <option value="asc">Oldest first</option>
                   </select>
@@ -1207,8 +1207,8 @@ export default function PatientsPage() {
                   recorded in the audit log.
                 </p>
                 <div className="field">
-                  <label>Reason</label>
-                  <select
+                  <label htmlFor="patients-reason-29">Reason</label>
+                  <select id="patients-reason-29"
                     value={closeDialog.reason}
                     onChange={function (event) {
                       var value = event.target.value;
@@ -1226,8 +1226,8 @@ export default function PatientsPage() {
                 </div>
                 {closeDialog.reason === "Other" ? (
                   <div className="field">
-                    <label>Specify other reason</label>
-                    <input
+                    <label htmlFor="patients-specify-other-reason-30">Specify other reason</label>
+                    <input id="patients-specify-other-reason-30"
                       value={closeDialog.reason_other}
                       onChange={function (event) {
                         var value = event.target.value;
@@ -1272,8 +1272,8 @@ export default function PatientsPage() {
                   mobile number, reopen will be refused.
                 </p>
                 <div className="field">
-                  <label>Note (optional, for your records)</label>
-                  <textarea
+                  <label htmlFor="patients-note-optional-for-your-r-31">Note (optional, for your records)</label>
+                  <textarea id="patients-note-optional-for-your-r-31"
                     rows="2"
                     value={reopenDialog.note}
                     onChange={function (event) {

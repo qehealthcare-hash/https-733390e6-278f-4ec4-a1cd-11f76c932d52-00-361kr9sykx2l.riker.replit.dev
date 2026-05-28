@@ -225,8 +225,8 @@ export default function ReportsPage() {
           <ModuleShell title="Period" description="Server-side aggregates from /api/v1/reports covering billing, payout, payroll, attendance, inquiries and patients. Totals are accurate for the entire period — detail tables paginate.">
             <div className="toolbar">
               <div className="field">
-                <label>Month</label>
-                <input
+                <label htmlFor="reports-month-1">Month</label>
+                <input id="reports-month-1"
                   type="month"
                   value={period}
                   onChange={function (event) {

@@ -1141,8 +1141,8 @@ export default function DutiesPage() {
             <form className="stack" onSubmit={handleSubmit}>
               <div className="grid-2">
                 <div className="field">
-                  <label>Patient</label>
-                  <select
+                  <label htmlFor="duties-patient-1">Patient</label>
+                  <select id="duties-patient-1"
                     value={form.patient_id}
                     onChange={function (event) {
                       updateField("patient_id", event.target.value);
@@ -1161,8 +1161,8 @@ export default function DutiesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Primary partner (employee)</label>
-                  <select
+                  <label htmlFor="duties-primary-partner-employee-2">Primary partner (employee)</label>
+                  <select id="duties-primary-partner-employee-2"
                     value={form.employee_id}
                     onChange={function (event) {
                       updateField("employee_id", event.target.value);
@@ -1190,8 +1190,8 @@ export default function DutiesPage() {
 
               <div className="grid-2">
                 <div className="field">
-                  <label>Service</label>
-                  <select
+                  <label htmlFor="duties-service-3">Service</label>
+                  <select id="duties-service-3"
                     value={form.service_name}
                     onChange={function (event) {
                       updateField("service_name", event.target.value);
@@ -1210,8 +1210,8 @@ export default function DutiesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Shift</label>
-                  <select
+                  <label htmlFor="duties-shift-4">Shift</label>
+                  <select id="duties-shift-4"
                     value={form.shift_type}
                     onChange={function (event) {
                       updateField("shift_type", event.target.value);
@@ -1224,8 +1224,8 @@ export default function DutiesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Charge / day (₹ to patient)</label>
-                  <input
+                  <label htmlFor="duties-charge-day-to-patient-5">Charge / day (₹ to patient)</label>
+                  <input id="duties-charge-day-to-patient-5"
                     type="number"
                     min="0"
                     step="1"
@@ -1237,8 +1237,8 @@ export default function DutiesPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>Payout / day (₹ to partner)</label>
-                  <input
+                  <label htmlFor="duties-payout-day-to-partner-6">Payout / day (₹ to partner)</label>
+                  <input id="duties-payout-day-to-partner-6"
                     type="number"
                     min="0"
                     step="1"
@@ -1250,8 +1250,8 @@ export default function DutiesPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>Payout term</label>
-                  <input
+                  <label htmlFor="duties-payout-term-7">Payout term</label>
+                  <input id="duties-payout-term-7"
                     value={form.payout_term}
                     onChange={function (event) {
                       updateField("payout_term", event.target.value);
@@ -1259,8 +1259,8 @@ export default function DutiesPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>Start</label>
-                  <input
+                  <label htmlFor="duties-start-8">Start</label>
+                  <input id="duties-start-8"
                     type="datetime-local"
                     value={form.start_at}
                     onChange={function (event) {
@@ -1270,8 +1270,8 @@ export default function DutiesPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>End</label>
-                  <input
+                  <label htmlFor="duties-end-9">End</label>
+                  <input id="duties-end-9"
                     type="datetime-local"
                     value={form.end_at}
                     disabled={form.open_ended}
@@ -1280,8 +1280,8 @@ export default function DutiesPage() {
                       updateField("end_at", event.target.value);
                     }}
                   />
-                  <label className="checkbox-row" style={{ marginTop: 6 }}>
-                    <input
+                  <label htmlFor="duties-input-10" className="checkbox-row" style={{ marginTop: 6 }}>
+                    <input id="duties-input-10"
                       type="checkbox"
                       checked={form.open_ended}
                       onChange={function (event) {
@@ -1310,8 +1310,8 @@ export default function DutiesPage() {
                     return (
                       <div className="grid-2" key={idx} style={{ marginTop: 12 }}>
                         <div className="field">
-                          <label>Partner</label>
-                          <select
+                          <label htmlFor="duties-partner-11">Partner</label>
+                          <select id="duties-partner-11"
                             value={p.employee_id}
                             onChange={function (event) {
                               updateExtraPartner(idx, "employee_id", event.target.value);
@@ -1328,9 +1328,9 @@ export default function DutiesPage() {
                           </select>
                         </div>
                         <div className="field">
-                          <label>Charge / payout (₹)</label>
+                          <label htmlFor="duties-charge-payout-12">Charge / payout (₹)</label>
                           <div className="grid-2">
-                            <input
+                            <input id="duties-charge-payout-12"
                               type="number"
                               placeholder="Charge"
                               value={p.charge_per_day}
@@ -1363,8 +1363,8 @@ export default function DutiesPage() {
                 )}
               </div>
 
-              <label className="checkbox-row">
-                <input
+              <label htmlFor="duties-input-13" className="checkbox-row">
+                <input id="duties-input-13"
                   type="checkbox"
                   checked={form.materialize}
                   onChange={function (event) {
@@ -1424,8 +1424,8 @@ export default function DutiesPage() {
 
             <div className="toolbar" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <div className="field">
-                <label>Filter patient ({patients.length})</label>
-                <select
+                <label htmlFor="duties-filter-patient-patients--14">Filter patient ({patients.length})</label>
+                <select id="duties-filter-patient-patients--14"
                   value={filterPatient}
                   onChange={function (event) {
                     setFilterPatient(event.target.value);
@@ -1443,8 +1443,8 @@ export default function DutiesPage() {
                 </select>
               </div>
               <div className="field">
-                <label>Filter caretaker ({employees.length})</label>
-                <select
+                <label htmlFor="duties-filter-caretaker-employe-15">Filter caretaker ({employees.length})</label>
+                <select id="duties-filter-caretaker-employe-15"
                   value={filterEmployee}
                   onChange={function (event) {
                     setFilterEmployee(event.target.value);
@@ -1461,8 +1461,8 @@ export default function DutiesPage() {
                 </select>
               </div>
               <div className="field">
-                <label>Status</label>
-                <select
+                <label htmlFor="duties-status-16">Status</label>
+                <select id="duties-status-16"
                   value={statusFilter}
                   onChange={function (event) {
                     setStatusFilter(event.target.value);
@@ -1977,8 +1977,8 @@ export default function DutiesPage() {
             <div className="modal-card">
               <h3>Cancel duty</h3>
               <div className="field">
-                <label>Reason (optional)</label>
-                <input
+                <label htmlFor="duties-reason-optional-17">Reason (optional)</label>
+                <input id="duties-reason-optional-17"
                   value={cancelDialog.reason}
                   onChange={function (event) {
                     setCancelDialog({ ...cancelDialog, reason: event.target.value });

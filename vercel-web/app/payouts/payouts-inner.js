@@ -1647,7 +1647,7 @@ function PayoutsPageContent() {
                   />
                 </div>
                 <div className="field">
-                  <label>&nbsp;</label>
+                  <span aria-hidden="true">&nbsp;</span>
                   <button className="button secondary" type="button" onClick={reloadList}>
                     Refresh
                   </button>

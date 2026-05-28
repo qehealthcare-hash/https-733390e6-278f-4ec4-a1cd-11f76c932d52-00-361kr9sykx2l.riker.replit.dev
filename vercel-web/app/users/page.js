@@ -257,16 +257,16 @@ export default function UsersPage() {
               <form className="stack" onSubmit={submitUser}>
                 <div className="grid-2">
                   <div className="field">
-                    <label>Username</label>
-                    <input
+                    <label htmlFor="users-username-1">Username</label>
+                    <input id="users-username-1"
                       value={userForm.username}
                       onChange={function (event) { updateUserField("username", event.target.value); }}
                       required
                     />
                   </div>
                   <div className="field">
-                    <label>Email</label>
-                    <input
+                    <label htmlFor="users-email-2">Email</label>
+                    <input id="users-email-2"
                       type="email"
                       value={userForm.email}
                       onChange={function (event) { updateUserField("email", event.target.value); }}
@@ -274,8 +274,8 @@ export default function UsersPage() {
                     />
                   </div>
                   <div className="field">
-                    <label>Phone</label>
-                    <input
+                    <label htmlFor="users-phone-3">Phone</label>
+                    <input id="users-phone-3"
                       type="tel"
                       inputMode="tel"
                       value={userForm.phone}
@@ -283,8 +283,8 @@ export default function UsersPage() {
                     />
                   </div>
                   <div className="field">
-                    <label>Role</label>
-                    <select
+                    <label htmlFor="users-role-4">Role</label>
+                    <select id="users-role-4"
                       value={userForm.role}
                       onChange={function (event) { updateUserField("role", event.target.value); }}
                     >
@@ -302,8 +302,8 @@ export default function UsersPage() {
                     </select>
                   </div>
                   <div className="field">
-                    <label>
-                      <input
+                    <label htmlFor="users-input-5">
+                      <input id="users-input-5"
                         type="checkbox"
                         checked={!!userForm.is_active}
                         onChange={function (event) { updateUserField("is_active", event.target.checked); }}
@@ -328,11 +328,11 @@ export default function UsersPage() {
             <ModuleShell title="Users" description="Filter by name, email, phone.">
               <div className="toolbar">
                 <div className="field">
-                  <label>Search</label>
-                  <input value={search} onChange={function (event) { setSearch(event.target.value); }} placeholder="Username / email / phone" />
+                  <label htmlFor="users-search-6">Search</label>
+                  <input id="users-search-6" value={search} onChange={function (event) { setSearch(event.target.value); }} placeholder="Username / email / phone" />
                 </div>
                 <div className="field">
-                  <label>&nbsp;</label>
+                  <span aria-hidden="true">&nbsp;</span>
                   <button className="button secondary" type="button" onClick={reload}>
                     Refresh
                   </button>
@@ -395,8 +395,8 @@ export default function UsersPage() {
             >
               <form className="stack" onSubmit={submitRole}>
                 <div className="field">
-                  <label>Role name</label>
-                  <input
+                  <label htmlFor="users-role-name-8">Role name</label>
+                  <input id="users-role-name-8"
                     value={roleForm.name}
                     onChange={function (event) { setRoleForm({ ...roleForm, name: event.target.value }); }}
                     required

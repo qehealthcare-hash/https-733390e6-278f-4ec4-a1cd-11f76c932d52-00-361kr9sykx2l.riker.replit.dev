@@ -919,34 +919,34 @@ export default function EmployeesPage() {
               <strong>Personal</strong>
               <div className="grid-3">
                 <div className="field">
-                  <label>First name</label>
-                  <input value={form.fn} onChange={function (event) { updateField("fn", event.target.value); }} required />
+                  <label htmlFor="employees-first-name-1">First name</label>
+                  <input id="employees-first-name-1" value={form.fn} onChange={function (event) { updateField("fn", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Middle name</label>
-                  <input value={form.mn} onChange={function (event) { updateField("mn", event.target.value); }} />
+                  <label htmlFor="employees-middle-name-2">Middle name</label>
+                  <input id="employees-middle-name-2" value={form.mn} onChange={function (event) { updateField("mn", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Last name</label>
-                  <input value={form.ln} onChange={function (event) { updateField("ln", event.target.value); }} />
+                  <label htmlFor="employees-last-name-3">Last name</label>
+                  <input id="employees-last-name-3" value={form.ln} onChange={function (event) { updateField("ln", event.target.value); }} />
                 </div>
               </div>
               <div className="grid-3">
                 <div className="field">
-                  <label>Mobile</label>
-                  <input type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
+                  <label htmlFor="employees-mobile-4">Mobile</label>
+                  <input id="employees-mobile-4" type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Alternate phone</label>
-                  <input type="tel" inputMode="tel" value={form.phone2} onChange={function (event) { updateField("phone2", event.target.value); }} />
+                  <label htmlFor="employees-alternate-phone-5">Alternate phone</label>
+                  <input id="employees-alternate-phone-5" type="tel" inputMode="tel" value={form.phone2} onChange={function (event) { updateField("phone2", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Date of birth</label>
-                  <input type="date" max={crmTodayIso()} value={form.dob} onChange={function (event) { updateField("dob", event.target.value); }} />
+                  <label htmlFor="employees-date-of-birth-6">Date of birth</label>
+                  <input id="employees-date-of-birth-6" type="date" max={crmTodayIso()} value={form.dob} onChange={function (event) { updateField("dob", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Gender</label>
-                  <select value={form.gender} onChange={function (event) { updateField("gender", event.target.value); }}>
+                  <label htmlFor="employees-gender-7">Gender</label>
+                  <select id="employees-gender-7" value={form.gender} onChange={function (event) { updateField("gender", event.target.value); }}>
                     <option>Female</option>
                     <option>Male</option>
                     <option>Other</option>
@@ -957,8 +957,8 @@ export default function EmployeesPage() {
               <strong>Identification</strong>
               <div className="grid-2">
                 <div className="field">
-                  <label>Aadhar</label>
-                  <input
+                  <label htmlFor="employees-aadhar-8">Aadhar</label>
+                  <input id="employees-aadhar-8"
                     value={form.aadhar}
                     onChange={function (event) { updateField("aadhar", event.target.value); }}
                     pattern="\d{12}"
@@ -968,8 +968,8 @@ export default function EmployeesPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>PAN</label>
-                  <input
+                  <label htmlFor="employees-pan-9">PAN</label>
+                  <input id="employees-pan-9"
                     value={form.pan}
                     onChange={function (event) { updateField("pan", event.target.value.toUpperCase()); }}
                     pattern="[A-Z]{5}\d{4}[A-Z]"
@@ -981,98 +981,98 @@ export default function EmployeesPage() {
 
               <strong>Address</strong>
               <div className="field">
-                <label>Permanent address</label>
-                <textarea rows="2" value={form.permaddr} onChange={function (event) { updateField("permaddr", event.target.value); }} />
+                <label htmlFor="employees-permanent-address-10">Permanent address</label>
+                <textarea id="employees-permanent-address-10" rows="2" value={form.permaddr} onChange={function (event) { updateField("permaddr", event.target.value); }} />
               </div>
               <div className="field">
-                <label>Present address</label>
-                <textarea rows="2" value={form.presaddr} onChange={function (event) { updateField("presaddr", event.target.value); }} />
+                <label htmlFor="employees-present-address-11">Present address</label>
+                <textarea id="employees-present-address-11" rows="2" value={form.presaddr} onChange={function (event) { updateField("presaddr", event.target.value); }} />
               </div>
               <div className="grid-3">
                 <div className="field">
-                  <label>Area</label>
-                  <input value={form.area} onChange={function (event) { updateField("area", event.target.value); }} />
+                  <label htmlFor="employees-area-12">Area</label>
+                  <input id="employees-area-12" value={form.area} onChange={function (event) { updateField("area", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>City</label>
-                  <input value={form.city} onChange={function (event) { updateField("city", event.target.value); }} />
+                  <label htmlFor="employees-city-13">City</label>
+                  <input id="employees-city-13" value={form.city} onChange={function (event) { updateField("city", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Pincode</label>
-                  <input value={form.pin} onChange={function (event) { updateField("pin", event.target.value); }} />
+                  <label htmlFor="employees-pincode-14">Pincode</label>
+                  <input id="employees-pincode-14" value={form.pin} onChange={function (event) { updateField("pin", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>District</label>
-                  <input value={form.district} onChange={function (event) { updateField("district", event.target.value); }} />
+                  <label htmlFor="employees-district-15">District</label>
+                  <input id="employees-district-15" value={form.district} onChange={function (event) { updateField("district", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>State</label>
-                  <input value={form.state} onChange={function (event) { updateField("state", event.target.value); }} />
+                  <label htmlFor="employees-state-16">State</label>
+                  <input id="employees-state-16" value={form.state} onChange={function (event) { updateField("state", event.target.value); }} />
                 </div>
               </div>
 
               <strong>Job</strong>
               <div className="grid-3">
                 <div className="field">
-                  <label>Department</label>
-                  <select value={form.dept} onChange={function (event) { updateField("dept", event.target.value); }}>
+                  <label htmlFor="employees-department-17">Department</label>
+                  <select id="employees-department-17" value={form.dept} onChange={function (event) { updateField("dept", event.target.value); }}>
                     {departmentOptions.map(function (d) {
                       return <option key={d.value} value={d.value}>{d.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Role / designation</label>
-                  <select value={form.role} onChange={function (event) { updateField("role", event.target.value); }}>
+                  <label htmlFor="employees-role-designation-18">Role / designation</label>
+                  <select id="employees-role-designation-18" value={form.role} onChange={function (event) { updateField("role", event.target.value); }}>
                     {employeeRoleOptions.map(function (r) {
                       return <option key={r.value} value={r.value}>{r.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Employment type</label>
-                  <select value={form.emp_type} onChange={function (event) { updateField("emp_type", event.target.value); }}>
+                  <label htmlFor="employees-employment-type-19">Employment type</label>
+                  <select id="employees-employment-type-19" value={form.emp_type} onChange={function (event) { updateField("emp_type", event.target.value); }}>
                     {employeeTypeOptions.map(function (e) {
                       return <option key={e.value} value={e.value}>{e.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Education</label>
-                  <select value={form.education} onChange={function (event) { updateField("education", event.target.value); }}>
+                  <label htmlFor="employees-education-20">Education</label>
+                  <select id="employees-education-20" value={form.education} onChange={function (event) { updateField("education", event.target.value); }}>
                     {educationOptions.map(function (e) {
                       return <option key={e.value} value={e.value}>{e.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Shift</label>
-                  <select value={form.shift_type} onChange={function (event) { updateField("shift_type", event.target.value); }}>
+                  <label htmlFor="employees-shift-21">Shift</label>
+                  <select id="employees-shift-21" value={form.shift_type} onChange={function (event) { updateField("shift_type", event.target.value); }}>
                     {shiftOptions.map(function (s) {
                       return <option key={s.value} value={s.value}>{s.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Salary (monthly)</label>
-                  <input type="number" min="0" value={form.salary} onChange={function (event) { updateField("salary", event.target.value); }} />
+                  <label htmlFor="employees-salary-monthly-22">Salary (monthly)</label>
+                  <input id="employees-salary-monthly-22" type="number" min="0" value={form.salary} onChange={function (event) { updateField("salary", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Joining date</label>
-                  <input type="date" value={form.join_date} onChange={function (event) { updateField("join_date", event.target.value); }} />
+                  <label htmlFor="employees-joining-date-23">Joining date</label>
+                  <input id="employees-joining-date-23" type="date" value={form.join_date} onChange={function (event) { updateField("join_date", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Leaving date</label>
-                  <input type="date" value={form.leave_date} onChange={function (event) { updateField("leave_date", event.target.value); }} />
+                  <label htmlFor="employees-leaving-date-24">Leaving date</label>
+                  <input id="employees-leaving-date-24" type="date" value={form.leave_date} onChange={function (event) { updateField("leave_date", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Experience</label>
-                  <input value={form.exp} onChange={function (event) { updateField("exp", event.target.value); }} placeholder="e.g. 3 years" />
+                  <label htmlFor="employees-experience-25">Experience</label>
+                  <input id="employees-experience-25" value={form.exp} onChange={function (event) { updateField("exp", event.target.value); }} placeholder="e.g. 3 years" />
                 </div>
               </div>
               <div className="field">
-                <label>Skills</label>
-                <textarea rows="2" value={form.skills} onChange={function (event) { updateField("skills", event.target.value); }} placeholder="e.g. Wound care, IV, BP, post-op care" />
+                <label htmlFor="employees-skills-26">Skills</label>
+                <textarea id="employees-skills-26" rows="2" value={form.skills} onChange={function (event) { updateField("skills", event.target.value); }} placeholder="e.g. Wound care, IV, BP, post-op care" />
               </div>
 
               <strong>Performance score (0-10)</strong>
@@ -1084,8 +1084,8 @@ export default function EmployeesPage() {
                   var displayValue = raw == null ? 5 : Number(raw);
                   return (
                     <div className="field" key={key}>
-                      <label>{label}</label>
-                      <input
+                      <label htmlFor="employees-label-27">{label}</label>
+                      <input id="employees-label-27"
                         type="range"
                         min="0"
                         max="10"
@@ -1137,33 +1137,33 @@ export default function EmployeesPage() {
               <strong>Emergency contact</strong>
               <div className="grid-3">
                 <div className="field">
-                  <label>Name</label>
-                  <input value={form.ecname} onChange={function (event) { updateField("ecname", event.target.value); }} />
+                  <label htmlFor="employees-name-28">Name</label>
+                  <input id="employees-name-28" value={form.ecname} onChange={function (event) { updateField("ecname", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Phone</label>
-                  <input value={form.ecphone} onChange={function (event) { updateField("ecphone", event.target.value); }} />
+                  <label htmlFor="employees-phone-29">Phone</label>
+                  <input id="employees-phone-29" value={form.ecphone} onChange={function (event) { updateField("ecphone", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Relation</label>
-                  <input value={form.ecrel} onChange={function (event) { updateField("ecrel", event.target.value); }} placeholder="e.g. Spouse, Father" />
+                  <label htmlFor="employees-relation-30">Relation</label>
+                  <input id="employees-relation-30" value={form.ecrel} onChange={function (event) { updateField("ecrel", event.target.value); }} placeholder="e.g. Spouse, Father" />
                 </div>
               </div>
 
               <strong>Status & files</strong>
               <div className="grid-2">
                 <div className="field">
-                  <label>Status</label>
-                  <select value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
+                  <label htmlFor="employees-status-31">Status</label>
+                  <select id="employees-status-31" value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
                     {employeeStatusOptions.map(function (s) {
                       return <option key={s.value} value={s.value}>{s.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Photo</label>
+                  <label htmlFor="employees-photo-32">Photo</label>
                   <div className="button-row" style={{ gap: 8, flexWrap: "wrap" }}>
-                    <input
+                    <input id="employees-photo-32"
                       type="file"
                       accept="image/*"
                       capture="user"
@@ -1187,8 +1187,8 @@ export default function EmployeesPage() {
                 </div>
               </div>
               <div className="field">
-                <label>Documents ({form.documents.length})</label>
-                <input
+                <label htmlFor="employees-documents-form-documents-33">Documents ({form.documents.length})</label>
+                <input id="employees-documents-form-documents-33"
                   type="file"
                   multiple
                   accept="image/*,application/pdf"
@@ -1339,16 +1339,16 @@ export default function EmployeesPage() {
             >
               <div className="toolbar">
                 <div className="field">
-                  <label>Search</label>
-                  <input
+                  <label htmlFor="employees-search-34">Search</label>
+                  <input id="employees-search-34"
                     value={search}
                     onChange={function (event) { setSearch(event.target.value); }}
                     placeholder="Name, role, mobile, skills"
                   />
                 </div>
                 <div className="field">
-                  <label>Role</label>
-                  <select value={roleFilter} onChange={function (event) { setRoleFilter(event.target.value); }}>
+                  <label htmlFor="employees-role-35">Role</label>
+                  <select id="employees-role-35" value={roleFilter} onChange={function (event) { setRoleFilter(event.target.value); }}>
                     <option value="">All</option>
                     {employeeRoleOptions.map(function (r) {
                       return <option key={r.value} value={r.value}>{r.label}</option>;
@@ -1356,8 +1356,8 @@ export default function EmployeesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Department</label>
-                  <select value={deptFilter} onChange={function (event) { setDeptFilter(event.target.value); }}>
+                  <label htmlFor="employees-department-36">Department</label>
+                  <select id="employees-department-36" value={deptFilter} onChange={function (event) { setDeptFilter(event.target.value); }}>
                     <option value="">All</option>
                     {departmentOptions.map(function (d) {
                       return <option key={d.value} value={d.value}>{d.label}</option>;
@@ -1365,8 +1365,8 @@ export default function EmployeesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Type</label>
-                  <select value={typeFilter} onChange={function (event) { setTypeFilter(event.target.value); }}>
+                  <label htmlFor="employees-type-37">Type</label>
+                  <select id="employees-type-37" value={typeFilter} onChange={function (event) { setTypeFilter(event.target.value); }}>
                     <option value="">All</option>
                     {employeeTypeOptions.map(function (t) {
                       return <option key={t.value} value={t.value}>{t.label}</option>;
@@ -1374,8 +1374,8 @@ export default function EmployeesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Gender</label>
-                  <select value={genderFilter} onChange={function (event) { setGenderFilter(event.target.value); }}>
+                  <label htmlFor="employees-gender-38">Gender</label>
+                  <select id="employees-gender-38" value={genderFilter} onChange={function (event) { setGenderFilter(event.target.value); }}>
                     <option value="">All</option>
                     <option value="Female">Female</option>
                     <option value="Male">Male</option>
@@ -1383,8 +1383,8 @@ export default function EmployeesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Education</label>
-                  <select value={eduFilter} onChange={function (event) { setEduFilter(event.target.value); }}>
+                  <label htmlFor="employees-education-39">Education</label>
+                  <select id="employees-education-39" value={eduFilter} onChange={function (event) { setEduFilter(event.target.value); }}>
                     <option value="">All</option>
                     {educationOptions.map(function (e) {
                       return <option key={e.value} value={e.value}>{e.label}</option>;
@@ -1392,8 +1392,8 @@ export default function EmployeesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Shift</label>
-                  <select value={shiftFilter} onChange={function (event) { setShiftFilter(event.target.value); }}>
+                  <label htmlFor="employees-shift-40">Shift</label>
+                  <select id="employees-shift-40" value={shiftFilter} onChange={function (event) { setShiftFilter(event.target.value); }}>
                     <option value="">All</option>
                     {shiftOptions.map(function (s) {
                       return <option key={s.value} value={s.value}>{s.label}</option>;
@@ -1401,8 +1401,8 @@ export default function EmployeesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Score</label>
-                  <select value={scoreFilter} onChange={function (event) { setScoreFilter(event.target.value); }}>
+                  <label htmlFor="employees-score-41">Score</label>
+                  <select id="employees-score-41" value={scoreFilter} onChange={function (event) { setScoreFilter(event.target.value); }}>
                     <option value="">All</option>
                     <option value="8plus">≥ 8 (top)</option>
                     <option value="6to8">6 - 7.99</option>
@@ -1411,8 +1411,8 @@ export default function EmployeesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Status</label>
-                  <select value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
+                  <label htmlFor="employees-status-42">Status</label>
+                  <select id="employees-status-42" value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
                     <option value="">All</option>
                     {employeeStatusOptions.map(function (s) {
                       return <option key={s.value} value={s.value}>{s.label}</option>;
@@ -1556,8 +1556,8 @@ export default function EmployeesPage() {
               </div>
             ) : null}
             <div className="field">
-              <label>Note (optional)</label>
-              <textarea
+              <label htmlFor="employees-note-optional-43">Note (optional)</label>
+              <textarea id="employees-note-optional-43"
                 rows="3"
                 value={activateDialog.note}
                 onChange={function (e) {
@@ -1591,8 +1591,8 @@ export default function EmployeesPage() {
               If this employee has duties, attendance, payouts, or patient assignments, they will be deactivated instead of permanently deleted.
             </p>
             <div className="field">
-              <label>Reason (optional)</label>
-              <textarea
+              <label htmlFor="employees-reason-optional-44">Reason (optional)</label>
+              <textarea id="employees-reason-optional-44"
                 rows="3"
                 value={deleteDialog.reason}
                 onChange={function (e) {
@@ -1630,8 +1630,8 @@ export default function EmployeesPage() {
               </div>
             ) : null}
             <div className="field">
-              <label>Reason (optional)</label>
-              <textarea
+              <label htmlFor="employees-reason-optional-45">Reason (optional)</label>
+              <textarea id="employees-reason-optional-45"
                 rows="3"
                 value={statusDialog.reason}
                 onChange={function (e) {

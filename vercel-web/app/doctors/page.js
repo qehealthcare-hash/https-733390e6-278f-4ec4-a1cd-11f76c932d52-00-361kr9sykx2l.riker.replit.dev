@@ -196,28 +196,28 @@ export default function DoctorsPage() {
             <form className="stack" onSubmit={handleSubmit}>
               <div className="grid-3">
                 <div className="field">
-                  <label>First name</label>
-                  <input value={form.fn} onChange={function (event) { updateField("fn", event.target.value); }} required />
+                  <label htmlFor="doctors-first-name-1">First name</label>
+                  <input id="doctors-first-name-1" value={form.fn} onChange={function (event) { updateField("fn", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Last name</label>
-                  <input value={form.ln} onChange={function (event) { updateField("ln", event.target.value); }} />
+                  <label htmlFor="doctors-last-name-2">Last name</label>
+                  <input id="doctors-last-name-2" value={form.ln} onChange={function (event) { updateField("ln", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Gender</label>
-                  <select value={form.gender} onChange={function (event) { updateField("gender", event.target.value); }}>
+                  <label htmlFor="doctors-gender-3">Gender</label>
+                  <select id="doctors-gender-3" value={form.gender} onChange={function (event) { updateField("gender", event.target.value); }}>
                     <option>Male</option>
                     <option>Female</option>
                     <option>Other</option>
                   </select>
                 </div>
                 <div className="field">
-                  <label>Phone</label>
-                  <input type="tel" inputMode="tel" value={form.phone} onChange={function (event) { updateField("phone", event.target.value); }} required />
+                  <label htmlFor="doctors-phone-4">Phone</label>
+                  <input id="doctors-phone-4" type="tel" inputMode="tel" value={form.phone} onChange={function (event) { updateField("phone", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Date of birth</label>
-                  <input
+                  <label htmlFor="doctors-date-of-birth-5">Date of birth</label>
+                  <input id="doctors-date-of-birth-5"
                     type="date"
                     max={crmTodayIso()}
                     value={form.dob || ""}
@@ -225,54 +225,54 @@ export default function DoctorsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>Email</label>
-                  <input type="email" value={form.email} onChange={function (event) { updateField("email", event.target.value); }} />
+                  <label htmlFor="doctors-email-6">Email</label>
+                  <input id="doctors-email-6" type="email" value={form.email} onChange={function (event) { updateField("email", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>City</label>
-                  <input value={form.city} onChange={function (event) { updateField("city", event.target.value); }} />
+                  <label htmlFor="doctors-city-7">City</label>
+                  <input id="doctors-city-7" value={form.city} onChange={function (event) { updateField("city", event.target.value); }} />
                 </div>
               </div>
               <div className="grid-2">
                 <div className="field">
-                  <label>Specialisation</label>
-                  <input value={form.spec} onChange={function (event) { updateField("spec", event.target.value); }} placeholder="e.g. Cardiologist, Geriatric" />
+                  <label htmlFor="doctors-specialisation-8">Specialisation</label>
+                  <input id="doctors-specialisation-8" value={form.spec} onChange={function (event) { updateField("spec", event.target.value); }} placeholder="e.g. Cardiologist, Geriatric" />
                 </div>
                 <div className="field">
-                  <label>Qualification</label>
-                  <input value={form.qual} onChange={function (event) { updateField("qual", event.target.value); }} placeholder="e.g. MBBS, MD" />
+                  <label htmlFor="doctors-qualification-9">Qualification</label>
+                  <input id="doctors-qualification-9" value={form.qual} onChange={function (event) { updateField("qual", event.target.value); }} placeholder="e.g. MBBS, MD" />
                 </div>
               </div>
               <div className="grid-3">
                 <div className="field">
-                  <label>Registration no.</label>
-                  <input value={form.regno} onChange={function (event) { updateField("regno", event.target.value); }} />
+                  <label htmlFor="doctors-registration-no-10">Registration no.</label>
+                  <input id="doctors-registration-no-10" value={form.regno} onChange={function (event) { updateField("regno", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Registration council</label>
-                  <input value={form.regcouncil} onChange={function (event) { updateField("regcouncil", event.target.value); }} placeholder="e.g. GMC, MCI" />
+                  <label htmlFor="doctors-registration-council-11">Registration council</label>
+                  <input id="doctors-registration-council-11" value={form.regcouncil} onChange={function (event) { updateField("regcouncil", event.target.value); }} placeholder="e.g. GMC, MCI" />
                 </div>
                 <div className="field">
-                  <label>Registration year</label>
-                  <input value={form.regyear} onChange={function (event) { updateField("regyear", event.target.value); }} />
+                  <label htmlFor="doctors-registration-year-12">Registration year</label>
+                  <input id="doctors-registration-year-12" value={form.regyear} onChange={function (event) { updateField("regyear", event.target.value); }} />
                 </div>
               </div>
               <div className="grid-2">
                 <div className="field">
-                  <label>Clinic / hospital name</label>
-                  <input value={form.clinic} onChange={function (event) { updateField("clinic", event.target.value); }} />
+                  <label htmlFor="doctors-clinic-hospital-name-13">Clinic / hospital name</label>
+                  <input id="doctors-clinic-hospital-name-13" value={form.clinic} onChange={function (event) { updateField("clinic", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Clinic address</label>
-                  <input value={form.clinicaddr} onChange={function (event) { updateField("clinicaddr", event.target.value); }} />
+                  <label htmlFor="doctors-clinic-address-14">Clinic address</label>
+                  <input id="doctors-clinic-address-14" value={form.clinicaddr} onChange={function (event) { updateField("clinicaddr", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Aadhar</label>
-                  <input value={form.aadhar} onChange={function (event) { updateField("aadhar", event.target.value); }} />
+                  <label htmlFor="doctors-aadhar-15">Aadhar</label>
+                  <input id="doctors-aadhar-15" value={form.aadhar} onChange={function (event) { updateField("aadhar", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>PAN</label>
-                  <input value={form.pan} onChange={function (event) { updateField("pan", event.target.value.toUpperCase()); }} />
+                  <label htmlFor="doctors-pan-16">PAN</label>
+                  <input id="doctors-pan-16" value={form.pan} onChange={function (event) { updateField("pan", event.target.value.toUpperCase()); }} />
                 </div>
               </div>
               {error ? <div className="error-text">{error}</div> : null}
@@ -291,23 +291,23 @@ export default function DoctorsPage() {
           <ModuleShell title="Doctor directory" description="Search by name, phone, clinic or specialisation.">
             <div className="toolbar">
               <div className="field">
-                <label>Search</label>
-                <input
+                <label htmlFor="doctors-search-17">Search</label>
+                <input id="doctors-search-17"
                   value={search}
                   onChange={function (event) { setSearch(event.target.value); }}
                   placeholder="Name, phone, clinic, specialisation"
                 />
               </div>
               <div className="field">
-                <label>City</label>
-                <input
+                <label htmlFor="doctors-city-18">City</label>
+                <input id="doctors-city-18"
                   value={city}
                   onChange={function (event) { setCity(event.target.value); }}
                   placeholder="Filter by city"
                 />
               </div>
               <div className="field">
-                <label>&nbsp;</label>
+                <span aria-hidden="true">&nbsp;</span>
                 <button className="button secondary" type="button" onClick={reload}>
                   Refresh
                 </button>

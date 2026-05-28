@@ -174,11 +174,11 @@ export default function SettingsPage() {
                 {KNOWN_KEYS.map(function (def) {
                   return (
                     <div className="field" key={def.key}>
-                      <label>
+                      <label htmlFor="settings-codedef-keycode-def-labe-1">
                         <code>{def.key}</code> — {def.label}
                       </label>
                       {def.textarea ? (
-                        <textarea
+                        <textarea id="settings-codedef-keycode-def-labe-1"
                           rows="4"
                           value={drafts[def.key] || ""}
                           onChange={function (event) {
@@ -227,16 +227,16 @@ export default function SettingsPage() {
             >
               <div className="grid-2">
                 <div className="field">
-                  <label>Key</label>
-                  <input
+                  <label htmlFor="settings-key-2">Key</label>
+                  <input id="settings-key-2"
                     value={customKey}
                     onChange={function (event) { setCustomKey(event.target.value); }}
                     placeholder="e.g. invoicePrefix"
                   />
                 </div>
                 <div className="field">
-                  <label>Value (string or JSON)</label>
-                  <input
+                  <label htmlFor="settings-value-string-or-json-3">Value (string or JSON)</label>
+                  <input id="settings-value-string-or-json-3"
                     value={customValue}
                     onChange={function (event) { setCustomValue(event.target.value); }}
                     placeholder='"INV-" or {"foo":1}'

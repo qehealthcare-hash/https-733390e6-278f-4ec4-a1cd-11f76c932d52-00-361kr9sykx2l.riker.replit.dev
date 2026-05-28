@@ -890,8 +890,8 @@ export default function BillingsPage() {
               <form className="stack" onSubmit={handleCreate}>
                 <div className="grid-2">
                   <div className="field">
-                    <label>Patient</label>
-                    <select
+                    <label htmlFor="billings-patient-1">Patient</label>
+                    <select id="billings-patient-1"
                       value={createPatientId}
                       onChange={function (event) {
                         setCreatePatientId(event.target.value);
@@ -909,8 +909,8 @@ export default function BillingsPage() {
                     </select>
                   </div>
                   <div className="field">
-                    <label>Security deposit</label>
-                    <input
+                    <label htmlFor="billings-security-deposit-2">Security deposit</label>
+                    <input id="billings-security-deposit-2"
                       type="number"
                       min="0"
                       value={createSecDep}
@@ -931,8 +931,8 @@ export default function BillingsPage() {
             <ModuleShell title="Patient bills" description="Live ledger from hh_billings. Click a row for full detail.">
               <div className="toolbar">
                 <div className="field">
-                  <label>Status</label>
-                  <select
+                  <label htmlFor="billings-status-3">Status</label>
+                  <select id="billings-status-3"
                     value={statusFilter}
                     onChange={function (event) {
                       setStatusFilter(event.target.value);
@@ -949,8 +949,8 @@ export default function BillingsPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Search</label>
-                  <input
+                  <label htmlFor="billings-search-4">Search</label>
+                  <input id="billings-search-4"
                     placeholder="patient name / invoice no / phone"
                     value={search}
                     onChange={function (event) {
@@ -959,7 +959,7 @@ export default function BillingsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>&nbsp;</label>
+                  <span aria-hidden="true">&nbsp;</span>
                   <button className="button secondary" type="button" onClick={reloadList}>
                     Refresh
                   </button>
@@ -1106,8 +1106,8 @@ export default function BillingsPage() {
                     <strong>Generate invoice</strong>
                     <div className="grid-2">
                       <div className="field">
-                        <label>Billing month</label>
-                        <select
+                        <label htmlFor="billings-billing-month-6">Billing month</label>
+                        <select id="billings-billing-month-6"
                           value={invoicePeriod}
                           onChange={function (event) {
                             setInvoicePeriod(event.target.value);
@@ -1127,7 +1127,7 @@ export default function BillingsPage() {
                         </select>
                       </div>
                       <div className="field">
-                        <label>&nbsp;</label>
+                        <span aria-hidden="true">&nbsp;</span>
                         <button
                           className="button primary"
                           type="button"
@@ -1159,8 +1159,8 @@ export default function BillingsPage() {
                               return (
                                 <div className="grid-2" key={"ml-" + idx}>
                                   <div className="field">
-                                    <label>Date</label>
-                                    <input
+                                    <label htmlFor="billings-date-8">Date</label>
+                                    <input id="billings-date-8"
                                       type="date"
                                       value={line.date}
                                       onChange={function (e) {
@@ -1171,8 +1171,8 @@ export default function BillingsPage() {
                                     />
                                   </div>
                                   <div className="field">
-                                    <label>Service</label>
-                                    <input
+                                    <label htmlFor="billings-service-9">Service</label>
+                                    <input id="billings-service-9"
                                       value={line.service_name}
                                       onChange={function (e) {
                                         var next = manualLines.slice();
@@ -1182,8 +1182,8 @@ export default function BillingsPage() {
                                     />
                                   </div>
                                   <div className="field">
-                                    <label>Partner id (optional)</label>
-                                    <input
+                                    <label htmlFor="billings-partner-id-optional-10">Partner id (optional)</label>
+                                    <input id="billings-partner-id-optional-10"
                                       value={line.partner}
                                       onChange={function (e) {
                                         var next = manualLines.slice();
@@ -1193,8 +1193,8 @@ export default function BillingsPage() {
                                     />
                                   </div>
                                   <div className="field">
-                                    <label>Per-day charge</label>
-                                    <input
+                                    <label htmlFor="billings-per-day-charge-11">Per-day charge</label>
+                                    <input id="billings-per-day-charge-11"
                                       type="number"
                                       min="0"
                                       value={line.amt}
@@ -1211,8 +1211,8 @@ export default function BillingsPage() {
                                     />
                                   </div>
                                   <div className="field">
-                                    <label>Days</label>
-                                    <input
+                                    <label htmlFor="billings-days-12">Days</label>
+                                    <input id="billings-days-12"
                                       type="number"
                                       min="1"
                                       value={line.count}
@@ -1229,8 +1229,8 @@ export default function BillingsPage() {
                                     />
                                   </div>
                                   <div className="field">
-                                    <label>Total</label>
-                                    <input type="number" min="0" value={line.total} readOnly />
+                                    <label htmlFor="billings-total-13">Total</label>
+                                    <input id="billings-total-13" type="number" min="0" value={line.total} readOnly />
                                   </div>
                                 </div>
                               );
@@ -1360,8 +1360,8 @@ export default function BillingsPage() {
                     <strong>Security deposit</strong>
                     <div className="grid-2">
                       <div className="field">
-                        <label>Amount</label>
-                        <input
+                        <label htmlFor="billings-amount-14">Amount</label>
+                        <input id="billings-amount-14"
                           type="number"
                           min="0"
                           value={secDepForm.sec_dep}
@@ -1372,7 +1372,7 @@ export default function BillingsPage() {
                         />
                       </div>
                       <div className="field">
-                        <label>&nbsp;</label>
+                        <span aria-hidden="true">&nbsp;</span>
                         <button className="button primary" type="submit" disabled={busy || isClosed}>
                           Update deposit
                         </button>
@@ -1432,8 +1432,8 @@ export default function BillingsPage() {
                     ) : null}
                     <div className="grid-2">
                       <div className="field">
-                        <label>Apply to invoice</label>
-                        <select
+                        <label htmlFor="billings-apply-to-invoice-16">Apply to invoice</label>
+                        <select id="billings-apply-to-invoice-16"
                           value={receiptForm.invoice_id}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, invoice_id: event.target.value });
@@ -1459,8 +1459,8 @@ export default function BillingsPage() {
                         </select>
                       </div>
                       <div className="field">
-                        <label>Type</label>
-                        <select
+                        <label htmlFor="billings-type-17">Type</label>
+                        <select id="billings-type-17"
                           value={receiptForm.type}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, type: event.target.value });
@@ -1477,8 +1477,8 @@ export default function BillingsPage() {
                         </select>
                       </div>
                       <div className="field">
-                        <label>Method</label>
-                        <select
+                        <label htmlFor="billings-method-18">Method</label>
+                        <select id="billings-method-18"
                           value={receiptForm.method}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, method: event.target.value });
@@ -1495,8 +1495,8 @@ export default function BillingsPage() {
                         </select>
                       </div>
                       <div className="field">
-                        <label>Amount</label>
-                        <input
+                        <label htmlFor="billings-amount-19">Amount</label>
+                        <input id="billings-amount-19"
                           type="number"
                           min="0"
                           value={receiptForm.amount}
@@ -1508,8 +1508,8 @@ export default function BillingsPage() {
                         />
                       </div>
                       <div className="field">
-                        <label>Date</label>
-                        <input
+                        <label htmlFor="billings-date-20">Date</label>
+                        <input id="billings-date-20"
                           type="date"
                           value={receiptForm.date}
                           onChange={function (event) {
@@ -1520,8 +1520,8 @@ export default function BillingsPage() {
                         />
                       </div>
                       <div className="field">
-                        <label>Reference</label>
-                        <input
+                        <label htmlFor="billings-reference-21">Reference</label>
+                        <input id="billings-reference-21"
                           value={receiptForm.ref}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, ref: event.target.value });
@@ -1531,8 +1531,8 @@ export default function BillingsPage() {
                         />
                       </div>
                       <div className="field">
-                        <label>Remarks</label>
-                        <input
+                        <label htmlFor="billings-remarks-22">Remarks</label>
+                        <input id="billings-remarks-22"
                           value={receiptForm.remarks}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, remarks: event.target.value });

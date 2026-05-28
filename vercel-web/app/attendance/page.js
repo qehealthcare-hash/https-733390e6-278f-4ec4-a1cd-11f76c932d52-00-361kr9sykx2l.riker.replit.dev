@@ -569,8 +569,8 @@ export default function AttendancePage() {
         >
           <div className="toolbar" style={{ flexWrap: "wrap" }}>
             <div className="field">
-              <label>Date</label>
-              <input
+              <label htmlFor="attendance-date-1">Date</label>
+              <input id="attendance-date-1"
                 type="date"
                 value={boardDate}
                 onChange={function (event) {
@@ -579,8 +579,8 @@ export default function AttendancePage() {
               />
             </div>
             <div className="field">
-              <label>Employee</label>
-              <select
+              <label htmlFor="attendance-employee-2">Employee</label>
+              <select id="attendance-employee-2"
                 value={boardEmpFilter}
                 onChange={function (event) {
                   setBoardEmpFilter(event.target.value);
@@ -597,8 +597,8 @@ export default function AttendancePage() {
               </select>
             </div>
             <div className="field">
-              <label>Patient</label>
-              <select
+              <label htmlFor="attendance-patient-3">Patient</label>
+              <select id="attendance-patient-3"
                 value={boardPatientFilter}
                 onChange={function (event) {
                   setBoardPatientFilter(event.target.value);
@@ -615,7 +615,7 @@ export default function AttendancePage() {
               </select>
             </div>
             <div className="field">
-              <label>&nbsp;</label>
+              <span aria-hidden="true">&nbsp;</span>
               <button
                 className="button secondary"
                 type="button"
@@ -627,7 +627,7 @@ export default function AttendancePage() {
               </button>
             </div>
             <div className="field">
-              <label>&nbsp;</label>
+              <span aria-hidden="true">&nbsp;</span>
               <button className="button secondary" type="button" onClick={loadBoard} disabled={boardLoading}>
                 {boardLoading ? "Refreshing…" : "Refresh"}
               </button>
@@ -791,8 +791,8 @@ export default function AttendancePage() {
         <ModuleShell title="Attendance log" description="Historical log — filter by date range, status, or employee.">
           <div className="toolbar" style={{ flexWrap: "wrap" }}>
             <div className="field">
-              <label>From</label>
-              <input
+              <label htmlFor="attendance-from-6">From</label>
+              <input id="attendance-from-6"
                 type="date"
                 value={from}
                 onChange={function (event) {
@@ -801,8 +801,8 @@ export default function AttendancePage() {
               />
             </div>
             <div className="field">
-              <label>To</label>
-              <input
+              <label htmlFor="attendance-to-7">To</label>
+              <input id="attendance-to-7"
                 type="date"
                 value={to}
                 onChange={function (event) {
@@ -811,8 +811,8 @@ export default function AttendancePage() {
               />
             </div>
             <div className="field">
-              <label>Status</label>
-              <select
+              <label htmlFor="attendance-status-8">Status</label>
+              <select id="attendance-status-8"
                 value={statusFilter}
                 onChange={function (event) {
                   setStatusFilter(event.target.value);
@@ -829,8 +829,8 @@ export default function AttendancePage() {
               </select>
             </div>
             <div className="field">
-              <label>Employee</label>
-              <select
+              <label htmlFor="attendance-employee-9">Employee</label>
+              <select id="attendance-employee-9"
                 value={employeeFilter}
                 onChange={function (event) {
                   setEmployeeFilter(event.target.value);
@@ -847,13 +847,13 @@ export default function AttendancePage() {
               </select>
             </div>
             <div className="field">
-              <label>&nbsp;</label>
+              <span aria-hidden="true">&nbsp;</span>
               <button className="button secondary" type="button" onClick={reload}>
                 Refresh
               </button>
             </div>
             <div className="field">
-              <label>&nbsp;</label>
+              <span aria-hidden="true">&nbsp;</span>
               <button
                 className="button primary"
                 type="button"
@@ -974,8 +974,8 @@ export default function AttendancePage() {
               <form className="stack" onSubmit={handleSubmit}>
                 <div className="grid-2">
                   <div className="field">
-                    <label>Employee</label>
-                    <select
+                    <label htmlFor="attendance-employee-12">Employee</label>
+                    <select id="attendance-employee-12"
                       value={form.employee_id}
                       onChange={function (event) {
                         setForm({ ...form, employee_id: event.target.value });
@@ -993,8 +993,8 @@ export default function AttendancePage() {
                     </select>
                   </div>
                   <div className="field">
-                    <label>Patient (optional)</label>
-                    <select
+                    <label htmlFor="attendance-patient-optional-13">Patient (optional)</label>
+                    <select id="attendance-patient-optional-13"
                       value={form.patient_id}
                       onChange={function (event) {
                         setForm({ ...form, patient_id: event.target.value });
@@ -1011,8 +1011,8 @@ export default function AttendancePage() {
                     </select>
                   </div>
                   <div className="field">
-                    <label>Status</label>
-                    <select
+                    <label htmlFor="attendance-status-14">Status</label>
+                    <select id="attendance-status-14"
                       value={form.status}
                       onChange={function (event) {
                         setForm({ ...form, status: event.target.value });
@@ -1028,8 +1028,8 @@ export default function AttendancePage() {
                     </select>
                   </div>
                   <div className="field">
-                    <label>Shift</label>
-                    <select
+                    <label htmlFor="attendance-shift-15">Shift</label>
+                    <select id="attendance-shift-15"
                       value={form.shift_type}
                       onChange={function (event) {
                         setForm({ ...form, shift_type: event.target.value });
@@ -1045,8 +1045,8 @@ export default function AttendancePage() {
                     </select>
                   </div>
                   <div className="field">
-                    <label>Work date</label>
-                    <input
+                    <label htmlFor="attendance-work-date-16">Work date</label>
+                    <input id="attendance-work-date-16"
                       type="date"
                       value={form.work_date}
                       onChange={function (event) {
@@ -1056,8 +1056,8 @@ export default function AttendancePage() {
                     />
                   </div>
                   <div className="field">
-                    <label>Duty id (optional)</label>
-                    <input
+                    <label htmlFor="attendance-duty-id-optional-17">Duty id (optional)</label>
+                    <input id="attendance-duty-id-optional-17"
                       value={form.duty_id}
                       onChange={function (event) {
                         setForm({ ...form, duty_id: event.target.value });
@@ -1066,8 +1066,8 @@ export default function AttendancePage() {
                     />
                   </div>
                   <div className="field">
-                    <label>Check-in</label>
-                    <input
+                    <label htmlFor="attendance-check-in-18">Check-in</label>
+                    <input id="attendance-check-in-18"
                       type="time"
                       value={form.check_in_time}
                       onChange={function (event) {
@@ -1079,8 +1079,8 @@ export default function AttendancePage() {
                     />
                   </div>
                   <div className="field">
-                    <label>Check-out</label>
-                    <input
+                    <label htmlFor="attendance-check-out-19">Check-out</label>
+                    <input id="attendance-check-out-19"
                       type="time"
                       value={form.check_out_time}
                       onChange={function (event) {
@@ -1093,8 +1093,8 @@ export default function AttendancePage() {
                   </div>
                 </div>
                 <div className="field">
-                  <label>Notes</label>
-                  <textarea
+                  <label htmlFor="attendance-notes-20">Notes</label>
+                  <textarea id="attendance-notes-20"
                     rows="2"
                     value={form.notes}
                     onChange={function (event) {
@@ -1123,8 +1123,8 @@ export default function AttendancePage() {
             >
               <div className="toolbar">
                 <div className="field">
-                  <label>Employee</label>
-                  <select
+                  <label htmlFor="attendance-employee-21">Employee</label>
+                  <select id="attendance-employee-21"
                     value={missingFor}
                     onChange={function (event) {
                       setMissingFor(event.target.value);
@@ -1141,7 +1141,7 @@ export default function AttendancePage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>&nbsp;</label>
+                  <span aria-hidden="true">&nbsp;</span>
                   <button className="button secondary" type="button" onClick={loadMissing}>
                     Refresh
                   </button>

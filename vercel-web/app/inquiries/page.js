@@ -449,52 +449,52 @@ export default function InquiriesPage() {
             <form className="stack" onSubmit={handleSubmit}>
               <div className="grid-2">
                 <div className="field">
-                  <label>Patient Name</label>
-                  <input value={form.patient_name} onChange={function (event) { updateField("patient_name", event.target.value); }} required />
+                  <label htmlFor="inquiries-patient-name-1">Patient Name</label>
+                  <input id="inquiries-patient-name-1" value={form.patient_name} onChange={function (event) { updateField("patient_name", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Mobile</label>
-                  <input type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
+                  <label htmlFor="inquiries-mobile-2">Mobile</label>
+                  <input id="inquiries-mobile-2" type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Area</label>
-                  <input value={form.area} onChange={function (event) { updateField("area", event.target.value); }} required />
+                  <label htmlFor="inquiries-area-3">Area</label>
+                  <input id="inquiries-area-3" value={form.area} onChange={function (event) { updateField("area", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>City</label>
-                  <input value={form.city} onChange={function (event) { updateField("city", event.target.value); }} required />
+                  <label htmlFor="inquiries-city-4">City</label>
+                  <input id="inquiries-city-4" value={form.city} onChange={function (event) { updateField("city", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Service Required</label>
-                  <input value={form.service_required} onChange={function (event) { updateField("service_required", event.target.value); }} required />
+                  <label htmlFor="inquiries-service-required-5">Service Required</label>
+                  <input id="inquiries-service-required-5" value={form.service_required} onChange={function (event) { updateField("service_required", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Source</label>
-                  <select value={form.source} onChange={function (event) { updateField("source", event.target.value); }}>
+                  <label htmlFor="inquiries-source-6">Source</label>
+                  <select id="inquiries-source-6" value={form.source} onChange={function (event) { updateField("source", event.target.value); }}>
                     {inquirySourceOptions.map(function (item) {
                       return <option key={item.value} value={item.value}>{item.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Potential</label>
-                  <select value={form.potential} onChange={function (event) { updateField("potential", event.target.value); }}>
+                  <label htmlFor="inquiries-potential-7">Potential</label>
+                  <select id="inquiries-potential-7" value={form.potential} onChange={function (event) { updateField("potential", event.target.value); }}>
                     {inquiryPotentialOptions.map(function (item) {
                       return <option key={item.value} value={item.value}>{item.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Status</label>
-                  <select value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
+                  <label htmlFor="inquiries-status-8">Status</label>
+                  <select id="inquiries-status-8" value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
                     {inquiryStatusOptions.map(function (item) {
                       return <option key={item.value} value={item.value}>{item.label}</option>;
                     })}
                   </select>
                 </div>
                 <div className="field">
-                  <label>Assigned to</label>
-                  <select value={form.assigned_to} onChange={function (event) { updateField("assigned_to", event.target.value); }}>
+                  <label htmlFor="inquiries-assigned-to-9">Assigned to</label>
+                  <select id="inquiries-assigned-to-9" value={form.assigned_to} onChange={function (event) { updateField("assigned_to", event.target.value); }}>
                     <option value="">Unassigned</option>
                     {employees.map(function (emp) {
                       var label = emp.full_name || emp.name || emp.id;
@@ -503,8 +503,8 @@ export default function InquiriesPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Follow-up date</label>
-                  <input
+                  <label htmlFor="inquiries-follow-up-date-10">Follow-up date</label>
+                  <input id="inquiries-follow-up-date-10"
                     type="date"
                     value={form.followup_date}
                     onChange={function (event) { updateField("followup_date", event.target.value); }}
@@ -514,8 +514,8 @@ export default function InquiriesPage() {
               </div>
               <div className="grid-3">
                 <div className="field">
-                  <label>Emergency Level (1-10)</label>
-                  <input
+                  <label htmlFor="inquiries-emergency-level-1-10-11">Emergency Level (1-10)</label>
+                  <input id="inquiries-emergency-level-1-10-11"
                     type="range"
                     min="1"
                     max="10"
@@ -525,8 +525,8 @@ export default function InquiriesPage() {
                   <small>{form.emergency_level != null ? form.emergency_level : "Not rated"}/10</small>
                 </div>
                 <div className="field">
-                  <label>Flexibility (1-10)</label>
-                  <input
+                  <label htmlFor="inquiries-flexibility-1-10-12">Flexibility (1-10)</label>
+                  <input id="inquiries-flexibility-1-10-12"
                     type="range"
                     min="1"
                     max="10"
@@ -536,8 +536,8 @@ export default function InquiriesPage() {
                   <small>{form.flexibility_score != null ? form.flexibility_score : "Not rated"}/10</small>
                 </div>
                 <div className="field">
-                  <label>Priority (1-10)</label>
-                  <input
+                  <label htmlFor="inquiries-priority-1-10-13">Priority (1-10)</label>
+                  <input id="inquiries-priority-1-10-13"
                     type="range"
                     min="1"
                     max="10"
@@ -548,8 +548,8 @@ export default function InquiriesPage() {
                 </div>
               </div>
               <div className="field">
-                <label>Notes</label>
-                <textarea rows="3" value={form.notes} onChange={function (event) { updateField("notes", event.target.value); }} />
+                <label htmlFor="inquiries-notes-14">Notes</label>
+                <textarea id="inquiries-notes-14" rows="3" value={form.notes} onChange={function (event) { updateField("notes", event.target.value); }} />
               </div>
               {conflictPrompt ? (
                 <div className="error-text" style={{ border: "1px solid var(--warn, #d97706)", background: "rgba(217,119,6,0.08)", padding: "10px 12px", borderRadius: 6 }}>
@@ -594,12 +594,12 @@ export default function InquiriesPage() {
           <ModuleShell title="Inquiry Tracker" description="Status workflow, conversion to patient, follow-ups, WhatsApp & PDF.">
             <div className="toolbar">
               <div className="field">
-                <label>Search</label>
-                <input value={search} onChange={function (event) { setSearch(event.target.value); }} placeholder="Name, mobile, service or source" />
+                <label htmlFor="inquiries-search-15">Search</label>
+                <input id="inquiries-search-15" value={search} onChange={function (event) { setSearch(event.target.value); }} placeholder="Name, mobile, service or source" />
               </div>
               <div className="field">
-                <label>Status</label>
-                <select value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
+                <label htmlFor="inquiries-status-16">Status</label>
+                <select id="inquiries-status-16" value={statusFilter} onChange={function (event) { setStatusFilter(event.target.value); }}>
                   <option value="">All</option>
                   {inquiryStatusOptions.map(function (item) {
                     return <option key={item.value} value={item.value}>{item.label}</option>;
@@ -607,8 +607,8 @@ export default function InquiriesPage() {
                 </select>
               </div>
               <div className="field">
-                <label>Potential</label>
-                <select value={potentialFilter} onChange={function (event) { setPotentialFilter(event.target.value); }}>
+                <label htmlFor="inquiries-potential-17">Potential</label>
+                <select id="inquiries-potential-17" value={potentialFilter} onChange={function (event) { setPotentialFilter(event.target.value); }}>
                   <option value="">All</option>
                   {inquiryPotentialOptions.map(function (item) {
                     return <option key={item.value} value={item.value}>{item.label}</option>;
@@ -616,8 +616,8 @@ export default function InquiriesPage() {
                 </select>
               </div>
               <div className="field">
-                <label>Source</label>
-                <select value={sourceFilter} onChange={function (event) { setSourceFilter(event.target.value); }}>
+                <label htmlFor="inquiries-source-18">Source</label>
+                <select id="inquiries-source-18" value={sourceFilter} onChange={function (event) { setSourceFilter(event.target.value); }}>
                   <option value="">All</option>
                   {inquirySourceOptions.map(function (item) {
                     return <option key={item.value} value={item.value}>{item.label}</option>;
@@ -625,8 +625,8 @@ export default function InquiriesPage() {
                 </select>
               </div>
               <div className="field">
-                <label>
-                  <input type="checkbox" checked={openOnly} onChange={function (event) { setOpenOnly(event.target.checked); }} />
+                <label htmlFor="inquiries-input-type-checkbox-chec-19">
+                  <input id="inquiries-input-type-checkbox-chec-19" type="checkbox" checked={openOnly} onChange={function (event) { setOpenOnly(event.target.checked); }} />
                   &nbsp;Open only
                 </label>
               </div>
@@ -754,8 +754,8 @@ export default function InquiriesPage() {
             <p className="mini-muted">{statusDialog.name} — recorded in the audit log.</p>
             {statusDialog.nextStatus === "FollowUp" || statusDialog.nextStatus === "Negotiating" ? (
               <div className="field">
-                <label>Follow-up date</label>
-                <input
+                <label htmlFor="inquiries-follow-up-date-20">Follow-up date</label>
+                <input id="inquiries-follow-up-date-20"
                   type="date"
                   value={statusDialog.followup_date}
                   onChange={function (e) {
@@ -766,13 +766,13 @@ export default function InquiriesPage() {
               </div>
             ) : null}
             <div className="field">
-              <label>
+              <label htmlFor="inquiries-reason-21">
                 Reason
                 {statusDialog.nextStatus === "Closed" || statusDialog.nextStatus === "Lost" || statusDialog.nextStatus === "New"
                   ? " (required to reopen/close)"
                   : " (optional)"}
               </label>
-              <textarea
+              <textarea id="inquiries-reason-21"
                 rows="3"
                 value={statusDialog.reason}
                 onChange={function (e) {
@@ -803,8 +803,8 @@ export default function InquiriesPage() {
               {isAdmin ? " Admins can permanently delete." : ""}
             </p>
             <div className="field">
-              <label>Reason (optional)</label>
-              <textarea
+              <label htmlFor="inquiries-reason-optional-22">Reason (optional)</label>
+              <textarea id="inquiries-reason-optional-22"
                 rows="3"
                 value={deleteDialog.reason}
                 onChange={function (e) {
@@ -815,8 +815,8 @@ export default function InquiriesPage() {
             </div>
             {isAdmin ? (
               <div className="field">
-                <label>
-                  <input
+                <label htmlFor="inquiries-input-23">
+                  <input id="inquiries-input-23"
                     type="checkbox"
                     checked={deleteDialog.hard}
                     onChange={function (e) {
@@ -849,8 +849,8 @@ export default function InquiriesPage() {
               {convertDialog.name} — creates or links a patient by mobile via the server RPC.
             </p>
             <div className="field">
-              <label>Conversion notes (optional)</label>
-              <textarea
+              <label htmlFor="inquiries-conversion-notes-optiona-24">Conversion notes (optional)</label>
+              <textarea id="inquiries-conversion-notes-optiona-24"
                 rows="3"
                 value={convertDialog.notes}
                 onChange={function (e) {

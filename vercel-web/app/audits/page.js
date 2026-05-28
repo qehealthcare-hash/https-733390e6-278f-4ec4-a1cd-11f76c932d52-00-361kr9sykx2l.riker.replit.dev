@@ -80,8 +80,8 @@ export default function AuditsPage() {
           >
             <div className="toolbar">
               <div className="field">
-                <label>Module</label>
-                <select
+                <label htmlFor="audits-module-1">Module</label>
+                <select id="audits-module-1"
                   value={moduleFilter}
                   onChange={function (event) {
                     setModuleFilter(event.target.value);
@@ -98,8 +98,8 @@ export default function AuditsPage() {
                 </select>
               </div>
               <div className="field">
-                <label>Entity ID</label>
-                <input
+                <label htmlFor="audits-entity-id-2">Entity ID</label>
+                <input id="audits-entity-id-2"
                   value={entityFilter}
                   onChange={function (event) {
                     setEntityFilter(event.target.value);
