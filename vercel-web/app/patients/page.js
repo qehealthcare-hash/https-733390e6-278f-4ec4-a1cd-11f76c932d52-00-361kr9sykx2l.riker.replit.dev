@@ -8,7 +8,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
-import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { patientsClient, lookupsClient } from "@/lib/clients";
 import {
   patientCloseReasonOptions,
   patientStatusOptions,
@@ -98,7 +98,7 @@ export default function PatientsPage() {
   );
 
   var resource = usePaginatedResource({
-    basePath: "/patients",
+    basePath: patientsClient.basePath,
     table: "hh_patients",
     channel: "hh_patients",
     queryParams: listQuery,
@@ -137,7 +137,7 @@ export default function PatientsPage() {
   useEffect(
     function () {
       if (!auth.session?.access_token) return;
-      request("/lookups/employees", null, auth.session)
+      lookupsClient.employees(auth.session)
         .then(setEmployees)
         .catch(function (lookupError) {
           setEmployees([]);
@@ -383,11 +383,7 @@ export default function PatientsPage() {
       if (form.confirm_duplicate_name) {
         payload.confirm_duplicate_name = true;
       }
-      await requestWithOfflineFallback(
-        form.id ? "/patients/" + form.id : "/patients",
-        { method: form.id ? "PUT" : "POST", body: payload },
-        auth.session
-      );
+      await patientsClient.save(auth.session, payload);
       await resource.reload();
       resetForm();
       setMessage(form.id ? "Patient updated successfully" : "Patient created successfully");
@@ -425,7 +421,7 @@ export default function PatientsPage() {
     setBusy(true);
     setError("");
     try {
-      var fresh = await request("/patients/" + form.id, null, auth.session);
+      var fresh = await patientsClient.get(auth.session, form.id);
       editPatient(fresh);
       setConflictPrompt(null);
       setMessage("Patient reloaded — your previous edits were discarded.");
@@ -475,14 +471,10 @@ export default function PatientsPage() {
     setError("");
     setMessage("");
     try {
-      await requestWithOfflineFallback(
-        "/patients/" + closeDialog.id,
-        {
-          method: "DELETE",
-          body: { reason: closeDialog.reason, reason_other: closeDialog.reason_other }
-        },
-        auth.session
-      );
+      await patientsClient.close(auth.session, closeDialog.id, {
+        reason: closeDialog.reason,
+        reason_other: closeDialog.reason_other
+      });
       await resource.reload();
       if (form.id === closeDialog.id) resetForm();
       setMessage("Patient closed");
@@ -510,15 +502,10 @@ export default function PatientsPage() {
     setError("");
     setMessage("");
     try {
-      await requestWithOfflineFallback(
-        "/patients/" + reopenDialog.id + "/reopen",
-        {
-          method: "POST",
-          body: reopenDialog.note.trim()
-            ? { reason: reopenDialog.note.trim() }
-            : undefined
-        },
-        auth.session
+      await patientsClient.reopen(
+        auth.session,
+        reopenDialog.id,
+        reopenDialog.note.trim() ? { reason: reopenDialog.note.trim() } : {}
       );
       await resource.reload();
       if (form.id === reopenDialog.id) resetForm();
@@ -548,11 +535,7 @@ export default function PatientsPage() {
     setError("");
     setMessage("");
     try {
-      await requestWithOfflineFallback(
-        "/patients/" + id + "?hard=1",
-        { method: "DELETE" },
-        auth.session
-      );
+      await patientsClient.hardDelete(auth.session, id);
       await resource.reload();
       if (form.id === id) resetForm();
       setMessage("Patient permanently deleted");
@@ -569,7 +552,7 @@ export default function PatientsPage() {
     setHistoryError("");
     setHistoryLoading(true);
     try {
-      var bundle = await request("/patients/" + row.id + "/history", null, auth.session);
+      var bundle = await patientsClient.history(auth.session, row.id);
       setHistoryData(bundle);
     } catch (historyErr) {
       setHistoryError(historyErr.message || "Could not load patient history");
