@@ -1,0 +1,14 @@
+{
+  "name": "audit-checks",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Regression tests scoring the Hominal CRM enterprise QA audit rubric. One test per rubric ID (P0/P1).",
+  "scripts": {
+    "test": "vitest run --reporter=verbose",
+    "score": "vitest run --reporter=json --outputFile=.last-run.json && node score.mjs"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  }
+}
