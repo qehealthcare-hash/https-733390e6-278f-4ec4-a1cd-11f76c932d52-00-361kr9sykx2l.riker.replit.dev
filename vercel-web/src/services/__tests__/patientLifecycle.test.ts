@@ -49,6 +49,52 @@ vi.mock("@/database/patientRepository", () => ({
         ? { success: true as const, data: null }
         : { success: false as const, error: "not found", code: "not_found" };
     },
+    async closeCascadeRpc(id: string, actor: string) {
+      const idx = patients.findIndex((p) => p.id === id);
+      if (idx < 0) {
+        return {
+          success: true as const,
+          data: { ok: false, code: "not_found", message: "Patient not found" }
+        };
+      }
+      patients[idx] = { ...patients[idx], status: "Closed", updated_at: nowIso(), updated_by: actor };
+      let billingsClosed = 0;
+      billings = billings.map((b) => {
+        if (b.patient_id === id && b.status === "Active") {
+          billingsClosed += 1;
+          return { ...b, status: "Closed", closed_at: nowIso(), updated_at: nowIso(), updated_by: actor };
+        }
+        return b;
+      });
+      const now = new Date();
+      let dutiesCancelled = 0;
+      let dutiesTruncated = 0;
+      duties = duties.map((d) => {
+        if (d.patient_id !== id) return d;
+        const start = d.start_at ? new Date(String(d.start_at)) : null;
+        const end = d.end_at ? new Date(String(d.end_at)) : null;
+        const next: Row = { ...d, updated_at: nowIso(), updated_by: actor };
+        if (d.status === "SCHEDULED" && start && start.getTime() > now.getTime()) {
+          dutiesCancelled += 1;
+          next.status = "CANCELLED";
+        }
+        if ((d.status === "IN_PROGRESS" || d.status === "SCHEDULED") && end && end.getTime() > now.getTime()) {
+          dutiesTruncated += 1;
+          next.end_at = now.toISOString();
+        }
+        return next;
+      });
+      return {
+        success: true as const,
+        data: {
+          ok: true,
+          patient_id: id,
+          billings_closed: billingsClosed,
+          duties_cancelled: dutiesCancelled,
+          duties_truncated: dutiesTruncated
+        }
+      };
+    },
     async findActiveByPhoneSuffix(phone: string, excludeId?: string) {
       const suffix = phone.replace(/\D/g, "").slice(-8);
       const rows = patients.filter(

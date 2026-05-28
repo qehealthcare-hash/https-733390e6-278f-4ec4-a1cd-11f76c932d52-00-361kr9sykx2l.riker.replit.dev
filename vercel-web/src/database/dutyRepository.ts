@@ -9,6 +9,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/lib/api/security";
 
 const TABLE = "hh_duties";
 const SVC = "hh_svc_entries";
@@ -56,12 +57,14 @@ export const dutyRepository = {
         if (filters.from) query = query.gte("end_at", filters.from);
         if (filters.status) query = query.eq("status", filters.status);
         if (filters.q) {
-          const term = filters.q.replace(/%/g, "");
-          query = query.or(
-            ["service_type", "shift_type", "status", "notes"]
-              .map((c) => `${c}.ilike.%${term}%`)
-              .join(",")
-          );
+          const term = sanitizeSearchTerm(filters.q);
+          if (term) {
+            query = query.or(
+              ["service_type", "shift_type", "status", "notes"]
+                .map((c) => `${c}.ilike.%${term}%`)
+                .join(",")
+            );
+          }
         }
         return query;
       },

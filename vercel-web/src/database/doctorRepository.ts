@@ -16,6 +16,7 @@ import {
   updateRow
 } from "@/database/baseRepository";
 import { runListQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/lib/api/security";
 
 const TABLE = "hh_doctors";
 
@@ -35,12 +36,15 @@ export const doctorRepository = {
       (q) => {
         let chain = q;
         if (opts.q) {
-          chain = chain.or(
-            `fn.ilike.%${opts.q}%,ln.ilike.%${opts.q}%,phone.ilike.%${opts.q}%,clinic.ilike.%${opts.q}%`
-          );
+          const term = sanitizeSearchTerm(opts.q);
+          if (term) {
+            chain = chain.or(
+              `fn.ilike.%${term}%,ln.ilike.%${term}%,phone.ilike.%${term}%,clinic.ilike.%${term}%`
+            );
+          }
         }
-        if (opts.city) chain = chain.ilike("city", `%${opts.city}%`);
-        if (opts.spec) chain = chain.ilike("spec", `%${opts.spec}%`);
+        if (opts.city) chain = chain.ilike("city", `%${sanitizeSearchTerm(opts.city)}%`);
+        if (opts.spec) chain = chain.ilike("spec", `%${sanitizeSearchTerm(opts.spec)}%`);
         return chain;
       },
       {

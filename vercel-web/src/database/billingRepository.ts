@@ -11,6 +11,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/lib/api/security";
 
 const BILLINGS = "hh_billings";
 const RECEIPTS = "hh_receipts";
@@ -66,12 +67,14 @@ export const billingRepository = {
         if (filters.patient_id) query = query.eq("patient_id", filters.patient_id);
         if (filters.status) query = query.eq("status", filters.status);
         if (filters.q) {
-          const term = filters.q.replace(/%/g, "");
-          query = query.or(
-            ["id", "patient_id", "status"]
-              .map((c) => `${c}.ilike.%${term}%`)
-              .join(",")
-          );
+          const term = sanitizeSearchTerm(filters.q);
+          if (term) {
+            query = query.or(
+              ["id", "patient_id", "status"]
+                .map((c) => `${c}.ilike.%${term}%`)
+                .join(",")
+            );
+          }
         }
         return query;
       },

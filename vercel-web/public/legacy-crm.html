@@ -4251,10 +4251,9 @@ function doLogin() {
   for (var i=0;i<DB.users.length;i++) {
     var u=DB.users[i];
     if ((u.username===username||u.email===username) && u.isActive!==false) {
-      if ((u.password||'admin123')===password) { matched=u; break; }
+      if (u.password && u.password===password) { matched=u; break; }
     }
   }
-  if (!matched && username==='admin' && password==='admin123') matched={id:'u0',username:'admin',role:'Admin'};
   if (matched) {
     setSession(matched); showApp(matched); nav('dashboard');
   } else {
@@ -7486,7 +7485,10 @@ async function saveUser(){
   var un=gv('uUsername').trim(), role=gv('uRole');
   if(!un){toast('Username required','error');return;}
   if(!role){toast('Select role','error');return;}
-  var obj={username:un,email:gv('uEmail'),phone:gv('uPhone'),role:role,password:gv('uPassword')||'admin123',isActive:true};
+  var pwd=gv('uPassword');
+  if(!editingUser && !pwd){toast('Password is required for new users','error');return;}
+  var obj={username:un,email:gv('uEmail'),phone:gv('uPhone'),role:role,isActive:true};
+  if(pwd) obj.password=pwd;
   var row;
   if(editingUser){
     Object.assign(editingUser,obj);
@@ -16243,40 +16245,6 @@ function patchSecureAuth() {
     if (eEl) eEl.style.display = 'none';
     if (bEl) bEl.textContent = 'Signing in...';
 
-    var normalizedLoginValue = loginValue.toLowerCase();
-    if ((normalizedLoginValue === 'admin' || normalizedLoginValue === 'admin@hominalhealthcare.com') && password === 'admin123') {
-      var adminAuth = await requestJson(
-        SB_URL + '/auth/v1/token?grant_type=password',
-        'POST',
-        { email: 'admin@hominalhealthcare.com', password: password },
-        SB_KEY,
-        null
-      );
-      if (adminAuth.ok && adminAuth.data && adminAuth.data.access_token) {
-        var adminSession = {
-          user: { id:'u1', username:'admin', email:'admin@hominalhealthcare.com', role:'Admin', isActive:true },
-          time: Date.now(),
-          accessToken: adminAuth.data.access_token,
-          refreshToken: adminAuth.data.refresh_token || '',
-          expiresAt: Date.now() + ((parseInt(adminAuth.data.expires_in, 10) || 3600) * 1000),
-          authEmail: 'admin@hominalhealthcare.com'
-        };
-        persistSessionState(adminSession);
-        showApp(adminSession.user);
-        nav('dashboard');
-        if (bEl) bEl.textContent = 'Syncing in background...';
-        runPostLoginCloudSync(bEl);
-        return;
-      }
-      if (eEl) {
-        eEl.textContent = 'Supabase Auth sign-in failed for admin. Reset password in Supabase Dashboard → Authentication → Users for admin@hominalhealthcare.com, then sign in again.';
-        eEl.style.display = 'block';
-      }
-      if (bEl) bEl.textContent = 'Sign In';
-      toast('Cloud writes blocked until Supabase Auth password is set for admin@hominalhealthcare.com', 'error');
-      return;
-    }
-
     var lookup = await lookupLogin(loginValue);
     var email = lookup && lookup.email ? String(lookup.email || '').toLowerCase() : '';
     if (!email && loginValue.indexOf('@') !== -1) email = loginValue.toLowerCase();
@@ -16303,11 +16271,8 @@ function patchSecureAuth() {
         (DB.users || []).forEach(function(u){
           if (localUser || u.isActive === false) return;
           var matchesLogin = String(u.username || '').toLowerCase() === normalizedLogin || String(u.email || '').toLowerCase() === normalizedLogin;
-          if (matchesLogin && String(u.password || 'admin123') === password) localUser = u;
+          if (matchesLogin && u.password && String(u.password) === password) localUser = u;
         });
-        if (!localUser && (normalizedLogin === 'admin' || normalizedLogin === 'admin@hominalhealthcare.com') && password === 'admin123') {
-          localUser = { id:'u1', username:'admin', email:'admin@hominalhealthcare.com', phone:'9998517492', role:'Admin', isActive:true, created:'21 Apr 2026' };
-        }
         if (localUser) {
           var fallbackSession = {
             user: localUser,

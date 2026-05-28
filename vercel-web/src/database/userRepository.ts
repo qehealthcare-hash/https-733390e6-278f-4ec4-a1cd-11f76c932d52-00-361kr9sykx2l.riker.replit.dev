@@ -13,6 +13,7 @@ import {
   updateRow
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/lib/api/security";
 
 const USERS = "hh_users";
 const ROLES = "hh_roles";
@@ -33,9 +34,12 @@ export const userRepository = {
       (q) => {
         let chain = q;
         if (opts.q) {
-          chain = chain.or(
-            `username.ilike.%${opts.q}%,email.ilike.%${opts.q}%,phone.ilike.%${opts.q}%`
-          );
+          const term = sanitizeSearchTerm(opts.q);
+          if (term) {
+            chain = chain.or(
+              `username.ilike.%${term}%,email.ilike.%${term}%,phone.ilike.%${term}%`
+            );
+          }
         }
         if (opts.role) chain = chain.eq("role", opts.role);
         if (opts.active === "true") chain = chain.eq("is_active", true);

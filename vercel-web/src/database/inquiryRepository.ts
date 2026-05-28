@@ -11,6 +11,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/lib/api/security";
 
 const TABLE = "hh_inquiries";
 const PATIENTS = "hh_patients";
@@ -54,12 +55,14 @@ export const inquiryRepository = {
           query = query.lte("created_at", `${filters.created_to}T23:59:59.999Z`);
         }
         if (filters.q) {
-          const term = filters.q.replace(/%/g, "");
-          query = query.or(
-            ["name", "phone", "city", "area", "service", "source", "assigned_to"]
-              .map((c) => `${c}.ilike.%${term}%`)
-              .join(",")
-          );
+          const term = sanitizeSearchTerm(filters.q);
+          if (term) {
+            query = query.or(
+              ["name", "phone", "city", "area", "service", "source", "assigned_to"]
+                .map((c) => `${c}.ilike.%${term}%`)
+                .join(",")
+            );
+          }
         }
         return query;
       },

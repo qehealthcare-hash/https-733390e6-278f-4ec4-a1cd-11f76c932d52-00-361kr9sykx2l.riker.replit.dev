@@ -2,6 +2,42 @@ import { appConfig } from "./config";
 
 var offlineQueueKey = "hhcrm-offline-queue";
 
+/**
+ * Synthesise a deterministic Idempotency-Key for a write request.
+ *
+ * Strategy: hash(method + path + body + 5-second timestamp bucket). Two
+ * clicks of the same button posting the same body within the same 5-second
+ * window collide on the key, so the server (`withIdempotency`) replays the
+ * cached response instead of duplicating the write. A deliberate "do the
+ * same thing again 10 seconds later" lands in a new bucket and gets a fresh
+ * key, so legitimate repeats still work.
+ *
+ * Why we generate this client-side: every write route in the CRM is wrapped
+ * by `withIdempotency`, but it short-circuits when the header is missing.
+ * Historically none of the legacy SPA call sites set the header, which left
+ * the entire fleet exposed to double-click duplicates on flaky networks.
+ */
+function fnv1aHex(input) {
+  var h = 2166136261 >>> 0;
+  for (var i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+function synthIdempotencyKey(method, path, body) {
+  if (!method) return "";
+  var upper = String(method).toUpperCase();
+  if (upper === "GET" || upper === "HEAD" || upper === "OPTIONS") return "";
+  var bucket = Math.floor(Date.now() / 5000);
+  var payload = upper + " " + path + " | " + (body == null ? "" : JSON.stringify(body)) + " | t=" + bucket;
+  var splitAt = Math.max(1, Math.floor(payload.length / 2));
+  var first = payload.slice(0, splitAt);
+  var second = payload.slice(splitAt);
+  return "auto-" + fnv1aHex(first) + fnv1aHex(second);
+}
+
 function readQueue() {
   try {
     return JSON.parse(window.localStorage.getItem(offlineQueueKey) || "[]");
@@ -52,14 +88,27 @@ export async function flushOfflineQueue(session) {
 }
 
 export async function request(path, options, session) {
+  var method = options?.method || "GET";
+  var explicitHeaders = (options && options.headers) || {};
+  var headers = {
+    "Content-Type": "application/json",
+    Authorization: session?.access_token ? "Bearer " + session.access_token : ""
+  };
+  // Merge caller-supplied headers (case-preserving) so an explicit
+  // Idempotency-Key from the caller wins over our synthesised one.
+  for (var hk in explicitHeaders) {
+    if (Object.prototype.hasOwnProperty.call(explicitHeaders, hk)) headers[hk] = explicitHeaders[hk];
+  }
+  if (!headers["Idempotency-Key"] && !headers["idempotency-key"]) {
+    var auto = synthIdempotencyKey(method, path, options?.body);
+    if (auto) headers["Idempotency-Key"] = auto;
+  }
+
   var response;
   try {
     response = await fetch(appConfig.apiUrl + path, {
-      method: options?.method || "GET",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: session?.access_token ? "Bearer " + session.access_token : ""
-      },
+      method: method,
+      headers: headers,
       body: options?.body ? JSON.stringify(options.body) : undefined
     });
   } catch (networkError) {

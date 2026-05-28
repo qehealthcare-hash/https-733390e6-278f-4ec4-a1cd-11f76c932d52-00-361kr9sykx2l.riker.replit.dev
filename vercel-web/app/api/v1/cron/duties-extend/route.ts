@@ -30,29 +30,29 @@ export const dynamic = "force-dynamic";
 export const GET = withoutAuth(async (req: NextRequest) => {
   const ranAt = new Date().toISOString();
   const secret = process.env.CRON_SECRET || process.env.DUTY_CRON_SECRET || "";
-  const isProd =
-    process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
 
+  // Refuse to run unauthenticated in EVERY environment. Previously, when the
+  // secret was missing outside production the route ran anonymously with a
+  // synthetic Admin actor (RLS-bypassing service-role client) — anyone able
+  // to hit a preview deployment URL could trigger payout / duty-day writes
+  // against the shared Supabase project. Fail-closed everywhere.
   if (!secret) {
-    if (isProd) {
-      return respond(
-        failure(
-          "CRON_SECRET (or DUTY_CRON_SECRET) is not set in production — refusing to run unauthenticated",
-          ErrorCodes.internal,
-          { ranAt }
-        )
-      );
-    }
-  } else {
-    const header = req.headers.get("authorization") || "";
-    const legacy = req.headers.get("x-cron-secret") || "";
-    const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
-    const ok =
-      (bearer && timingSafeEqualString(bearer, secret)) ||
-      (legacy && timingSafeEqualString(legacy, secret));
-    if (!ok) {
-      return respond(failure("Cron token missing or invalid", ErrorCodes.forbidden));
-    }
+    return respond(
+      failure(
+        "CRON_SECRET (or DUTY_CRON_SECRET) is not set — refusing to run unauthenticated",
+        ErrorCodes.internal,
+        { ranAt }
+      )
+    );
+  }
+
+  // Only accept the Vercel-standard Authorization: Bearer header. The legacy
+  // x-cron-secret header has been removed: it doubled the attack surface and
+  // is easier to leak in proxy logs.
+  const header = req.headers.get("authorization") || "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (!bearer || !timingSafeEqualString(bearer, secret)) {
+    return respond(failure("Cron token missing or invalid", ErrorCodes.forbidden));
   }
 
   const actor = {

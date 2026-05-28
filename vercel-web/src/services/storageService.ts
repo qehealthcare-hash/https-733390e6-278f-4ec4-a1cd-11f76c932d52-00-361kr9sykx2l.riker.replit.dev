@@ -52,7 +52,10 @@ const uploadSchema = z.object({
 const downloadSchema = z.object({
   bucket: z.string().trim().min(1),
   path: z.string().trim().min(1).max(512),
-  expires_in: z.coerce.number().int().min(30).max(3600).optional().default(600),
+  // Max TTL lowered from 60 min → 30 min to keep PHI/PDF blob URLs short-lived.
+  // Default lowered from 10 min → 5 min so a click in the UI mints a URL that
+  // expires soon after the operator has reasonably looked at the document.
+  expires_in: z.coerce.number().int().min(30).max(1800).optional().default(300),
   download_as: z.string().trim().max(255).optional()
 });
 

@@ -8,9 +8,11 @@ import {
   deleteRow,
   listAll,
   countWhere,
+  callRpc,
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/lib/api/security";
 import { patientNameKey } from "@/business/patientRules";
 
 const TABLE = "hh_patients";
@@ -65,12 +67,14 @@ export const patientRepository = {
           query = query.lte("created_at", `${filters.created_to}T23:59:59.999Z`);
         }
         if (filters.q) {
-          const term = filters.q.replace(/%/g, "");
-          query = query.or(
-            ["name", "phone", "area", "city", "addr", "relname", "relphone"]
-              .map((c) => `${c}.ilike.%${term}%`)
-              .join(",")
-          );
+          const term = sanitizeSearchTerm(filters.q);
+          if (term) {
+            query = query.or(
+              ["name", "phone", "area", "city", "addr", "relname", "relphone"]
+                .map((c) => `${c}.ilike.%${term}%`)
+                .join(",")
+            );
+          }
         }
         return query;
       },
@@ -142,6 +146,30 @@ export const patientRepository = {
 
   remove(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
     return deleteRow(TABLE, id, SCOPE, opts);
+  },
+
+  /**
+   * Cascading soft-close via `hominal_close_patient` RPC.
+   *
+   * Returns the cascade summary:
+   *   { ok, patient_id, billings_closed, duties_cancelled, duties_truncated }
+   *
+   * See `supabase/migrations/20260528103500_hominal_close_patient.sql` for
+   * the full transactional semantics — this method intentionally just
+   * forwards the actor / reason so the SQL is the single source of truth.
+   */
+  closeCascadeRpc(
+    id: string,
+    actor: string,
+    reason: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow | null>> {
+    return callRpc<JsonRow>(
+      "hominal_close_patient",
+      { p_patient_id: id, p_actor: actor || "", p_reason: reason || "" },
+      `${SCOPE}.closeCascadeRpc`,
+      opts
+    );
   },
 
   countBillings(patientId: string, opts?: DbAccess): Promise<ApiResult<number>> {

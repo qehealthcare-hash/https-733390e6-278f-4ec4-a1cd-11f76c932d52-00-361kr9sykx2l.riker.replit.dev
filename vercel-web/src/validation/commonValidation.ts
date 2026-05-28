@@ -27,7 +27,22 @@ export const optionalEmail = z
   )
   .transform((v) => (v ? String(v).toLowerCase() : ""));
 
-export const idSchema = z.string().trim().min(1).max(64);
+/**
+ * Strict identifier shape. Restricted to URL-safe alphanumerics + `_` / `-`.
+ *
+ * Why so strict: every CRM identifier ultimately flows into a PostgREST
+ * `.or(\`col.eq.${id},...\`)` filter or path param. PostgREST treats `,`
+ * `(` `)` `:` `.` as syntax. An id allowed to contain those characters
+ * could inject extra `or` / `and` predicates and bypass filters at the DB
+ * layer (RLS still applies, but row-level filters do not). Every existing
+ * id in the live DB (patients, employees, billings, receipts, invoices,
+ * duties, payouts, inquiries, doctors, vendors, users — 299 rows audited
+ * 28 May 2026) already matches this regex.
+ */
+export const idSchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9_-]{1,64}$/, "Invalid id format");
 
 export const isoDate = z.string().trim().min(1).refine((v) => !Number.isNaN(Date.parse(v)), "Invalid date");
 
