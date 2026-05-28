@@ -55,10 +55,32 @@ export const GET = withoutAuth(async (req: NextRequest) => {
     return respond(failure("Cron token missing or invalid", ErrorCodes.forbidden));
   }
 
+  // P1-9: bind the cron actor to a real service-account JWT. The previous
+  // empty accessToken made resolveClient() silently fall back to the service-
+  // role client — an *implicit* bypass that was impossible to audit. We now
+  // explicitly load SUPABASE_SERVICE_ROLE_KEY (which is itself a signed JWT
+  // issued by Supabase Auth for the service_role); resolveClient() pipes that
+  // straight through to userClient(token), so PostgREST sees a real Bearer
+  // service-role JWT, log lines show `role=service_role`, and every RPC
+  // _hh_require_role() gate runs against an attributable principal instead
+  // of "no header at all". If the JWT is missing we fail-closed.
+  const serviceJwt =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    "";
+  if (!serviceJwt) {
+    return respond(
+      failure(
+        "SUPABASE_SERVICE_ROLE_KEY is not set — cron cannot mint a service-account JWT",
+        ErrorCodes.internal,
+        { ranAt }
+      )
+    );
+  }
   const actor = {
     email: "cron@hominal.system",
     role: "Admin",
-    accessToken: ""
+    accessToken: serviceJwt
   };
   const result = await dutyService.extendActive({ actor });
   if (!result.success) {
