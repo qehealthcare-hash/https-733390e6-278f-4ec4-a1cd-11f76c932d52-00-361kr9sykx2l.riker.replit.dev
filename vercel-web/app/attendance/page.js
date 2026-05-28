@@ -161,8 +161,10 @@ export default function AttendancePage() {
         if (debounce) clearTimeout(debounce);
         auth.supabase.removeChannel(channel);
       };
+      // P1-27: depend on the access_token, not the full session object;
+      // see app/duties/page.js for the full story.
     },
-    [auth.session, auth.supabase, loadBoard]
+    [auth.session?.access_token, auth.supabase, loadBoard]
   );
 
   async function quickMarkBoard(row, status) {

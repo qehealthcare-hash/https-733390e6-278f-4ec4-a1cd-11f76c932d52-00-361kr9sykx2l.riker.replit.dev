@@ -581,8 +581,12 @@ export default function DutiesPage() {
         if (debounce) clearTimeout(debounce);
         auth.supabase.removeChannel(channel);
       };
+      // P1-27: see deps array below — depend on the access_token, not the
+      // full session object. Supabase rebuilds the session record on every
+      // token refresh (~1h) which would tear down & re-subscribe the channel
+      // for ~300 ms and double-count realtime quota.
     },
-    [auth.session, auth.supabase, loadOutstanding, loadTotals]
+    [auth.session?.access_token, auth.supabase, loadOutstanding, loadTotals]
   );
 
   useEffect(
