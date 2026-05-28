@@ -141,10 +141,32 @@ export function AuthProvider({ children }) {
     profileLoading,
     profileError,
     syncLabel,
-    async signIn(email, password) {
-      const result = await supabase.auth.signInWithPassword({ email, password });
-      if (result.error) throw result.error;
-      return result.data;
+    async signIn(identifier, password) {
+      // P1-38: route the password sign-in through the rate-limited
+      // /api/v1/auth/login proxy. The browser no longer hits GoTrue
+      // directly, so brute-force attempts are bounded by the persistent
+      // Upstash limiter (5 attempts / 60 s / IP) regardless of which
+      // Vercel region the request lands on.
+      const res = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier, password })
+      });
+      const json = await res.json().catch(function () { return {}; });
+      if (!res.ok || json?.success === false) {
+        const err = new Error(json?.error || "Invalid username or password");
+        err.status = res.status;
+        throw err;
+      }
+      const tokens = json?.data || json;
+      // Hand the freshly minted tokens to supabase-js so onAuthStateChange
+      // fires for the rest of the app exactly as it did before.
+      const setResult = await supabase.auth.setSession({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token
+      });
+      if (setResult.error) throw setResult.error;
+      return { session: setResult.data.session, user: setResult.data.user };
     },
     async signOut() {
       try {
