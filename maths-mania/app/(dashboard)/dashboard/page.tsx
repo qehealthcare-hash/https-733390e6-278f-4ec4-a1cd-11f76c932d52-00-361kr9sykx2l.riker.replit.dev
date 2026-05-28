@@ -156,6 +156,7 @@ export default async function DashboardPage() {
                     fill
                     className="object-cover"
                     sizes="(max-width: 640px) 100vw, 240px"
+                    loading="lazy"
                   />
                   <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-white">
                     {video.duration}

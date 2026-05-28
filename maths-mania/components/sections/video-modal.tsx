@@ -38,6 +38,7 @@ export function VideoModal({ video, open, onOpenChange }: VideoModalProps) {
                 title={video.title}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
+                loading="lazy"
                 className="absolute inset-0 size-full border-0"
               />
             )}

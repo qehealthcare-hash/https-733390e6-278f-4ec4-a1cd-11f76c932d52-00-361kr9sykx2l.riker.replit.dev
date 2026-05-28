@@ -10,7 +10,7 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 17 of 22 — SEO, performance & accessibility.** ✅ Complete (m1–m17)
+**Milestone 18 of 22 — Performance pass.** ✅ Complete (m1–m18)
 
 **Milestone 10 — Supabase Auth.** ✅
 
@@ -46,6 +46,14 @@ Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** 
 - Structured data on home (FAQ), marketing layout (Organization + WebSite), exams, courses, blog
 - `@vercel/analytics` + `@vercel/speed-insights`, `app/manifest.ts`, YouTube `preconnect`
 - `noindex` on dashboard, admin, and auth; skip links on dashboard/admin
+
+**Milestone 18 — performance pass.** ✅
+
+- `LazyYouTubeEmbed` — defers playlist iframes until near viewport (course pages)
+- Lighter `mqdefault` thumbnails for video grids; AVIF/WebP via `next/image`
+- Dynamic import of home video grid + `/videos` library (smaller initial JS)
+- `Cache-Control: no-store` on exam attempt/lobby/result and exam APIs
+- `npm run perf:lighthouse` — optional Lighthouse script (`lighthouse` + `chrome-launcher` devDeps)
 
 **Milestone 11 — exam admin.** ✅
 

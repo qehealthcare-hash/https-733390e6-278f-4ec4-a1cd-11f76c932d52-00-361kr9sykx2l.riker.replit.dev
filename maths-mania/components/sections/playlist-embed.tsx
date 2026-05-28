@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LazyYouTubeEmbed } from "@/components/media/lazy-youtube-embed";
 import { SITE } from "@/lib/site";
 import { getPlaylistId } from "@/lib/courses";
 import type { CourseDetail } from "@/lib/courses";
@@ -18,13 +19,10 @@ export function PlaylistEmbed({ playlistEnvKey, title }: PlaylistEmbedProps) {
   if (playlistId) {
     return (
       <div className="overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-black shadow-[var(--shadow-card)]">
-        <iframe
+        <LazyYouTubeEmbed
           src={`https://www.youtube-nocookie.com/embed/videoseries?list=${playlistId}`}
           title={title}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-          className="aspect-video w-full border-0"
-          loading="lazy"
+          strategy="viewport"
         />
       </div>
     );

@@ -32,6 +32,7 @@ export function VideoCard({ video, onPlay, className }: VideoCardProps) {
           fill
           className="object-cover"
           sizes="(max-width: 768px) 100vw, 33vw"
+          loading="lazy"
           unoptimized={isPlaceholder}
         />
         <span className="absolute bottom-2 right-2 rounded bg-black/75 px-1.5 py-0.5 font-mono text-xs text-white">

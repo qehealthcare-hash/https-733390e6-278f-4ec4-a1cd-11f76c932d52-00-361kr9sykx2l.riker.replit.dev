@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:types": "supabase gen types typescript --local > lib/database.types.ts"
+    "db:types": "supabase gen types typescript --local > lib/database.types.ts",
+    "perf:lighthouse": "node scripts/lighthouse.mjs"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.12",

@@ -4,10 +4,18 @@ import { Section } from "@/components/ui/section";
 import { Eyebrow } from "@/components/ui/eyebrow";
 import { Heading } from "@/components/ui/heading";
 import { Button } from "@/components/ui/button";
-import { VideoGridClient } from "@/components/sections/video-grid-client";
+import dynamic from "next/dynamic";
 import { VideoGridSkeleton } from "@/components/sections/video-grid-skeleton";
 import { getLatestVideos, hasYoutubeApiKey } from "@/lib/youtube";
 import { Suspense } from "react";
+
+const VideoGridClient = dynamic(
+  () =>
+    import("@/components/sections/video-grid-client").then((m) => ({
+      default: m.VideoGridClient,
+    })),
+  { loading: () => <VideoGridSkeleton count={6} className="mt-10" /> },
+);
 
 async function VideoGridContent() {
   const { videos, source } = await getLatestVideos(6);

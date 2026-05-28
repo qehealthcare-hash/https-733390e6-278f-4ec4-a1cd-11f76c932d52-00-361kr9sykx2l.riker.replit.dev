@@ -4,9 +4,17 @@ import { Container } from "@/components/ui/container";
 import { Section } from "@/components/ui/section";
 import { Eyebrow } from "@/components/ui/eyebrow";
 import { Heading } from "@/components/ui/heading";
-import { VideosLibrary } from "@/components/sections/videos-library";
+import dynamic from "next/dynamic";
 import { VideoGridSkeleton } from "@/components/sections/video-grid-skeleton";
 import { getChannelVideos } from "@/lib/youtube";
+
+const VideosLibrary = dynamic(
+  () =>
+    import("@/components/sections/videos-library").then((m) => ({
+      default: m.VideosLibrary,
+    })),
+  { loading: () => <VideoGridSkeleton count={12} /> },
+);
 
 export const revalidate = 3600;
 

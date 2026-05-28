@@ -1,4 +1,5 @@
 import { PLACEHOLDER_VIDEOS } from "@/lib/home-data";
+import { pickVideoThumbnail } from "@/lib/youtube-thumbnail";
 
 const YOUTUBE_API = "https://www.googleapis.com/youtube/v3";
 const REVALIDATE_SEC = 3600;
@@ -164,11 +165,10 @@ async function enrichVideos(searchItems: YouTubeSearchItem[]): Promise<Video[]> 
       if (!snippet?.title) return null;
 
       const thumbs = snippet.thumbnails;
-      const thumbnail =
-        thumbs?.high?.url ??
-        thumbs?.medium?.url ??
-        thumbs?.default?.url ??
-        `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+      const thumbnail = pickVideoThumbnail(
+        id,
+        thumbs?.medium?.url ?? thumbs?.high?.url ?? thumbs?.default?.url,
+      );
 
       const rawViews = Number(detail?.statistics?.viewCount ?? 0);
 
