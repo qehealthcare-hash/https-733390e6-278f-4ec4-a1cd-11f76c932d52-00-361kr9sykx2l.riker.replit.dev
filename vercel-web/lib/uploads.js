@@ -65,7 +65,11 @@ export async function uploadDocument(options) {
       "/uploads/signed-url",
       {
         method: "POST",
-        body: { bucket: options.bucket, fileName: file.name }
+        // P1-35: include mime so the server can validate against its
+        // z.enum allow-list. The client already screens against
+        // ALLOWED_MIME above; the server re-checks because the client
+        // is not the source of truth.
+        body: { bucket: options.bucket, fileName: file.name, mime: mime }
       },
       options.session
     );

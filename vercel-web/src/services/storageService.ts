@@ -45,9 +45,35 @@ const READ_ROLES = new Set([
   "Nurse"
 ]);
 
+// P1-35: explicit MIME allow-list. Before this, callers could attach any
+// Content-Type to the signed upload — including text/html or
+// application/javascript — and then load the resulting object inline from
+// the same origin to launch stored XSS off the storage CDN. The enum
+// covers patient/employee documents (PDF, images), payout-proof
+// screenshots, and the small Word/Excel forms HR sometimes attaches.
+const ALLOWED_UPLOAD_MIMES = [
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/gif",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+] as const;
+
 const uploadSchema = z.object({
   bucket: z.string().trim().min(1),
-  fileName: z.string().trim().min(1).max(255)
+  fileName: z.string().trim().min(1).max(255),
+  mime: z.enum(ALLOWED_UPLOAD_MIMES, {
+    errorMap: () => ({
+      message: `mime must be one of: ${ALLOWED_UPLOAD_MIMES.join(", ")}`
+    })
+  })
 });
 
 const downloadSchema = z.object({
@@ -101,7 +127,7 @@ export const storageService = {
     }
     const parsed = uploadSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
-    const { bucket, fileName } = parsed.data;
+    const { bucket, fileName, mime } = parsed.data;
     if (hasBlockedUploadExtension(fileName)) {
       return failure("File type is not allowed for upload", ErrorCodes.badRequest);
     }
@@ -109,7 +135,7 @@ export const storageService = {
       return failure(`Bucket '${bucket}' is not allowed for uploads`, ErrorCodes.badRequest);
     }
     const path = buildObjectPath(fileName);
-    return storageRepository.createSignedUpload(bucket, path);
+    return storageRepository.createSignedUploadUrl({ bucket, path, mime });
   },
 
   async createSignedDownload(
