@@ -22,6 +22,7 @@ import { env, hasOpenAI } from "@/lib/api/env";
 import { newId } from "@/business/idRules";
 import { aiRepository } from "@/database/aiRepository";
 import { writeMutationAudit } from "@/services/mutationAudit";
+import { crmTodayIso } from "@/utils/crmToday";
 import {
   askSchema,
   type AskInput
@@ -55,7 +56,7 @@ async function buildContext(
     role === "admin" || role === "manager" || role === "accountant";
 
   if (scope === "patient" || scope === "all") {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = crmTodayIso();
     const recent = await aiRepository.recentPatients();
     if (!recent.success) return passFailure(recent);
     chunks.push({ source: "patients.recent", data: recent.data });

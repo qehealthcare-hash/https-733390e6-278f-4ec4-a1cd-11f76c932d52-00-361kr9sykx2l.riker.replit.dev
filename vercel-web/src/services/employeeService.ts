@@ -43,6 +43,7 @@ import {
 import { assertNotStale } from "@/business/concurrencyRules";
 import { phoneDigitsKey, phoneSuffix } from "@/business/phoneRules";
 import { newId } from "@/business/idRules";
+import { crmTodayIso } from "@/utils/crmToday";
 import { employeeRepository } from "@/database/employeeRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
@@ -511,7 +512,7 @@ export const employeeService = {
       area: input.area || "",
       leave_date:
         (input.status || "Active") === "Inactive"
-          ? input.leave_date || new Date().toISOString().slice(0, 10)
+          ? input.leave_date || crmTodayIso()
           : input.leave_date || "",
       name_key: employeeNameKey({ fn: input.fn, mn: input.mn, ln: input.ln }),
       phone_digits: phoneDigitsKey(phone),

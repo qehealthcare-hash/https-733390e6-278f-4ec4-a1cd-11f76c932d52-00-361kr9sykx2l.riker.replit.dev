@@ -33,6 +33,7 @@ import {
   type UserPatchInput
 } from "@/validation/userValidation";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
+import { crmTodayIso } from "@/utils/crmToday";
 
 const USER_FIELDS = ["username", "email", "phone", "role", "is_active"] as const;
 
@@ -113,7 +114,7 @@ export const userService = {
     const row = {
       id: nextSequenceId((seq.data as { id: string }[]) || [], "USR"),
       ...payload,
-      created: new Date().toISOString().slice(0, 10)
+      created: crmTodayIso()
     };
 
     const inserted = await userRepository.insert(row);

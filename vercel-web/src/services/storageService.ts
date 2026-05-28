@@ -22,6 +22,7 @@ import {
   type SignedUploadUrl
 } from "@/database/storageRepository";
 import { hasBlockedUploadExtension } from "@/lib/api/security";
+import { crmTodayIso } from "@/utils/crmToday";
 
 const ALLOWED_BUCKETS = new Set([
   "patient-documents",
@@ -71,7 +72,7 @@ function sanitizeFileName(raw: string): string {
 }
 
 function buildObjectPath(fileName: string): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = crmTodayIso();
   const uniq = (typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2) + Date.now().toString(36)
