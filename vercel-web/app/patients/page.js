@@ -15,6 +15,7 @@ import {
   shiftOptions
 } from "@/lib/crm-options";
 import { formatDate, slugToText } from "@/lib/formatters";
+import { crmTodayIso } from "@/src/utils/crmToday";
 import { downloadCsv } from "@/lib/csv";
 import { openPrintWindow } from "@/lib/print";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
@@ -708,14 +709,26 @@ export default function PatientsPage() {
                 </div>
                 <div className="field">
                   <label>Mobile</label>
-                  <input value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
+                  <input type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
                 </div>
                 <div className="field">
                   <label>Date of birth</label>
                   <input
                     type="date"
+                    max={crmTodayIso()}
                     value={form.dob}
                     onChange={function (event) { updateField("dob", event.target.value); }}
+                  />
+                </div>
+                <div className="field">
+                  <label>Aadhar</label>
+                  <input
+                    value={form.aadhar || ""}
+                    onChange={function (event) { updateField("aadhar", event.target.value); }}
+                    pattern="\d{12}"
+                    maxLength={12}
+                    inputMode="numeric"
+                    placeholder="123456789012"
                   />
                 </div>
                 <div className="field">
@@ -832,7 +845,7 @@ export default function PatientsPage() {
                       </div>
                       <div className="field">
                         <label>Relative {index + 1} phone {index === 0 ? "*" : ""}</label>
-                        <input value={contact.phone} onChange={function (event) { updateContact(index, "phone", event.target.value); }} required={index === 0} />
+                        <input type="tel" inputMode="tel" value={contact.phone} onChange={function (event) { updateContact(index, "phone", event.target.value); }} required={index === 0} />
                       </div>
                     </div>
                   );

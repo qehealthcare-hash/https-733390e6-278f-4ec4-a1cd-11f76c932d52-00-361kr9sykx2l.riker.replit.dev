@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { crmTodayIso } from "@/src/utils/crmToday";
 
 function emptyForm() {
   return {
@@ -212,7 +213,16 @@ export default function DoctorsPage() {
                 </div>
                 <div className="field">
                   <label>Phone</label>
-                  <input value={form.phone} onChange={function (event) { updateField("phone", event.target.value); }} required />
+                  <input type="tel" inputMode="tel" value={form.phone} onChange={function (event) { updateField("phone", event.target.value); }} required />
+                </div>
+                <div className="field">
+                  <label>Date of birth</label>
+                  <input
+                    type="date"
+                    max={crmTodayIso()}
+                    value={form.dob || ""}
+                    onChange={function (event) { updateField("dob", event.target.value); }}
+                  />
                 </div>
                 <div className="field">
                   <label>Email</label>

@@ -18,6 +18,7 @@ import {
   shiftOptions
 } from "@/lib/crm-options";
 import { formatCurrency, formatDate, slugToText } from "@/lib/formatters";
+import { crmTodayIso } from "@/src/utils/crmToday";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
 import { CameraCaptureModal } from "@/components/ui/camera-capture-lazy";
 import { DocumentCard, DocumentList } from "@/components/ui/document-card";
@@ -933,15 +934,15 @@ export default function EmployeesPage() {
               <div className="grid-3">
                 <div className="field">
                   <label>Mobile</label>
-                  <input value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
+                  <input type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
                 </div>
                 <div className="field">
                   <label>Alternate phone</label>
-                  <input value={form.phone2} onChange={function (event) { updateField("phone2", event.target.value); }} />
+                  <input type="tel" inputMode="tel" value={form.phone2} onChange={function (event) { updateField("phone2", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label>Date of birth</label>
-                  <input type="date" value={form.dob} onChange={function (event) { updateField("dob", event.target.value); }} />
+                  <input type="date" max={crmTodayIso()} value={form.dob} onChange={function (event) { updateField("dob", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label>Gender</label>
@@ -957,11 +958,24 @@ export default function EmployeesPage() {
               <div className="grid-2">
                 <div className="field">
                   <label>Aadhar</label>
-                  <input value={form.aadhar} onChange={function (event) { updateField("aadhar", event.target.value); }} placeholder="1234 5678 9012" />
+                  <input
+                    value={form.aadhar}
+                    onChange={function (event) { updateField("aadhar", event.target.value); }}
+                    pattern="\d{12}"
+                    maxLength={12}
+                    inputMode="numeric"
+                    placeholder="123456789012"
+                  />
                 </div>
                 <div className="field">
                   <label>PAN</label>
-                  <input value={form.pan} onChange={function (event) { updateField("pan", event.target.value.toUpperCase()); }} placeholder="ABCDE1234F" />
+                  <input
+                    value={form.pan}
+                    onChange={function (event) { updateField("pan", event.target.value.toUpperCase()); }}
+                    pattern="[A-Z]{5}\d{4}[A-Z]"
+                    maxLength={10}
+                    placeholder="ABCDE1234F"
+                  />
                 </div>
               </div>
 

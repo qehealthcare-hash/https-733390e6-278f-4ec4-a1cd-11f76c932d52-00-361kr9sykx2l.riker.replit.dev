@@ -454,7 +454,7 @@ export default function InquiriesPage() {
                 </div>
                 <div className="field">
                   <label>Mobile</label>
-                  <input value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
+                  <input type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
                 </div>
                 <div className="field">
                   <label>Area</label>

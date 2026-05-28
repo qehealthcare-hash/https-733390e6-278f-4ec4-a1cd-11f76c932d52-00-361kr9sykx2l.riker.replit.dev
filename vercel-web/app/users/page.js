@@ -276,6 +276,8 @@ export default function UsersPage() {
                   <div className="field">
                     <label>Phone</label>
                     <input
+                      type="tel"
+                      inputMode="tel"
                       value={userForm.phone}
                       onChange={function (event) { updateUserField("phone", event.target.value); }}
                     />
