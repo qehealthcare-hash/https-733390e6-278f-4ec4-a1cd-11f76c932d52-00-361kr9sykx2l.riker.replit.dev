@@ -44,7 +44,27 @@ export const idSchema = z
   .trim()
   .regex(/^[A-Za-z0-9_-]{1,64}$/, "Invalid id format");
 
-export const isoDate = z.string().trim().min(1).refine((v) => !Number.isNaN(Date.parse(v)), "Invalid date");
+// P1-26: previous isoDate was `refine(Date.parse)` — that accepts almost
+// anything: "12 jan", "2026/01/02", trailing junk after a valid prefix.
+// Some downstream queries were doing string compares (`<= today_str`) on
+// these values and silently returning the wrong window. Lock it down to a
+// strict YYYY-MM-DD shape with a sanity-check on the calendar parts, and
+// re-verify the trip through Date so leap-day garbage like 2026-02-31
+// can't land in the DB.
+export const isoDate = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "isoDate must be YYYY-MM-DD")
+  .refine((v) => {
+    const [y, m, d] = v.split("-").map((n) => Number.parseInt(n, 10));
+    if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return (
+      dt.getUTCFullYear() === y &&
+      dt.getUTCMonth() === m - 1 &&
+      dt.getUTCDate() === d
+    );
+  }, "Invalid calendar date");
 
 /**
  * Map of three-letter English month abbreviations → 1-12. Used by the legacy
