@@ -6,7 +6,10 @@ One row per finding. The pass/fail check is the single observable that closes th
 Score = `(checks passing / total checks)`. Computed by the test suite, never by LLM judgment.
 Do not edit IDs, severity, or location — only the test that validates the check may evolve.
 
-Total rows: 45 (7 P0 + 38 P1).
+Total rows: 73 (9 P0 + 53 P1 + 10 P2 + 1 P3).
+
+Rows P0-1 — P1-38 are the original audit (`HOMINAL_CRM_ENTERPRISE_QA_AUDIT_2026-05-28.md`).
+Rows P0-8 onward and P1-39 onward come from the 2026-05-28 follow-up deep audit (security / integrity / a11y sweep). Once a row is added, it never moves — scoring counts every row in the table.
 
 | ID | Sev | Location | Pass check |
 |---|---|---|---|
@@ -55,14 +58,43 @@ Total rows: 45 (7 P0 + 38 P1).
 | P1-36 | P1 | `vercel-web/src/services/storageService.ts:60-67,127` | `createSignedUpload` validates the requested object path via `isSafeObjectPath` AND enforces a per-resource prefix policy (e.g. `Patients/<patient_id>/`). |
 | P1-37 | P1 | `vercel-web/lib/api/auth.ts:38-43` | Email lookup uses `.eq("email", email.toLowerCase())` — no `.ilike` against the email column remains. |
 | P1-38 | P1 | `vercel-web/components/providers/auth-provider.js:115` | Login flows through a server-side `/api/v1/auth/login` proxy that applies `enforceRateLimit(req, "login", 5, 60_000)` (browser no longer calls `supabase.auth.signInWithPassword` directly). |
+| P0-8 | P0 | `vercel-web/supabase/migrations/20260528104000_p1_integrity.sql:180` (RPC `hh_recompute_payout`) | Payout id is NOT minted with `random()` / `floor(random()*N)` (collision-prone, only 100k slots/day) — uses `gen_random_uuid()`, `gen_random_bytes()`, or a `bigserial` sequence. |
+| P0-9 | P0 | `vercel-web/supabase/migrations/20260526140000_security_hardening.sql:10-18` + `vercel-web/lib/api/idempotency.ts:120-150` + `vercel-web/src/database/idempotencyRepository.ts` | `hh_idempotency` has an `updated_at` column AND `tryReservePending` either takes over a PENDING row older than 30 s or applies a TTL — no permanent PENDING tombstones can brick a key. |
+| P1-39 | P1 | `vercel-web/next.config.mjs:36` | CSP `script-src` directive does NOT contain `'unsafe-inline'` (nonce-based or hash-based inline policy is acceptable). |
+| P1-40 | P1 | `vercel-web/next.config.mjs:23-46` (`/:path*` header block) | Production response carries `Strict-Transport-Security` with `max-age >= 31536000` and `includeSubDomains`. |
+| P1-41 | P1 | `vercel-web/src/services/aiService.ts:195-202` + AI repository | AI context payload that leaves the perimeter is filtered through a PHI-scrubbing helper (no raw `phone`, `addr`, `aadhar`, `pan`, `dob`, `relphone*`, `disease_condition`) — OR the call routes to a configurable `OPENAI_BASE_URL` for a private-DPA endpoint. |
+| P1-42 | P1 | `vercel-web/app/api/v1/auth/login/route.ts:121-129` + `vercel-web/components/providers/auth-provider.js:164-168` | Refresh token is delivered to the client via `Set-Cookie: …; HttpOnly; Secure; SameSite=Strict` (never returned in the JSON body), AND `auth-provider.js` does not pass a non-empty `refresh_token` to `supabase.auth.setSession`. |
+| P1-43 | P1 | `vercel-web/src/services/storageService.ts:39-46` + `createSignedDownload` body | Signed-download enforces a per-bucket role allow-list (e.g. `payout-proofs` restricted to `Admin/Manager/Accountant`, not the broad `READ_ROLES` set). |
+| P1-44 | P1 | `vercel-web/app/api/v1/cron/duties-extend/route.ts` (or the underlying `dutyService.extendActive`) | Cron extension acquires a `pg_advisory_lock` keyed on `cron:duties-extend` (or wraps the whole iteration in `withIdempotency` ttl >= 1 h) — overlapping runs cannot duplicate `hh_svc_entries` / `hh_payout_charges` rows. |
+| P1-45 | P1 | `vercel-web/supabase/migrations/20260526150000_hh_duty_days_ledger.sql:32` (FK `hh_duty_days.svc_entry_id`) | FK is `ON DELETE RESTRICT` (or `ON DELETE SET NULL` with a soft-delete column) — never `CASCADE`, which would purge the paid-ledger trail. |
+| P1-46 | P1 | `vercel-web/lib/api/ids.ts:19-35` and `vercel-web/src/business/idRules.ts` | Human-readable ID generators use `crypto.randomUUID()` (or a `pg` sequence) instead of `Math.random()` — collision-free under burst writes. Receipt / payout / billing IDs never collide within a calendar day. |
+| P1-47 | P1 | `vercel-web/app/doctors/page.js`, `vercel-web/app/vendors/page.js`, `vercel-web/app/users/page.js` | Each list page either migrates to `usePaginatedResource` OR renders a `Showing first N of M — refine filters` banner when the returned row count equals the hardcoded limit (extends P1-28 coverage). |
+| P1-48 | P1 | `vercel-web/app/billings/page.js`, `vercel-web/app/payouts/payouts-inner.js`, `vercel-web/app/duties/page.js`, `vercel-web/app/inquiries/page.js`, `vercel-web/app/attendance/page.js`, `vercel-web/app/employees/page.js`, `vercel-web/app/patients/page.js` | Zero occurrences of `new Date().toISOString().slice(0,10)` remain anywhere under `vercel-web/app/` — all default-today initialisers go through `crmTodayIso()` (extends P1-21 coverage from `src/` to `app/`). |
+| P1-49 | P1 | `vercel-web/lib/company-logo.js` + `vercel-web/lib/config.js:1,7` | `lib/config.js` does NOT statically `import` `lib/company-logo.js` — the 1.4 MB base64 logo is loaded lazily, served from `/public/`, or behind an Image Optimization endpoint (kept out of the shared client chunk). |
+| P1-50 | P1 | `vercel-web/app/duties/page.js`, `vercel-web/app/employees/page.js`, `vercel-web/app/inquiries/page.js`, `vercel-web/app/payouts/payouts-inner.js`, `vercel-web/app/patients/page.js` | Every `.modal-card` rendered in `app/**/page.js` either is wrapped by the shared `<ConfirmDialog>` OR carries `role="dialog" aria-modal="true"` itself — no naked modal-backdrop without dialog semantics. |
+| P1-51 | P1 | Every `Loading…` / `Refreshing…` / `Working…` indicator in `vercel-web/app/**/page.js` | Each loading region either declares `role="status"`/`aria-live="polite"`, or is wrapped in a `<section aria-busy="true">`, OR uses the shared `<LoadingState>` component — bare `<div>Loading…</div>` does not remain in the critical paths. |
+| P1-52 | P1 | `vercel-web/lib/csv.js:20-43` | Exported CSV is prepended with `\uFEFF` (BOM) AND every cell value beginning with `=`, `+`, `-`, `@`, `\t`, or `\r` is escaped with a leading single quote (CWE-1236 formula-injection guard). |
+| P1-53 | P1 | `vercel-web/app/payouts/payouts-inner.js`, `vercel-web/app/patients/page.js`, `vercel-web/app/employees/page.js` (HTML strings emitting proof / document anchors) | Every `target="_blank"` anchor that points at a signed-download URL also carries `rel="noopener noreferrer"` — no `opener` handle, no `Referer` leak of the signed URL. |
+| P2-1 | P2 | `vercel-web/app/api/v1/auth/login/route.ts:117-119` | Login route never reflects GoTrue's `error_description`/`msg` to the client — always returns the constant string `Invalid username or password` regardless of upstream reason (closes the username-enumeration side channel). |
+| P2-2 | P2 | `vercel-web/app/api/v1/ai/ask/route.ts:17` | Route uses `enforceRateLimitPersistent` (KV/Upstash) AND a second per-actor bucket keyed on `actor.email` — the in-memory limiter alone (`enforceRateLimit`) does not survive multi-region cold starts. |
+| P2-3 | P2 | `vercel-web/app/api/v1/roles/route.ts:11-14` | GET handler calls `requireRole(actor, [...USER_ADMIN_ROLES])` (or the same set as `/api/v1/users`) — Nurse / Staff cannot enumerate the role-and-permissions matrix. |
+| P2-4 | P2 | `vercel-web/lib/api/env.ts:14,23` | No hardcoded production Supabase URL fallback — `required("SUPABASE_URL", …)` throws when the env var is unset (matches the fail-closed posture of P0-4). |
+| P2-5 | P2 | `vercel-web/app/api/v1/payouts/set-rate/route.ts:43` | Route uses the shared `parseJsonBody(req)` helper (or lets `req.json()` errors propagate as 400) — no `.catch(() => ({}))` pattern remains (extends P1-33 coverage). |
+| P2-6 | P2 | `vercel-web/src/services/doctorService.ts`, `vendorService.ts`, `userService.ts` | `update` / `updateUser` enforces optimistic-locking via `expected_updated_at` (or equivalent stale-token guard) — matches the pattern already used by patient/employee/inquiry services. |
+| P2-7 | P2 | `vercel-web/supabase/migrations/*` (`hh_duties.status`, `hh_inquiries.status`, `hh_attendance.status`, `hh_patients.status`) | Each status column is `NOT NULL` AND has a CHECK constraint restricting values to its enum set — extends P1-13 coverage from billings/payouts to the rest of the schema. |
+| P2-8 | P2 | `vercel-web/app/employees/page.js` (leave_date), `vercel-web/app/inquiries/page.js` (followup_date), `vercel-web/app/billings/page.js` (receipt.date, manual svc line.date), `vercel-web/app/patients/page.js` (start_date) | Each cited `<input type="date">` carries the business-rule `min` (or `max`) prop — `leave_date >= join_date`, `followup_date >= today`, `receipt.date <= today`. |
+| P2-9 | P2 | `vercel-web/app/employees/page.js:1307-1330` + every other form page surfacing `fieldErrors` | Form inputs with server-side validation errors carry `aria-invalid="true"` AND `aria-describedby` pointing at an inline error node — no bullet-list-of-errors disconnected from the input. |
+| P2-10 | P2 | `vercel-web/components/ui/document-card.js:123-132` | `Remove` button routes through `useConfirm` before invoking `props.onRemove(doc)` — a mis-tap cannot silently drop an attached document from a patient/employee form. |
+| P3-1 | P3 | `vercel-web/app/api/v1/health/route.ts`, `vercel-web/src/services/healthService.ts:30-49` | Anonymous `/api/v1/health` response is the minimal `{status: 'ok'|'unavailable'}` shape in every environment (no `deps.openai/whatsapp/monitoring`, no raw `probe.error`) — verbose diagnostics live behind an authenticated `/admin/diagnostics` endpoint gated by `USER_ADMIN_ROLES`. |
 
 ---
 
 ## Scoring rules (frozen)
 
 1. Each row above is one check. A check is `passing` only when its regression test (which must fail before the fix and pass after) is green.
-2. P2/P3 findings are tracked in the audit but are NOT part of this rubric — they do not affect the score.
-3. Score = `passing_checks / 45` × 100, computed by the test suite. No re-scoring by LLM judgment.
+2. P0 and P1 findings MUST have a regression test in `tests/audit_checks/`. P2/P3 findings appear in the rubric for tracking but do not have to ship a test (CI does not gate on them).
+3. Score = `passing_checks / total_rows` × 100, computed by the test suite. The rubric only ever grows; rows are never removed or renumbered.
 4. To close a finding: one commit, finding ID in the message (e.g. `P1-7:`), one regression test demonstrating fail→pass.
 5. DB migrations preserve existing function bodies — never `CREATE OR REPLACE` blind. Apply on a Supabase branch first.
 6. Client-side dependencies (e.g. P0-3, P1-38) ship in the same commit as the server change.
+7. When a deep audit surfaces a NEW finding absent from this rubric, append a row (assign the next P0/P1/P2/P3 number in its band), and — for P0/P1 — add a regression test in the same commit.
