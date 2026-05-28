@@ -122,6 +122,11 @@ function PayoutsPageContent() {
   // proof uploader into view so the operator never has to hunt for it.
   var payFormRef = useRef(null);
   var advanceFormRef = useRef(null);
+  // P1-2: openPayout request-token guard. Each click bumps the seq and the
+  // in-flight request remembers its token; if a newer click landed by the
+  // time the network resolves, every setDetail / setPayForm / setAdvanceForm
+  // / setAdjustForm bails out so the user sees only the latest record.
+  var openPayoutSeq = useRef(0);
 
   async function reloadList() {
     if (!auth.session?.access_token) return;
@@ -242,41 +247,48 @@ function PayoutsPageContent() {
       setAuditTrail([]);
       return;
     }
+    // P1-2: capture the request token BEFORE any await so a rapid second
+    // click (or realtime-triggered re-open) cannot let the slower response
+    // overwrite the latest row's detail/forms.
+    openPayoutSeq.current += 1;
+    var reqId = openPayoutSeq.current;
     setDetailLoading(true);
     setError("");
     try {
       var data = await request("/payouts/" + id, null, auth.session);
+      if (reqId !== openPayoutSeq.current) return;
       setDetail(data);
+      if (reqId !== openPayoutSeq.current) return;
       setSelectedId(id);
-      // Audit trail is informational; never block the detail render on it.
       loadAuditTrail(id);
       var row = data?.payout || {};
+      if (reqId !== openPayoutSeq.current) return;
       setAdjustForm({
         advance: Number(row.advance || 0),
         deduction: Number(row.deduction || 0),
         bonus: Number(row.bonus || 0),
         remarks: row.remarks || ""
       });
+      if (reqId !== openPayoutSeq.current) return;
       setPayForm(emptyPayForm());
+      if (reqId !== openPayoutSeq.current) return;
       setAdvanceForm(emptyAdvanceForm());
-      // Auto-expand the "Pay advance" form for OPEN payouts that have
-      // outstanding balance and zero disbursements so the proof uploader
-      // is immediately visible — the previous flow required an extra
-      // toggle click that operators routinely missed.
       var disbursementCount = Array.isArray(data?.paid_transactions)
         ? data.paid_transactions.length
         : 0;
       var openOutstanding = Number(data?.outstanding || row.net_amount || 0);
+      if (reqId !== openPayoutSeq.current) return;
       setAdvanceOpen(
         String(row.status || "OPEN") === "OPEN" &&
           disbursementCount === 0 &&
           openOutstanding > 0
       );
     } catch (err) {
+      if (reqId !== openPayoutSeq.current) return;
       setError(err.message || "Could not load payout detail");
       setDetail(null);
     } finally {
-      setDetailLoading(false);
+      if (reqId === openPayoutSeq.current) setDetailLoading(false);
     }
   }
 
