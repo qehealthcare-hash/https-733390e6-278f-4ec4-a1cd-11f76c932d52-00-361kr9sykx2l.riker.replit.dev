@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
-import { Award, ClipboardList, Play, Trophy } from "lucide-react";
+import { Award, ClipboardList, ClipboardX, Play, Trophy } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Heading } from "@/components/ui/heading";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/dashboard/stat-card";
@@ -98,16 +99,13 @@ export default async function DashboardPage() {
             </Button>
           </div>
         ) : (
-          <p className="mt-4 text-sm text-[var(--color-text-muted)]">
-            No registrations yet.{" "}
-            <Link
-              href="/exams"
-              className="font-semibold text-[var(--color-primary-600)]"
-            >
-              Browse exams
-            </Link>
-            .
-          </p>
+          <EmptyState
+            className="mt-4"
+            icon={ClipboardX}
+            title="No upcoming exams"
+            description="Register for the next All-India mock to see it here with lobby and attempt links."
+            action={{ label: "Browse live exams", href: "/exams" }}
+          />
         )}
       </section>
 

@@ -56,7 +56,10 @@ export default async function ExamAttemptPage({ params }: Props) {
       redirect(`/exams/${slug}/result`);
     }
     if (result.reason === "EXAM_NOT_STARTED") {
-      redirect(`/exams/${slug}/lobby`);
+      redirect(`/exams/${slug}/not-started`);
+    }
+    if (result.reason === "EXAM_ENDED") {
+      redirect(`/exams/${slug}/closed`);
     }
     return (
       <Section padding="lg" tone="default">

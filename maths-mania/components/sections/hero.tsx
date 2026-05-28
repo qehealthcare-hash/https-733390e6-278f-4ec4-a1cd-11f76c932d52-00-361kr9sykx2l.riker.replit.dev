@@ -11,12 +11,13 @@ import { HeroExamOverlay } from "@/components/sections/hero-exam-overlay";
 import { SITE } from "@/lib/site";
 import { NEXT_LIVE_EXAM, TRUST_CHIPS } from "@/lib/home-data";
 import { formatIndianNumber } from "@/lib/utils";
+import { FadeIn } from "@/components/ui/fade-in";
 
 export function HeroSection() {
   return (
     <Section padding="lg" tone="notebook" className="overflow-hidden">
       <Container className="grid gap-12 lg:grid-cols-12 lg:items-center">
-        <div className="lg:col-span-6">
+        <FadeIn className="lg:col-span-6">
           <Eyebrow tone="primary">
             <GraduationCap className="size-3.5" aria-hidden />
             Trusted by school + competitive aspirants
@@ -81,9 +82,9 @@ export function HeroSection() {
               </li>
             ))}
           </ul>
-        </div>
+        </FadeIn>
 
-        <div className="relative lg:col-span-6">
+        <FadeIn className="relative lg:col-span-6" delay={0.08}>
           <div
             className="pointer-events-none absolute -right-8 top-1/2 size-72 -translate-y-1/2 rounded-full opacity-30 blur-3xl"
             style={{
@@ -101,7 +102,7 @@ export function HeroSection() {
               slug={NEXT_LIVE_EXAM.slug}
             />
           </div>
-        </div>
+        </FadeIn>
       </Container>
     </Section>
   );

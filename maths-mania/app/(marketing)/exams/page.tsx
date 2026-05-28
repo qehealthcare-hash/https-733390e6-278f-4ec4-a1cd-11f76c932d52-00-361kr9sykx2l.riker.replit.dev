@@ -5,6 +5,8 @@ import { Section } from "@/components/ui/section";
 import { Eyebrow } from "@/components/ui/eyebrow";
 import { Heading } from "@/components/ui/heading";
 import { ExamCard } from "@/components/exam/exam-card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { CalendarX, Trophy } from "lucide-react";
 import { listPublicExams } from "@/lib/exams/public";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { cn } from "@/lib/utils";
@@ -85,13 +87,30 @@ export default async function ExamsHubPage({ searchParams }: Props) {
           )}
 
           {exams.length === 0 ? (
-            <p className="mt-10 text-center text-[var(--color-text-muted)]">
-              {tab === "upcoming"
-                ? "No upcoming exams scheduled yet. Check back soon."
-                : tab === "merit"
-                  ? "No published merit lists yet."
-                  : "No past exams to show yet."}
-            </p>
+            <div className="mt-10">
+              <EmptyState
+                icon={tab === "merit" ? Trophy : CalendarX}
+                title={
+                  tab === "upcoming"
+                    ? "No upcoming exams yet"
+                    : tab === "merit"
+                      ? "No merit lists published"
+                      : "No past exams yet"
+                }
+                description={
+                  tab === "upcoming"
+                    ? "New All-India mocks are added regularly. Meanwhile, sharpen skills with a self-paced quiz."
+                    : tab === "merit"
+                      ? "Merit tables appear here after an exam closes and the organiser publishes ranks."
+                      : "Completed mocks will show up here once the first exam window closes."
+                }
+                action={
+                  tab === "upcoming"
+                    ? { label: "Try a practice quiz", href: "/quiz" }
+                    : undefined
+                }
+              />
+            </div>
           ) : (
             <ul className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {exams.map((exam) => (
@@ -102,11 +121,6 @@ export default async function ExamsHubPage({ searchParams }: Props) {
             </ul>
           )}
 
-          {tab === "upcoming" && (
-            <p className="mt-10 text-center text-sm text-[var(--color-text-faint)]">
-              Lobby, timed attempt, and anti-cheat ship in the next milestone.
-            </p>
-          )}
         </Container>
       </Section>
     </>

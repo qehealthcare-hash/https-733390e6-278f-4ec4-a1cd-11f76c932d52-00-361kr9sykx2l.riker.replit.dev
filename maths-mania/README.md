@@ -10,7 +10,7 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 20 of 22 — Load testing.** ✅ Complete (m1–m20)
+**Milestone 21 of 22 — Polish & error pages.** ✅ Complete (m1–m21)
 
 **Milestone 10 — Supabase Auth.** ✅
 
@@ -69,6 +69,13 @@ Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** 
 - `scripts/loadtest-prepare.mjs` — mint test users + `scripts/.loadtest.env`
 - Migration: `start_exam_attempt` race-safe on `(exam_id, user_id)`
 - See [docs/LOAD_TEST.md](docs/LOAD_TEST.md)
+
+**Milestone 21 — polish.** ✅
+
+- Custom **404** (maths joke), **500** (`error.tsx` + `global-error.tsx`)
+- `/exams/[slug]/not-started` and `/closed` — dedicated exam-window pages
+- `EmptyState` + subtle `FadeIn` motion (respects reduced-motion)
+- Dashboard and exam hub empty states
 
 **Milestone 11 — exam admin.** ✅
 

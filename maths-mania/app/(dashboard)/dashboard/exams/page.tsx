@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, ClipboardX, History } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Heading } from "@/components/ui/heading";
 import { Button } from "@/components/ui/button";
 import { requireAuth } from "@/lib/auth/session";
@@ -126,16 +127,13 @@ export default async function DashboardExamsPage() {
           Upcoming
         </Heading>
         {upcoming.length === 0 ? (
-          <p className="mt-4 text-sm text-[var(--color-text-muted)]">
-            No upcoming exams yet.{" "}
-            <Link
-              href="/exams"
-              className="font-semibold text-[var(--color-primary-600)]"
-            >
-              Register for the next mock
-            </Link>
-            .
-          </p>
+          <EmptyState
+            className="mt-4"
+            icon={ClipboardX}
+            title="No upcoming registrations"
+            description="Reserve a seat on the next All-India mock — we'll show lobby links here when it's time."
+            action={{ label: "Browse exams", href: "/exams" }}
+          />
         ) : (
           <ul className="mt-4 space-y-3">
             {upcoming.map(({ exam }) => {
@@ -193,9 +191,12 @@ export default async function DashboardExamsPage() {
           Past
         </Heading>
         {past.length === 0 ? (
-          <p className="mt-4 text-sm text-[var(--color-text-muted)]">
-            No past attempts yet.
-          </p>
+          <EmptyState
+            className="mt-4"
+            icon={History}
+            title="No past exams"
+            description="After you complete a live mock, your scorecard and merit links appear here."
+          />
         ) : (
           <ul className="mt-4 space-y-3">
             {past.map(({ exam }) => {
