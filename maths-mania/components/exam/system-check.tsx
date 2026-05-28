@@ -89,7 +89,12 @@ export function SystemCheck({ onReady, className }: SystemCheckProps) {
   }, [ready]);
 
   return (
-    <div className={cn("space-y-2", className)}>
+    <div
+      className={cn("space-y-2", className)}
+      role="status"
+      aria-live="polite"
+      aria-label="System check"
+    >
       {results.map((r) => (
         <div
           key={r.id}

@@ -32,7 +32,7 @@ export function QuestionPalette({
   className,
 }: QuestionPaletteProps) {
   return (
-    <div className={cn("space-y-3", className)}>
+    <nav className={cn("space-y-3", className)} aria-label="Question navigator">
       <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
         Questions
       </p>
@@ -76,6 +76,6 @@ export function QuestionPalette({
           Not seen
         </li>
       </ul>
-    </div>
+    </nav>
   );
 }

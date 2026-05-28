@@ -10,7 +10,7 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 18 of 22 — Performance pass.** ✅ Complete (m1–m18)
+**Milestone 19 of 22 — Accessibility pass.** ✅ Complete (m1–m19)
 
 **Milestone 10 — Supabase Auth.** ✅
 
@@ -54,6 +54,13 @@ Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** 
 - Dynamic import of home video grid + `/videos` library (smaller initial JS)
 - `Cache-Control: no-store` on exam attempt/lobby/result and exam APIs
 - `npm run perf:lighthouse` — optional Lighthouse script (`lighthouse` + `chrome-launcher` devDeps)
+
+**Milestone 19 — accessibility pass.** ✅
+
+- Exam UI keyboard shortcuts (1–4 / A–D, arrows, `[` `]`, R, C, Shift+digit jump)
+- Accessible submit dialog (Radix), radiogroup roving focus, live timer announcements
+- `npm run a11y:contrast` — token contrast audit · `npm run a11y:axe` — axe on key routes
+- Video card alt text, darker faint text token, auth skip link
 
 **Milestone 11 — exam admin.** ✅
 

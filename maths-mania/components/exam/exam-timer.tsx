@@ -77,11 +77,12 @@ export function ExamTimer({
         className,
       )}
       role="timer"
-      aria-live={danger ? "assertive" : "off"}
-      aria-label="Time remaining"
+      aria-live={danger ? "assertive" : warn ? "polite" : "off"}
+      aria-atomic="true"
+      aria-label={`Time remaining: ${fmt(remaining)}`}
     >
       <Timer className="size-4" aria-hidden />
-      {fmt(remaining)}
+      <span aria-hidden>{fmt(remaining)}</span>
     </div>
   );
 }

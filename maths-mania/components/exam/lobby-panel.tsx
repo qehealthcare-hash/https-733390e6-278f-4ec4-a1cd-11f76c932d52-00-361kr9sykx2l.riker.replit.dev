@@ -94,7 +94,16 @@ export function LobbyPanel({
         </p>
         <p
           className="mt-3 font-mono text-4xl font-bold tabular-nums tracking-tight text-[var(--color-text)] sm:text-5xl"
+          role="timer"
           aria-live="polite"
+          aria-atomic="true"
+          aria-label={
+            examEnded
+              ? "Exam ended"
+              : examStarted
+                ? `Time remaining: ${fmtDuration(msToEnd)}`
+                : `Starts in: ${fmtDuration(msToStart)}`
+          }
         >
           {examEnded
             ? "—"

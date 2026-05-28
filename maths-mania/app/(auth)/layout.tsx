@@ -16,6 +16,12 @@ export default function AuthLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <div className="flex min-h-svh flex-col bg-[var(--color-bg)]">
+      <a
+        href="#auth-main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:rounded-md focus:bg-[var(--color-primary-500)] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+      >
+        Skip to sign in form
+      </a>
       <header className="border-b border-[var(--color-border)] px-4 py-4 sm:px-6">
         <Link href="/" aria-label="Maths Mania — home">
           <Logo />

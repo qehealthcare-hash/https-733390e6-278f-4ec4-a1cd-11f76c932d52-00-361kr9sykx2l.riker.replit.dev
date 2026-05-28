@@ -6,7 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Flag,
-  Loader2,
   LogOut,
   Maximize,
 } from "lucide-react";
@@ -17,6 +16,9 @@ import {
   QuestionPalette,
   type PaletteState,
 } from "@/components/exam/question-palette";
+import { ExamKeyboardHelp } from "@/components/exam/exam-keyboard-help";
+import { SubmitConfirmDialog } from "@/components/exam/submit-confirm-dialog";
+import { useExamKeyboardShortcuts } from "@/hooks/use-exam-keyboard-shortcuts";
 import {
   recordViolationAction,
   saveAnswerAction,
@@ -218,6 +220,35 @@ export function AttemptPlayer({
     scheduleSave(current.id);
   }, [current, scheduleSave]);
 
+  const handleOptionKeyDown = React.useCallback(
+    (e: React.KeyboardEvent) => {
+      if (!current) return;
+      const count = current.options.length;
+      if (count === 0) return;
+      const selectedIdx = answers[current.id]?.selectedIdx ?? 0;
+      if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+        e.preventDefault();
+        handleSelect((selectedIdx + 1) % count);
+      } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        handleSelect((selectedIdx - 1 + count) % count);
+      }
+    },
+    [answers, current, handleSelect],
+  );
+
+  useExamKeyboardShortcuts({
+    enabled: !confirming && !submitting,
+    optionCount: current?.options.length ?? 0,
+    onSelect: handleSelect,
+    onPrev: prev,
+    onNext: next,
+    onToggleReview: handleToggleReview,
+    onClear: handleClear,
+    onJump: goTo,
+    totalQuestions: total,
+  });
+
   // ------------------------------ Submit ---------------------------------
   const finalizeAndSubmit = React.useCallback(
     async (autoSubmitted: boolean) => {
@@ -393,6 +424,7 @@ export function AttemptPlayer({
       className="fixed inset-0 z-50 flex flex-col bg-[var(--color-bg)] text-[var(--color-text)]"
       role="application"
       aria-label={`${examTitle} exam`}
+      aria-describedby="exam-keyboard-help"
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 sm:px-6">
         <div className="min-w-0">
@@ -424,7 +456,10 @@ export function AttemptPlayer({
       </header>
 
       {needsFullscreen && (
-        <div className="border-b border-orange-500/40 bg-orange-50 px-4 py-2 text-sm text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">
+        <div
+          role="status"
+          className="border-b border-[var(--color-warning)]/50 bg-[var(--color-warning-bg)] px-4 py-2 text-sm text-[var(--color-text)]"
+        >
           <button
             type="button"
             onClick={() => void enterFullscreen()}
@@ -446,7 +481,11 @@ export function AttemptPlayer({
       )}
 
       <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
-        <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
+        <main
+          id="exam-question-main"
+          className="flex-1 overflow-y-auto px-4 py-6 sm:px-8"
+          tabIndex={-1}
+        >
           <div className="mx-auto max-w-3xl">
             <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
               Question {current.position}
@@ -459,6 +498,7 @@ export function AttemptPlayer({
               className="mt-6 space-y-2"
               role="radiogroup"
               aria-label="Answer choices"
+              onKeyDown={handleOptionKeyDown}
             >
               {current.options.map((opt, idx) => {
                 const isSelected = currentState?.selectedIdx === idx;
@@ -468,6 +508,7 @@ export function AttemptPlayer({
                       type="button"
                       role="radio"
                       aria-checked={isSelected}
+                      tabIndex={isSelected ? 0 : -1}
                       onClick={() => handleSelect(idx)}
                       className={cn(
                         "flex w-full items-center gap-3 rounded-[var(--radius-lg)] border px-4 py-3 text-left text-sm transition",
@@ -535,13 +576,19 @@ export function AttemptPlayer({
           </div>
         </main>
 
-        <aside className="border-t border-[var(--color-border)] bg-[var(--color-surface-alt)] p-4 lg:w-72 lg:border-l lg:border-t-0">
+        <aside
+          className="border-t border-[var(--color-border)] bg-[var(--color-surface-alt)] p-4 lg:w-72 lg:border-l lg:border-t-0"
+          aria-label="Exam sidebar"
+        >
           <QuestionPalette
             total={total}
             currentIndex={currentIndex}
             states={paletteStates}
             onJump={goTo}
           />
+          <div id="exam-keyboard-help">
+            <ExamKeyboardHelp />
+          </div>
           <dl className="mt-4 grid grid-cols-2 gap-2 text-xs text-[var(--color-text-muted)]">
             <div>
               <dt className="font-semibold text-[var(--color-text)]">Answered</dt>
@@ -563,48 +610,14 @@ export function AttemptPlayer({
         </aside>
       </div>
 
-      {confirming && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="submit-title"
-        >
-          <div className="w-full max-w-md rounded-[var(--radius-xl)] bg-[var(--color-surface)] p-6 shadow-2xl">
-            <h2 id="submit-title" className="font-display text-xl font-bold">
-              Submit attempt?
-            </h2>
-            <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-              You answered {counts.answered} of {total}. Skipped, review, and not-seen
-              questions will be auto-marked unattempted.
-            </p>
-            <div className="mt-6 flex flex-wrap justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setConfirming(false)}
-                disabled={submitting}
-              >
-                Keep attempting
-              </Button>
-              <Button
-                type="button"
-                variant="primary"
-                onClick={() => void finalizeAndSubmit(false)}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" aria-hidden /> Submitting…
-                  </>
-                ) : (
-                  "Submit final"
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SubmitConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        answered={counts.answered}
+        total={total}
+        submitting={submitting}
+        onConfirm={() => void finalizeAndSubmit(false)}
+      />
     </div>
   );
 }

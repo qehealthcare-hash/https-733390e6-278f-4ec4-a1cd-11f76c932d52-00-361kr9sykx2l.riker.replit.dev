@@ -28,7 +28,7 @@ export function VideoCard({ video, onPlay, className }: VideoCardProps) {
       <div className="relative aspect-video bg-[var(--color-surface-alt)]">
         <Image
           src={video.thumbnail}
-          alt=""
+          alt={video.title}
           fill
           className="object-cover"
           sizes="(max-width: 768px) 100vw, 33vw"

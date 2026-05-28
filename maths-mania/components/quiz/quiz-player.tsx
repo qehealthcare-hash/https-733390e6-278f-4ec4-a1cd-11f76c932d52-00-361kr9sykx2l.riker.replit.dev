@@ -179,7 +179,11 @@ function QuestionView({
         </div>
       )}
 
-      <ul className="mt-6 space-y-2" role="listbox" aria-label="Answer choices">
+      <ul
+        className="mt-6 space-y-2"
+        role="radiogroup"
+        aria-label="Answer choices"
+      >
         {question.options.map((opt) => {
           const isSelected = selected === opt.id;
           const isAnswer = opt.id === question.correctOptionId;
@@ -192,8 +196,9 @@ function QuestionView({
             <li key={opt.id}>
               <button
                 type="button"
-                role="option"
-                aria-selected={isSelected}
+                role="radio"
+                aria-checked={isSelected}
+                tabIndex={isSelected ? 0 : -1}
                 disabled={revealed}
                 onClick={() => onSelect(opt.id)}
                 className={cn(
