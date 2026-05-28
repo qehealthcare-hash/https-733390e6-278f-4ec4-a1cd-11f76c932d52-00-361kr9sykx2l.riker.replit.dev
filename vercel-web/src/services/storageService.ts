@@ -73,7 +73,21 @@ const uploadSchema = z.object({
     errorMap: () => ({
       message: `mime must be one of: ${ALLOWED_UPLOAD_MIMES.join(", ")}`
     })
-  })
+  }),
+  // P1-36: every upload now MUST declare the resource it belongs to, so the
+  // object key carries `Patients/<id>/...`, `Employees/<id>/...`, or
+  // `Invoices/<id>/...`. Without this, anyone with upload role could PUT
+  // into any path inside the bucket — a phished Nurse could overwrite an
+  // Admin's signed PDF. The id pattern matches our canonical CRM ids.
+  resource: z.enum(["Patients", "Employees", "Invoices"] as const, {
+    errorMap: () => ({
+      message: "resource must be one of: Patients, Employees, Invoices"
+    })
+  }),
+  resourceId: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/, "resourceId must be 1-64 of [A-Za-z0-9_-]")
 });
 
 const downloadSchema = z.object({
@@ -97,13 +111,19 @@ function sanitizeFileName(raw: string): string {
   return cleaned || "file";
 }
 
-function buildObjectPath(fileName: string): string {
+function buildObjectPath(
+  resource: "Patients" | "Employees" | "Invoices",
+  resourceId: string,
+  fileName: string
+): string {
   const today = crmTodayIso();
   const uniq = (typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2) + Date.now().toString(36)
   ).slice(0, 12);
-  return `${today}/${uniq}-${sanitizeFileName(fileName)}`;
+  // P1-36: <Resource>/<id>/<YYYY-MM-DD>/<uniq>-<safeName>. The prefix lets
+  // future bucket policies grant read on `Patients/<thisPatient>/*` only.
+  return `${resource}/${resourceId}/${today}/${uniq}-${sanitizeFileName(fileName)}`;
 }
 
 function isSafeObjectPath(path: string): boolean {
@@ -127,14 +147,30 @@ export const storageService = {
     }
     const parsed = uploadSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
-    const { bucket, fileName, mime } = parsed.data;
+    const { bucket, fileName, mime, resource, resourceId } = parsed.data;
     if (hasBlockedUploadExtension(fileName)) {
       return failure("File type is not allowed for upload", ErrorCodes.badRequest);
     }
     if (!ALLOWED_BUCKETS.has(bucket)) {
       return failure(`Bucket '${bucket}' is not allowed for uploads`, ErrorCodes.badRequest);
     }
-    const path = buildObjectPath(fileName);
+    const path = buildObjectPath(resource, resourceId, fileName);
+    // P1-36: belt-and-braces — the regex+enum above already forbids traversal,
+    // but isSafeObjectPath catches anything sneaky and the startsWith() guard
+    // makes the per-resource prefix invariant explicit in the call site.
+    if (!isSafeObjectPath(path)) {
+      return failure("Object path is not allowed", ErrorCodes.badRequest);
+    }
+    if (
+      !path.startsWith("Patients/") &&
+      !path.startsWith("Employees/") &&
+      !path.startsWith("Invoices/")
+    ) {
+      return failure(
+        "Object path must start with a known resource prefix (Patients/, Employees/, Invoices/)",
+        ErrorCodes.badRequest
+      );
+    }
     return storageRepository.createSignedUploadUrl({ bucket, path, mime });
   },
 

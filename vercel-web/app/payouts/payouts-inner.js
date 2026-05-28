@@ -619,11 +619,21 @@ function PayoutsPageContent() {
     setBusy(true);
     setError("");
     try {
+      // P1-36: proof belongs to the employee being paid. payForm.employee_id
+      // and advanceForm.employee_id are both required by the form so it
+      // should always be present here; we fall back to a draft id for safety.
+      var employeeId =
+        target === "pay"
+          ? payForm.employee_id
+          : advanceForm.employee_id;
+      var resourceId = employeeId || "draft-" + Math.random().toString(36).slice(2);
       var uploaded = await uploadDocument({
         bucket: "payout-proofs",
         file: file,
         session: auth.session,
-        supabase: auth.supabase
+        supabase: auth.supabase,
+        resource: "Employees",
+        resourceId: resourceId
       });
       // Cache an object URL so the preview tile renders the picture/PDF
       // immediately — no extra round-trip to Supabase storage required.

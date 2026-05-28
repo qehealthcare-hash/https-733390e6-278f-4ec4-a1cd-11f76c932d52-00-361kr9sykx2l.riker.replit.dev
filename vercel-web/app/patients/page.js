@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -119,6 +119,16 @@ export default function PatientsPage() {
   });
   var [employees, setEmployees] = useState([]);
   var [form, setForm] = useState(createInitialForm());
+  // P1-36: stable per-form-session resource id for uploads that happen
+  // BEFORE the patient is persisted (new-patient flow). Once form.id
+  // exists we prefer that; otherwise this draft-id keeps every file
+  // attached to a single patient form clustered under the same prefix.
+  var draftIdRef = useRef(
+    "draft-" +
+      (typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2) + Date.now().toString(36))
+  );
   var [busy, setBusy] = useState(false);
   var [message, setMessage] = useState("");
   var [error, setError] = useState("");
@@ -229,13 +239,16 @@ export default function PatientsPage() {
     setError("");
     try {
       var uploaded = [];
+      var patientResourceId = form.id || draftIdRef.current;
       for (var i = 0; i < files.length; i += 1) {
         uploaded.push(
           await uploadDocument({
             bucket: "patient-documents",
             file: files[i],
             session: auth.session,
-            supabase: auth.supabase
+            supabase: auth.supabase,
+            resource: "Patients",
+            resourceId: patientResourceId
           })
         );
       }
@@ -260,7 +273,9 @@ export default function PatientsPage() {
         bucket: "patient-documents",
         file: file,
         session: auth.session,
-        supabase: auth.supabase
+        supabase: auth.supabase,
+        resource: "Patients",
+        resourceId: form.id || draftIdRef.current
       });
       setForm(function (current) { return { ...current, photo: uploaded }; });
       setMessage("Patient photo uploaded");

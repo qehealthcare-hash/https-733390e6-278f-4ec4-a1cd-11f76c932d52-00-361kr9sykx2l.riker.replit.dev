@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -227,6 +227,14 @@ export default function EmployeesPage() {
   );
 
   var [form, setForm] = useState(createInitialForm());
+  // P1-36: stable draft id for uploads that fire before the employee row
+  // has been persisted. Once form.id exists we prefer that.
+  var employeeDraftIdRef = useRef(
+    "draft-" +
+      (typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2) + Date.now().toString(36))
+  );
   var [busy, setBusy] = useState(false);
   var [roleFilter, setRoleFilter] = useState("");
   var [statusFilter, setStatusFilter] = useState("");
@@ -422,7 +430,9 @@ export default function EmployeesPage() {
             bucket: "employee-documents",
             file: files[i],
             session: auth.session,
-            supabase: auth.supabase
+            supabase: auth.supabase,
+            resource: "Employees",
+            resourceId: form.id || employeeDraftIdRef.current
           })
         );
       }
@@ -447,7 +457,9 @@ export default function EmployeesPage() {
         bucket: "employee-documents",
         file: file,
         session: auth.session,
-        supabase: auth.supabase
+        supabase: auth.supabase,
+        resource: "Employees",
+        resourceId: form.id || employeeDraftIdRef.current
       });
       setForm(function (current) { return { ...current, photo: uploaded }; });
       setMessage("Photo uploaded");
