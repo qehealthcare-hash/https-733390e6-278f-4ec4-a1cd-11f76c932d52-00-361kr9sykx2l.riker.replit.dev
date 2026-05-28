@@ -487,7 +487,11 @@ export const inquiryService = {
         {
           ...rowPayload,
           id: insertId,
-          created: input.created || new Date().toISOString(),
+          // P1-23: created / created_by are server-stamped only. Trusting
+          // input.created let a client antedate inquiries to skew the
+          // first-touch SLA reports; trusting an input created_by lets a
+          // user attribute writes to a coworker. Stamp from the server.
+          created: new Date().toISOString(),
           created_by: ctx.actor.email
         },
         access

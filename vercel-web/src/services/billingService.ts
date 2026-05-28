@@ -2256,7 +2256,7 @@ export const billingService = {
           patient_id: input.patient_id,
           status: input.status || "Active",
           sec_dep: input.sec_dep ?? 0,
-          created: input.created || new Date().toISOString()
+          created: new Date().toISOString()
         },
         access
       );

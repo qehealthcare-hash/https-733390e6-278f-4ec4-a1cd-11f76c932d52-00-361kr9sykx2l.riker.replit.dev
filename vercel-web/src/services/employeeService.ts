@@ -541,7 +541,7 @@ export const employeeService = {
         {
           ...baseRow,
           id: insertId,
-          created: input.created || new Date().toISOString(),
+          created: new Date().toISOString(),
           created_by: ctx.actor.email
         },
         access
