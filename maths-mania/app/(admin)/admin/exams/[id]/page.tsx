@@ -8,7 +8,9 @@ import { DeleteExamButton } from "@/components/admin/delete-exam-button";
 import { QuestionForm } from "@/components/admin/question-form";
 import { QuestionsList } from "@/components/admin/questions-list";
 import { ExamStatusBadge } from "@/components/admin/exam-status-badge";
+import { PublishMeritButton } from "@/components/admin/publish-merit-button";
 import { getExamById, getQuestionsForExam } from "@/lib/exams/admin-data";
+import { requestNowMs } from "@/lib/exams/public";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -24,6 +26,7 @@ export default async function AdminExamDetailPage({ params }: Props) {
   if (!exam) notFound();
 
   const questions = await getQuestionsForExam(id);
+  const examEnded = requestNowMs() >= new Date(exam.ends_at).getTime();
 
   return (
     <>
@@ -52,6 +55,11 @@ export default async function AdminExamDetailPage({ params }: Props) {
           <ExamForm exam={exam} />
         </div>
         <DeleteExamButton examId={exam.id} />
+        <PublishMeritButton
+          examId={exam.id}
+          examStatus={exam.status}
+          examEnded={examEnded}
+        />
       </section>
 
       <section className="mt-14">

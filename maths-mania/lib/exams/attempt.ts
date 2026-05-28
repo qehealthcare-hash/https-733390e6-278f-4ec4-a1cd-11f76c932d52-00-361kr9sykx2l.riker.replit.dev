@@ -196,6 +196,56 @@ export async function getAttemptAnswers(
   return data ?? [];
 }
 
+export type ReviewQuestion = AttemptQuestion & {
+  correct_idx: number;
+  explanation_latex: string | null;
+};
+
+export type ReviewAnswer = AttemptAnswerSnapshot & {
+  is_correct: boolean | null;
+  marks_awarded: number | null;
+};
+
+export async function getAttemptReview(
+  examId: string,
+  attemptId: string,
+): Promise<{ questions: ReviewQuestion[]; answers: ReviewAnswer[] }> {
+  const supabase = await createClient();
+  if (!supabase) return { questions: [], answers: [] };
+
+  const [{ data: questions }, { data: answers }] = await Promise.all([
+    supabase
+      .from("exam_questions")
+      .select(
+        "id, position, section, topic, question_latex, options, marks_correct, marks_wrong, correct_idx, explanation_latex",
+      )
+      .eq("exam_id", examId)
+      .order("position", { ascending: true }),
+    supabase
+      .from("exam_answers")
+      .select(
+        "question_id, selected_idx, marked_for_review, time_spent_sec, is_correct, marks_awarded",
+      )
+      .eq("attempt_id", attemptId),
+  ]);
+
+  return {
+    questions: (questions ?? []).map((row) => ({
+      id: row.id,
+      position: row.position,
+      section: row.section,
+      topic: row.topic,
+      question_latex: row.question_latex,
+      options: optionsFromJson(row.options),
+      marks_correct: row.marks_correct,
+      marks_wrong: row.marks_wrong,
+      correct_idx: row.correct_idx,
+      explanation_latex: row.explanation_latex,
+    })),
+    answers: answers ?? [],
+  };
+}
+
 export async function getAttemptScorecard(
   attemptRow: AttemptRow,
   totalQuestions: number,

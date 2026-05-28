@@ -373,6 +373,31 @@ export interface Database {
           total_questions: number;
         }[];
       };
+      publish_exam_merit: {
+        Args: { p_exam_id: string };
+        Returns: {
+          total_attempts: number;
+          top_score: number;
+          median_score: number;
+          certificates_issued: number;
+        }[];
+      };
+      verify_certificate: {
+        Args: { p_code: string };
+        Returns: {
+          valid: boolean;
+          exam_title: string | null;
+          display_name: string | null;
+          final_score: number | null;
+          all_india_rank: number | null;
+          percentile: number | null;
+          issued_at: string | null;
+        }[];
+      };
+      generate_verification_code: {
+        Args: Record<string, never>;
+        Returns: string;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

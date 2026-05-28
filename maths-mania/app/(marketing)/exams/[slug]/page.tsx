@@ -150,8 +150,9 @@ export default async function ExamLandingPage({ params }: Props) {
           )}
 
           <p className="mt-8 text-sm text-[var(--color-text-faint)]">
-            Lobby opens 15 minutes before start time. Question-level review and
-            All-India merit list ship in the next milestone.
+            Lobby opens 15 minutes before start time. Your scorecard includes
+            question review; the All-India merit list publishes after the exam
+            closes.
           </p>
         </Container>
       </Section>
