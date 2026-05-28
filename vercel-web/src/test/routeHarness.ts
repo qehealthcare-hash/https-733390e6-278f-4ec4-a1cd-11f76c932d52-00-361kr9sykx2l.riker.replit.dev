@@ -250,13 +250,31 @@ export function buildSupabaseMock(): {
   }
 
   function idempotencyChain() {
+    // Reflects the two-phase reserve/complete flow that lib/api/idempotency.ts
+    // now drives (P0-3): a "pending" row is reserved with status = 0 BEFORE
+    // the handler runs and is later UPDATEd with the final response/status.
+    // The chain tracks filter state across .select/.eq/.gt so findCached,
+    // tryReservePending and completePending all share one mock.
+    let mode: "select" | "update" | null = null;
     let pendingKey: string | null = null;
     let pendingActor: string | null = null;
+    let statusEq: number | null = null;
+    let statusGt: number | null = null;
+    let updateValues: Record<string, unknown> = {};
+
     const chain: Record<string, unknown> = {
-      select: () => chain,
+      select: () => {
+        mode = "select";
+        return chain;
+      },
       eq: (column: string, value: unknown) => {
         if (column === "key") pendingKey = String(value);
-        if (column === "actor") pendingActor = String(value);
+        else if (column === "actor") pendingActor = String(value);
+        else if (column === "status") statusEq = Number(value);
+        return chain;
+      },
+      gt: (column: string, value: unknown) => {
+        if (column === "status") statusGt = Number(value);
         return chain;
       },
       gte: () => chain,
@@ -264,26 +282,63 @@ export function buildSupabaseMock(): {
         if (!pendingKey || !pendingActor) return { data: null, error: null };
         const hit = idempotencyStore.get(`${pendingKey}|${pendingActor}`);
         if (!hit) return { data: null, error: null };
+        if (statusGt !== null && hit.status <= statusGt) return { data: null, error: null };
         return {
-          data: {
-            response: hit.response,
-            status: hit.status,
-            created_at: hit.createdAt
-          },
+          data: { response: hit.response, status: hit.status, created_at: hit.createdAt },
           error: null
         };
       },
-      upsert: async (row: Record<string, unknown>) => {
+      upsert: (
+        row: Record<string, unknown>,
+        opts?: { onConflict?: string; ignoreDuplicates?: boolean }
+      ) => {
         const key = String(row.key ?? "");
         const actor = String(row.actor ?? "");
+        const ignoreDuplicates = opts?.ignoreDuplicates === true;
+        let inserted: string | null = null;
         if (key && actor) {
-          idempotencyStore.set(`${key}|${actor}`, {
-            response: (row.response as Record<string, unknown> | null) ?? null,
-            status: (row.status as number) ?? 200,
-            createdAt: new Date().toISOString()
-          });
+          const existing = idempotencyStore.get(`${key}|${actor}`);
+          if (existing && ignoreDuplicates) {
+            inserted = null; // conflict → ON CONFLICT DO NOTHING
+          } else {
+            idempotencyStore.set(`${key}|${actor}`, {
+              response: (row.response as Record<string, unknown> | null) ?? null,
+              status: (row.status as number) ?? 200,
+              createdAt: existing?.createdAt ?? new Date().toISOString()
+            });
+            inserted = key;
+          }
         }
-        return { data: null, error: null };
+        const result = inserted !== null ? [{ key: inserted }] : [];
+        const upsertChain: Record<string, unknown> = {
+          select: () => upsertChain,
+          then: (resolve: (v: unknown) => unknown) => resolve({ data: result, error: null })
+        };
+        return upsertChain;
+      },
+      update: (row: Record<string, unknown>) => {
+        mode = "update";
+        updateValues = row;
+        return chain;
+      },
+      then: (resolve: (v: unknown) => unknown) => {
+        // Awaiting the chain after .update().eq().eq().eq() applies the update
+        // if the (key, actor, status?) filter matches the stored entry.
+        if (mode === "update" && pendingKey && pendingActor) {
+          const existing = idempotencyStore.get(`${pendingKey}|${pendingActor}`);
+          if (existing && (statusEq === null || existing.status === statusEq)) {
+            idempotencyStore.set(`${pendingKey}|${pendingActor}`, {
+              response:
+                "response" in updateValues
+                  ? ((updateValues.response as Record<string, unknown> | null) ?? null)
+                  : existing.response,
+              status:
+                "status" in updateValues ? Number(updateValues.status) : existing.status,
+              createdAt: existing.createdAt
+            });
+          }
+        }
+        return resolve({ data: null, error: null });
       },
       insert: async () => ({ data: null, error: null })
     };

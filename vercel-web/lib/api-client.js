@@ -26,16 +26,41 @@ function fnv1aHex(input) {
   return h.toString(16).padStart(8, "0");
 }
 
+/**
+ * Recursively sort object keys so two semantically-identical bodies hash to
+ * the same canonical string. `{a:1,b:2}` and `{b:2,a:1}` collide; arrays
+ * preserve their order (arrays are positional, not associative).
+ */
+function canonicalizeForHash(value) {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    var arr = [];
+    for (var i = 0; i < value.length; i += 1) arr.push(canonicalizeForHash(value[i]));
+    return arr;
+  }
+  var keys = Object.keys(value).sort();
+  var out = {};
+  for (var j = 0; j < keys.length; j += 1) out[keys[j]] = canonicalizeForHash(value[keys[j]]);
+  return out;
+}
+
+/**
+ * Stable hash of (path + canonical JSON body). No method, no time bucket.
+ *
+ * Dropping the time bucket means React strict-mode double-fires (which
+ * happen microseconds apart) AND deliberate retries minutes later share the
+ * same Idempotency-Key. The server-side `withIdempotency` reserves a
+ * pending row with ON CONFLICT DO NOTHING so the second call replays the
+ * cached response instead of running the handler twice.
+ */
 function synthIdempotencyKey(method, path, body) {
   if (!method) return "";
   var upper = String(method).toUpperCase();
   if (upper === "GET" || upper === "HEAD" || upper === "OPTIONS") return "";
-  var bucket = Math.floor(Date.now() / 5000);
-  var payload = upper + " " + path + " | " + (body == null ? "" : JSON.stringify(body)) + " | t=" + bucket;
+  var canonical = body == null ? "" : JSON.stringify(canonicalizeForHash(body));
+  var payload = path + " | " + canonical;
   var splitAt = Math.max(1, Math.floor(payload.length / 2));
-  var first = payload.slice(0, splitAt);
-  var second = payload.slice(splitAt);
-  return "auto-" + fnv1aHex(first) + fnv1aHex(second);
+  return "auto-" + fnv1aHex(payload.slice(0, splitAt)) + fnv1aHex(payload.slice(splitAt));
 }
 
 function readQueue() {

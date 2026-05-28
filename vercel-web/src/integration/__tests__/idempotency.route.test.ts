@@ -109,10 +109,14 @@ describe("Idempotency-Key replay", () => {
     expect(mPatient.create).toHaveBeenCalledTimes(2);
   });
 
-  it("No Idempotency-Key header → service is invoked on every call", async () => {
+  it("No Idempotency-Key header → server synthesizes a key from actor+route+body-hash (P0-3)", async () => {
+    // Pre-fix: the middleware short-circuited when no header was sent, so a
+    // double-click became two writes. Post-fix: the server synthesizes a key
+    // and dedupes anyway. Identical bodies from the same actor must collapse
+    // to a single service call.
     mPatient.create
       .mockResolvedValueOnce({ success: true, data: { id: "A" } })
-      .mockResolvedValueOnce({ success: true, data: { id: "B" } });
+      .mockResolvedValueOnce({ success: true, data: { id: "WOULD_NEVER_BE_RETURNED" } });
 
     for (let i = 0; i < 2; i++) {
       const req = makeRequest("POST", "/api/v1/patients", {
@@ -120,6 +124,22 @@ describe("Idempotency-Key replay", () => {
       });
       await PatientsPost(req, ctx({}));
     }
+    expect(mPatient.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("No Idempotency-Key header — different bodies still run the service once each (P0-3)", async () => {
+    mPatient.create
+      .mockResolvedValueOnce({ success: true, data: { id: "A" } })
+      .mockResolvedValueOnce({ success: true, data: { id: "B" } });
+
+    await PatientsPost(
+      makeRequest("POST", "/api/v1/patients", { body: { name: "Alpha", mobile: "9000000010" } }),
+      ctx({})
+    );
+    await PatientsPost(
+      makeRequest("POST", "/api/v1/patients", { body: { name: "Beta", mobile: "9000000011" } }),
+      ctx({})
+    );
     expect(mPatient.create).toHaveBeenCalledTimes(2);
   });
 
