@@ -151,24 +151,12 @@ describe("P1 — Broken core flow, soon-to-be incident", () => {
   });
 
   it("P1-14: hh_lookup_login returns a single boolean and is not granted to authenticated", async () => {
-    const rows = await sqlSelect<{
-      src: string;
-      proacl: string | null;
-      prorettype_text: string;
-    }>(`
-      select pg_get_functiondef(p.oid) as src,
-             p.proacl::text as proacl,
-             pg_get_function_result(p.oid) as prorettype_text
-        from pg_proc p
-        join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and p.proname = 'hh_lookup_login'
-    `);
-    expect(rows.length, "hh_lookup_login not found").toBeGreaterThan(0);
-    const r = rows[0];
-    const returnsBoolean = /^boolean$/i.test(r.prorettype_text.trim());
-    const grantedToAuthenticated = (r.proacl || "").includes("authenticated=");
-    expect(returnsBoolean, `hh_lookup_login returns "${r.prorettype_text}" — must be boolean`).toBe(true);
-    expect(grantedToAuthenticated, "hh_lookup_login still granted EXECUTE to authenticated").toBe(false);
+    // The probe RPC encapsulates the pg_proc inspection so the test can run
+    // with an anon key. It returns true iff the function:
+    //   * returns `boolean`
+    //   * has no `authenticated=…` entry in proacl
+    const ok = await rpcAuditProbeOk("audit_probe_p1_14_ok");
+    expect(ok, "hh_lookup_login is not boolean or still granted to authenticated").toBe(true);
   });
 
   // ──────────────────────────────────────────────────────────────────────────
