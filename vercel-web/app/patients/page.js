@@ -585,6 +585,14 @@ export default function PatientsPage() {
   }
 
   async function openPatientPdf(row, hideSensitive) {
+    // P1-32: pre-open the print window inside the user gesture (BEFORE any
+    // await) so the popup blocker doesn't kill it after signed-URL fetches.
+    var preOpened = window.open("about:blank", "_blank", "width=1024,height=820");
+    if (preOpened && preOpened.document) {
+      try {
+        preOpened.document.write("<title>Preparing PDF…</title><body style='font-family:Segoe UI,Arial,sans-serif;padding:32px;color:#475569'>Loading patient profile…</body>");
+      } catch (_e) { /* ignore opaque about:blank */ }
+    }
     var name = row.full_name || row.name || row.id;
     var rels = [
       { name: row.relname || "", phone: row.relphone || "" },
@@ -689,7 +697,8 @@ export default function PatientsPage() {
       docsHtml;
     openPrintWindow(
       hideSensitive ? "Patient Profile (sanitised)" : "Patient Profile - " + name,
-      body
+      body,
+      preOpened
     );
   }
 

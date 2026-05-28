@@ -685,6 +685,16 @@ export default function EmployeesPage() {
   }
 
   async function openEmployeePdf(row, hideSensitive) {
+    // P1-32: open the print window SYNCHRONOUSLY inside the user gesture,
+    // before any await. Otherwise Chrome / Safari popup-block the window once
+    // the signed-URL resolution returns. The opened tab shows "Loading…" until
+    // openPrintWindow rewrites its document.
+    var preOpened = window.open("about:blank", "_blank", "width=1024,height=820");
+    if (preOpened && preOpened.document) {
+      try {
+        preOpened.document.write("<title>Preparing PDF…</title><body style='font-family:Segoe UI,Arial,sans-serif;padding:32px;color:#475569'>Loading employee profile…</body>");
+      } catch (_e) { /* opaque about:blank — ignore */ }
+    }
     var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
     var score = rowScoreTotal(row);
     var isActive = row.status ? row.status === "Active" : row.active !== false;
@@ -823,7 +833,8 @@ export default function EmployeesPage() {
       docsHtml;
     openPrintWindow(
       hideSensitive ? "Employee Profile (sanitised)" : "Employee Profile - " + name,
-      body
+      body,
+      preOpened
     );
   }
 
