@@ -113,6 +113,12 @@ function totalsFromBundle(bundle) {
 export default function BillingsPage() {
   var auth = useAuth();
   var [billings, setBillings] = useState([]);
+  // P1-28: track the API limit + the server's total so we can surface a
+  // "Showing first N of M — refine filters" banner when the list is capped.
+  // Previously a clinic with > 100 active bills only ever saw the first 100
+  // and there was zero indication of truncation.
+  var LIST_LIMIT = 100;
+  var [billingsTotal, setBillingsTotal] = useState(0);
   var [loading, setLoading] = useState(true);
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
@@ -134,15 +140,18 @@ export default function BillingsPage() {
     setLoading(true);
     try {
       var qs = new URLSearchParams();
-      qs.set("limit", "100");
+      qs.set("limit", String(LIST_LIMIT));
       if (statusFilter) qs.set("status", statusFilter);
       if (search.trim()) qs.set("q", search.trim());
       var data = await request("/billings?" + qs.toString(), null, auth.session);
-      setBillings(Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : []);
+      var rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
+      setBillings(rows);
+      setBillingsTotal(Number(data?.total ?? rows.length) || rows.length);
       setError("");
     } catch (err) {
       setError(err.message || "Failed to load bills");
       setBillings([]);
+      setBillingsTotal(0);
     } finally {
       setLoading(false);
     }
@@ -967,6 +976,11 @@ export default function BillingsPage() {
               </div>
               {error ? <div className="error-text">{error}</div> : null}
               {message ? <div className="success-text">{message}</div> : null}
+              {billings.length >= LIST_LIMIT && billingsTotal > billings.length ? (
+                <div className="info-text" role="status" style={{ background: "#fff7e6", border: "1px solid #ffd28d", padding: "8px 12px", borderRadius: 8, fontSize: 13 }}>
+                  Showing first {billings.length} of {billingsTotal} bills — refine filters to narrow the list.
+                </div>
+              ) : null}
               {!filtered.length ? (
                 <EmptyState
                   title={loading ? "Loading bills…" : "No bills"}

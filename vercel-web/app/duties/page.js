@@ -295,6 +295,12 @@ export default function DutiesPage() {
   var auth = useAuth();
   var [viewMonth, setViewMonth] = useState(monthKey(new Date()));
   var [rows, setRows] = useState([]);
+  // P1-28: track API limit + server total for the "Showing first N of M"
+  // truncation banner. The duties calendar capped the month view at 150
+  // duties; high-volume care managers couldn't tell when the second half of
+  // the month was missing from the calendar.
+  var DUTIES_LIMIT = 150;
+  var [rowsTotal, setRowsTotal] = useState(0);
   var [loading, setLoading] = useState(true);
   var [patients, setPatients] = useState([]);
   var [employees, setEmployees] = useState([]);
@@ -484,18 +490,20 @@ export default function DutiesPage() {
       var endDate = new Date(ym.year, ym.monthIndex + 1, 0);
       var endKey = endDate.getFullYear() + "-" + String(endDate.getMonth() + 1).padStart(2, "0") + "-" + String(endDate.getDate()).padStart(2, "0");
       var to = crmDayEndIso(endKey);
-      var path = "/duties?limit=150&from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to);
+      var path = "/duties?limit=" + DUTIES_LIMIT + "&from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to);
       if (statusFilter) path += "&status=" + encodeURIComponent(statusFilter);
       if (filterPatient) path += "&patient_id=" + encodeURIComponent(filterPatient);
       if (filterEmployee) path += "&employee_id=" + encodeURIComponent(filterEmployee);
       var data = await request(path, null, auth.session);
       var list = Array.isArray(data && data.rows) ? data.rows : [];
+      var serverTotal = Number(data && data.total != null ? data.total : list.length) || list.length;
       if (filterEmployee) {
         list = list.filter(function (r) {
           return dutyMatchesEmployee(r, filterEmployee);
         });
       }
       setRows(list);
+      setRowsTotal(serverTotal);
       setError("");
       loadDiariesForVisible(list);
     } catch (err) {
@@ -1604,6 +1612,12 @@ export default function DutiesPage() {
                 );
               })}
             </div>
+
+            {rows.length >= DUTIES_LIMIT && rowsTotal > rows.length ? (
+              <div className="info-text" role="status" style={{ marginTop: 12, background: "#fff7e6", border: "1px solid #ffd28d", padding: "8px 12px", borderRadius: 8, fontSize: 13 }}>
+                Showing first {rows.length} of {rowsTotal} duties this month — refine filters or pick a narrower month to see them all.
+              </div>
+            ) : null}
 
             {selectedDay ? (
               <div style={{ marginTop: 20 }}>

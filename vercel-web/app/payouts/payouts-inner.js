@@ -71,6 +71,11 @@ function PayoutsPageContent() {
   var searchParams = useSearchParams();
   var [employees, setEmployees] = useState([]);
   var [payouts, setPayouts] = useState([]);
+  // P1-28: track API limit + server total for the "Showing first N of M" cap
+  // banner. With a 200-row cap, busy practices used to silently lose payouts
+  // 201+ from the ledger.
+  var PAYOUTS_LIMIT = 200;
+  var [payoutsTotal, setPayoutsTotal] = useState(0);
   var [loading, setLoading] = useState(true);
   var [periodFilter, setPeriodFilter] = useState(
     searchParams?.get("period") || currentPeriod()
@@ -133,16 +138,19 @@ function PayoutsPageContent() {
     setLoading(true);
     try {
       var qs = new URLSearchParams();
-      qs.set("limit", "200");
+      qs.set("limit", String(PAYOUTS_LIMIT));
       if (periodFilter) qs.set("period", periodFilter);
       if (statusFilter) qs.set("status", statusFilter);
       if (employeeFilter) qs.set("employee_id", employeeFilter);
       var data = await request("/payouts?" + qs.toString(), null, auth.session);
-      setPayouts(Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : []);
+      var prows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
+      setPayouts(prows);
+      setPayoutsTotal(Number(data?.total ?? prows.length) || prows.length);
       setError("");
     } catch (err) {
       setError(err.message || "Failed to load payouts");
       setPayouts([]);
+      setPayoutsTotal(0);
     } finally {
       setLoading(false);
     }
@@ -1675,6 +1683,11 @@ function PayoutsPageContent() {
               </div>
               {error ? <div className="error-text">{error}</div> : null}
               {message ? <div className="success-text">{message}</div> : null}
+              {payouts.length >= PAYOUTS_LIMIT && payoutsTotal > payouts.length ? (
+                <div className="info-text" role="status" style={{ background: "#fff7e6", border: "1px solid #ffd28d", padding: "8px 12px", borderRadius: 8, fontSize: 13 }}>
+                  Showing first {payouts.length} of {payoutsTotal} payouts — refine filters to narrow the list.
+                </div>
+              ) : null}
               {!payouts.length ? (
                 <EmptyState
                   title={loading ? "Loading…" : "No payouts"}
