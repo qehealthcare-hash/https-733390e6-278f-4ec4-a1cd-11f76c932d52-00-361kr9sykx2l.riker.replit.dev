@@ -33,6 +33,10 @@ Studio: http://localhost:54323
 | `20250527000001_exam_platform_schema.sql` | Profiles, exams, attempts, merit, RLS, `public_merit` view |
 | `20250527000002_marketing_tables.sql` | `newsletter_subscribers`, `resource_leads` |
 | `20250527000003_seed_demo_exams.sql` | Demo exams: IBPS 30 min + SSC 20 min with 8 questions each |
+| `20250528000001_exam_attempt_lifecycle.sql` | `start_exam_attempt`, `submit_exam_attempt` RPCs |
+| `20250528000002_exam_merit_publish.sql` | `publish_exam_merit`, certificates, `verify_certificate` |
+| `20250528000003_start_attempt_race.sql` | Race-safe concurrent exam starts |
+| `20250528000004_cron_lifecycle.sql` | Cron status advance + service_role merit publish |
 
 ## Admin access
 

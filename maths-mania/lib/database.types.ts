@@ -373,6 +373,10 @@ export interface Database {
           total_questions: number;
         }[];
       };
+      cron_advance_exam_statuses: {
+        Args: Record<string, never>;
+        Returns: Json;
+      };
       publish_exam_merit: {
         Args: { p_exam_id: string };
         Returns: {

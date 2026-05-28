@@ -1,4 +1,4 @@
-import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { getClientIp, rateLimitRequest } from "@/lib/rate-limit";
 import {
   generateOtp,
   isMsg91Configured,
@@ -9,7 +9,7 @@ import { saveOtp } from "@/lib/otp-store";
 
 export async function POST(request: Request) {
   const ip = getClientIp(request);
-  const rl = rateLimit(`otp-send:${ip}`, 5, 60_000);
+  const rl = await rateLimitRequest(`otp-send:${ip}`, 5, 60_000);
   if (!rl.ok) {
     return Response.json(
       { ok: false, message: `Too many attempts. Try again in ${rl.retryAfterSec}s.` },
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
   }
 
   const otp = generateOtp();
-  saveOtp(mobile, otp);
+  await saveOtp(mobile, otp);
 
   const sent = await sendOtpViaMsg91(mobile, otp);
   if (!sent.ok) {

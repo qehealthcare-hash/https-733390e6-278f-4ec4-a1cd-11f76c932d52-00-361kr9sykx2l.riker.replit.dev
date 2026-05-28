@@ -1,12 +1,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSupabaseAdminConfigured, isSupabaseConfigured } from "@/lib/supabase/config";
-import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { getClientIp, rateLimitRequest } from "@/lib/rate-limit";
 import { normalizeIndianPhone, verifyOtpViaMsg91 } from "@/lib/msg91";
 import { verifyOtp } from "@/lib/otp-store";
 
 export async function POST(request: Request) {
   const ip = getClientIp(request);
-  const rl = rateLimit(`otp-verify:${ip}`, 10, 60_000);
+  const rl = await rateLimitRequest(`otp-verify:${ip}`, 10, 60_000);
   if (!rl.ok) {
     return Response.json(
       { ok: false, message: `Too many attempts. Try again in ${rl.retryAfterSec}s.` },
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const localOk = verifyOtp(mobile, otp);
+  const localOk = await verifyOtp(mobile, otp);
   const msg91Ok = localOk ? { ok: true } : await verifyOtpViaMsg91(mobile, otp);
 
   if (!localOk && !msg91Ok.ok) {

@@ -10,7 +10,7 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 21 of 22 — Polish & error pages.** ✅ Complete (m1–m21)
+**Milestone 22 of 22 — README & production deploy.** ✅ Complete (m1–m22) — **all milestones shipped**
 
 **Milestone 10 — Supabase Auth.** ✅
 
@@ -76,6 +76,14 @@ Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** 
 - `/exams/[slug]/not-started` and `/closed` — dedicated exam-window pages
 - `EmptyState` + subtle `FadeIn` motion (respects reduced-motion)
 - Dashboard and exam hub empty states
+
+**Milestone 22 — deploy.** ✅
+
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Vercel + Supabase + Upstash + cron setup
+- `vercel.json` — exam lifecycle cron every 5 minutes
+- `GET /api/cron/exam-lifecycle` — status transitions + auto merit publish
+- Upstash-backed `rateLimitRequest` + OTP store (in-memory fallback locally)
+- Migration `20250528000004` — service_role merit publish + `cron_advance_exam_statuses`
 
 **Milestone 11 — exam admin.** ✅
 
@@ -200,19 +208,54 @@ public/
 
 ---
 
-## Adding content (forward reference)
+## Adding content
 
-These workflows will be implemented in later milestones; documenting now so the team knows what to expect.
+| Content | How |
+|---------|-----|
+| **Blog post** | Add `content/blog/<slug>.mdx` with frontmatter (`title`, `date`, `excerpt`, `tags`). |
+| **Self-paced quiz** | Add `content/quizzes/<slug>.json` — see existing quizzes for schema. |
+| **Testimonial** | Edit `content/testimonials.json`. |
+| **Live exam** | `/admin/exams/new` — no deploy needed for schedule/content changes. |
 
-- **Blog posts (milestone 7):** drop a `slug.mdx` file in `content/blog/`.
-- **Self-paced quizzes (milestone 8):** drop a `slug.json` in `content/quizzes/`.
-- **Real-time exams (milestone 11):** create via `/admin/exams/new` — no code changes needed.
+### YouTube API key (optional but recommended)
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → enable **YouTube Data API v3**.
+2. Create an API key; restrict by HTTP referrer to your domain.
+3. Set `YOUTUBE_API_KEY` and `YOUTUBE_CHANNEL_ID` in `.env.local` / Vercel.
+
+Without a key, `/videos` and home grids show curated placeholders.
 
 ---
 
 ## Deployment
 
-Will be wired up in milestone 22. Target: Vercel + Supabase Production + Upstash Redis + Vercel Cron.
+Full guide: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
+
+Quick path:
+
+1. **Supabase** — create project, `supabase db push`, copy URL + keys.
+2. **Upstash** — create Redis, copy REST URL + token.
+3. **Vercel** — import repo, set **Root Directory** to `maths-mania`, paste env from `.env.example`, set `CRON_SECRET`.
+4. Deploy — cron runs automatically via `vercel.json`.
+
+```bash
+cd maths-mania
+npx vercel --prod
+```
+
+---
+
+## Asset checklist (§4.2)
+
+Place before launch:
+
+| Asset | Path |
+|-------|------|
+| Logo SVG/PNG | `public/brand/logo.svg` |
+| OG image (1200×630) | `public/brand/og-image.png` |
+| Favicon set | `app/favicon.ico` + `public/brand/` |
+| Social reel thumbnails | `public/social/` |
+| Hero / pillar illustrations | `public/illustrations/` |
 
 ---
 

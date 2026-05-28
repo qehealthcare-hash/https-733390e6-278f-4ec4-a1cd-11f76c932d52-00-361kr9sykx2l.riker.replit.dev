@@ -1,7 +1,7 @@
 import { mkdir, appendFile } from "node:fs/promises";
 import path from "node:path";
 import { hashIp } from "@/lib/privacy";
-import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { getClientIp, rateLimitRequest } from "@/lib/rate-limit";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const TOPICS = new Set([
@@ -14,7 +14,7 @@ const TOPICS = new Set([
 
 export async function POST(request: Request) {
   const ip = getClientIp(request);
-  const rl = rateLimit(`contact:${ip}`, 5, 60_000);
+  const rl = await rateLimitRequest(`contact:${ip}`, 5, 60_000);
   if (!rl.ok) {
     return Response.json(
       {

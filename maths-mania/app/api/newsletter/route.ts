@@ -1,7 +1,7 @@
 import { mkdir, appendFile } from "node:fs/promises";
 import path from "node:path";
 import { hashIp } from "@/lib/privacy";
-import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { getClientIp, rateLimitRequest } from "@/lib/rate-limit";
 import { isSupabaseAdminConfigured } from "@/lib/supabase/config";
 import { tryCreateAdminClient } from "@/lib/supabase/admin";
 
@@ -9,7 +9,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function POST(request: Request) {
   const ip = getClientIp(request);
-  const rl = rateLimit(`newsletter:${ip}`, 5, 60_000);
+  const rl = await rateLimitRequest(`newsletter:${ip}`, 5, 60_000);
   if (!rl.ok) {
     return Response.json(
       { ok: false, message: `Too many requests. Try again in ${rl.retryAfterSec}s.` },
