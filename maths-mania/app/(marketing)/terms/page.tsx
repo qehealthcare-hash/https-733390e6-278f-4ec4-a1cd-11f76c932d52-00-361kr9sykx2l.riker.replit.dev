@@ -1,18 +1,30 @@
 import type { Metadata } from "next";
-import { ComingSoon } from "@/components/sections/coming-soon";
+import { Container } from "@/components/ui/container";
+import { Section } from "@/components/ui/section";
+import { Eyebrow } from "@/components/ui/eyebrow";
+import { Heading } from "@/components/ui/heading";
+import { LegalDocument } from "@/components/sections/legal-document";
+import { TERMS_SECTIONS } from "@/lib/legal";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
-  description:
-    "Terms governing the use of Maths Mania content, free resources, and the live exam platform.",
+  description: "Terms for using Maths Mania content, accounts, and live exams.",
 };
+
+const LAST_UPDATED = "28 May 2026";
 
 export default function TermsPage() {
   return (
-    <ComingSoon
-      milestone="Milestone 16"
-      title="Terms of Service"
-      subhead="Standard terms tuned for an Indian edtech business — including exam rules, anti-cheat consequences, refund policy (for future paid courses), and the tie-breaking rule used in merit list computation."
-    />
+    <Section padding="lg" tone="default">
+      <Container size="md">
+        <Eyebrow tone="muted">Legal</Eyebrow>
+        <Heading as="h1" size="h1" className="mt-4">
+          Terms of service
+        </Heading>
+        <div className="mt-10">
+          <LegalDocument sections={TERMS_SECTIONS} lastUpdated={LAST_UPDATED} />
+        </div>
+      </Container>
+    </Section>
   );
 }

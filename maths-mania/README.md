@@ -32,6 +32,13 @@ Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** 
 - `/dashboard/exams`, `/dashboard/attempts/[id]`, `/dashboard/profile`, certificates archive
 - Certificate verification moved to `/certificates/verify` (auth uses `/verify`)
 
+**Milestone 16 — marketing pages.** ✅
+
+- `/testimonials` — full student stories grid from `content/testimonials.json`
+- `/about` — teaching philosophy, stats, Sunday live-exam ritual
+- `/contact` — email, WhatsApp (when configured), and `/api/contact` form → `data/contact.jsonl`
+- `/privacy` and `/terms` — structured legal copy with in-page table of contents
+
 **Milestone 11 — exam admin.** ✅
 
 - `/admin/exams` — list, create, edit exams (admin/moderator role)
