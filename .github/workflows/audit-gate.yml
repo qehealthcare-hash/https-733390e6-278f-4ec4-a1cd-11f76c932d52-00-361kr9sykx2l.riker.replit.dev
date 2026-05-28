@@ -1,0 +1,57 @@
+# Audit gate — frozen rubric.
+#
+# Runs tests/audit_checks on every PR + every push to main. The test suite
+# is a 1:1 mapping of the P0 / P1 findings in HOMINAL_CRM_ENTERPRISE_QA_AUDIT
+# (see audit-rubric.md). If ANY P0 or P1 check fails the build, the gate
+# fails the PR — no merge until every regression in the rubric is closed.
+#
+# Two probe modes:
+#   1. Static / source-grep checks run unconditionally. They cover ~90 % of
+#      the rubric (regex over the codebase + a couple of sanity selectors).
+#   2. SQL-probe checks (P0-2, P1-4, P1-11, P1-12, P1-13, P1-14) require
+#      live Supabase credentials. The CI job below feeds them from the
+#      AUDIT_SUPABASE_URL / AUDIT_ANON_KEY / AUDIT_SERVICE_ROLE_KEY /
+#      AUDIT_NURSE_JWT repo secrets. If they're absent the workflow still
+#      runs the static suite and lets those few tests skip with a clear
+#      ENV_MISSING message (helper short-circuits on import).
+#
+# Adding a new rubric finding: add the test in tests/audit_checks/src and
+# wire it under audit-rubric.md. The workflow needs no change — it picks
+# up every test file under tests/audit_checks/src automatically.
+name: audit-gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  audit:
+    name: Frozen audit rubric (P0 / P1)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/audit_checks
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: tests/audit_checks/package-lock.json
+
+      - name: Install audit-checks deps
+        run: npm ci || npm install
+
+      - name: Run frozen audit rubric
+        run: npm test
+        env:
+          # Static checks always run. SQL / RPC probes use these secrets
+          # when available; missing secrets cause the few runtime probes
+          # to throw a clearly-labelled ENV_MISSING error (which keeps the
+          # gate honest — you can't merge by silently skipping probes).
+          SUPABASE_URL: ${{ secrets.AUDIT_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.AUDIT_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.AUDIT_SUPABASE_SERVICE_ROLE_KEY }}
+          NURSE_JWT: ${{ secrets.AUDIT_NURSE_JWT }}
