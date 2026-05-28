@@ -10,7 +10,7 @@ import {
   listAll
 } from "@/database/baseRepository";
 import { runQuery, runListQuery } from "@/database/supabaseClient";
-import { sanitizeSearchTerm } from "@/lib/api/security";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 import { crmDayEndIso, crmDayStartIso } from "@/utils/crmToday";
 
 const TABLE = "hh_attendance";

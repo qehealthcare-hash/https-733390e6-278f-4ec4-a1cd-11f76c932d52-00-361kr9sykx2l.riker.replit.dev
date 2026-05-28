@@ -12,7 +12,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
-import { sanitizeSearchTerm } from "@/lib/api/security";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 
 const PAYOUTS = "hh_payouts";
 const PAID_TX = "hh_paid_transactions";

@@ -237,6 +237,18 @@ export function buildSupabaseMock(): {
     return chain;
   }
 
+  function hhRolesChain() {
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      ilike: () => chain,
+      maybeSingle: async () => ({
+        data: { perms: ["patients.read", "patients.write", "billing.read"] },
+        error: null
+      })
+    };
+    return chain;
+  }
+
   function idempotencyChain() {
     let pendingKey: string | null = null;
     let pendingActor: string | null = null;
@@ -334,6 +346,7 @@ export function buildSupabaseMock(): {
       },
       from: (table: string) => {
         if (table === "hh_users") return hhUsersChain();
+        if (table === "hh_roles") return hhRolesChain();
         if (table === "hh_idempotency") return idempotencyChain();
         return noopChain();
       },

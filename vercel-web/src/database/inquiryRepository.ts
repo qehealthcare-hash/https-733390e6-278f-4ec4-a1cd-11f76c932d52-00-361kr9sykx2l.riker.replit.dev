@@ -11,7 +11,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
-import { sanitizeSearchTerm } from "@/lib/api/security";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 
 const TABLE = "hh_inquiries";
 const PATIENTS = "hh_patients";

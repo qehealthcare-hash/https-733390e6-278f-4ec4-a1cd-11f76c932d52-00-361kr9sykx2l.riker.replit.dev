@@ -82,26 +82,5 @@ export function hasBlockedUploadExtension(fileName: string): boolean {
   return BLOCKED_UPLOAD_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
-/**
- * Sanitises a user-supplied search term before it is interpolated into a
- * PostgREST `.or(...)` filter string.
- *
- * The supabase-js client only URL-encodes the comma-separated list it
- * receives — it does NOT escape the commas / parens that act as PostgREST
- * structural syntax. That means a raw `q` containing `,` or `)(` could
- * break out of one `ilike` clause and inject extra `and(...)` / `or(...)`
- * predicates. RLS still applies (so the blast radius is row-filter bypass,
- * not full table read), but tightening here removes the entire class.
- *
- * We also drop `%` (the ilike wildcard) and `*` (the PostgREST glob) so
- * a single character can't turn an `.ilike('%a%')` into `'%%%'` which the
- * DB plans as a full table scan, and cap the term length so the OR list
- * stays well under the PostgREST URL length limit (~8 KB).
- */
-export function sanitizeSearchTerm(raw: string | null | undefined, maxLength = 64): string {
-  if (raw == null) return "";
-  const trimmed = String(raw).trim();
-  if (!trimmed) return "";
-  const stripped = trimmed.replace(/[,()*%\\]/g, "");
-  return stripped.slice(0, maxLength);
-}
+/** @deprecated Import from `@/utils/searchTerm` — re-exported for compatibility. */
+export { sanitizeSearchTerm } from "@/utils/searchTerm";

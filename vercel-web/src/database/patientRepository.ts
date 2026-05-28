@@ -12,7 +12,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery } from "@/database/supabaseClient";
-import { sanitizeSearchTerm } from "@/lib/api/security";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 import { patientNameKey } from "@/business/patientRules";
 
 const TABLE = "hh_patients";

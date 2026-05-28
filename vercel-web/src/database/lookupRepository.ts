@@ -10,7 +10,7 @@ import type { ApiResult } from "@/types/common";
 import type { DbAccess, JsonRow } from "@/database/types";
 import { resolveClient } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
-import { sanitizeSearchTerm } from "@/lib/api/security";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 
 export const lookupRepository = {
   /** Patient lookup view (id, name, phone, area, city, status). */

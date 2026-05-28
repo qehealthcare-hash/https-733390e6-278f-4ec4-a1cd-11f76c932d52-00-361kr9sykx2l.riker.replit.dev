@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseAdmin } from "./supabase";
+import { idempotencyRepository } from "@/database/idempotencyRepository";
 import type { ActorContext } from "./auth";
 
 /**
@@ -28,18 +28,14 @@ export async function withIdempotency(
 ): Promise<NextResponse> {
   const key = (req.headers.get("idempotency-key") || req.headers.get("Idempotency-Key") || "").trim();
   if (!key) return run();
-  const admin = supabaseAdmin();
   const ttl = config.ttlMs ?? DEFAULT_TTL_MS;
   const cutoff = new Date(Date.now() - ttl).toISOString();
 
-  const cached = await admin
-    .from("hh_idempotency")
-    .select("response, status, created_at")
-    .eq("key", key)
-    .eq("actor", actor.email)
-    .gte("created_at", cutoff)
-    .maybeSingle();
-
+  const cached = await idempotencyRepository.findCached(key, actor.email, cutoff);
+  if (!cached.success) {
+    console.error("[idempotency] cache read failed", cached.error);
+    return run();
+  }
   if (cached.data) {
     return NextResponse.json(cached.data.response ?? { ok: true, data: null }, {
       status: cached.data.status || 200,
@@ -51,19 +47,21 @@ export async function withIdempotency(
   try {
     const text = await response.clone().text();
     let json: unknown = null;
-    try { json = text ? JSON.parse(text) : null; } catch { json = null; }
-    await admin
-      .from("hh_idempotency")
-      .upsert(
-        {
-          key,
-          actor: actor.email,
-          route: config.route,
-          response: json as Record<string, unknown> | null,
-          status: response.status
-        },
-        { onConflict: "key,actor" }
-      );
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+    const persist = await idempotencyRepository.upsert({
+      key,
+      actor: actor.email,
+      route: config.route,
+      response: json as Record<string, unknown> | null,
+      status: response.status
+    });
+    if (!persist.success) {
+      console.error("[idempotency] persist failed", persist.error);
+    }
   } catch (err) {
     console.error("[idempotency] persist failed", err);
   }

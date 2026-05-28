@@ -9,12 +9,14 @@
  * Repositories (in /src/database/*) MUST go through these helpers. Never
  * import `@supabase/supabase-js` directly elsewhere.
  *
- * The implementation delegates to the existing client in @/lib/api/supabase
- * so we have ONE underlying SDK instance and no duplicate connection pools.
+ * Client factories live in `@/database/clients` (single SDK connection pool).
  */
 
 import type { SupabaseClient, PostgrestError } from "@supabase/supabase-js";
-import { supabaseAdmin as legacyAdmin, supabaseAsUser as legacyAsUser } from "@/lib/api/supabase";
+import {
+  adminClient as legacyAdmin,
+  supabaseAsUser as legacyAsUser
+} from "@/database/clients";
 import type { ApiResult } from "@/types/common";
 import { dbFailure } from "@/utils/apiResponse";
 

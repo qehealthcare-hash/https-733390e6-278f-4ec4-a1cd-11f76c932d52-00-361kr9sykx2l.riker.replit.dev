@@ -13,10 +13,19 @@ import {
   updateRow
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
-import { sanitizeSearchTerm } from "@/lib/api/security";
+import { adminClient } from "@/database/clients";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
+import { parseRolePerms } from "@/utils/rolePermissions";
 
 const USERS = "hh_users";
 const ROLES = "hh_roles";
+
+export interface ResolvedActorRow {
+  userId: string;
+  email: string;
+  username: string;
+  role: string;
+}
 
 export interface UserListQuery extends DbAccess {
   q?: string;
@@ -97,6 +106,49 @@ export const userRepository = {
 
   remove(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
     return deleteRow(USERS, id, "user", opts);
+  },
+
+  /**
+   * Resolve a Supabase JWT to an active `hh_users` row (used by `requireActor`).
+   */
+  async resolveActorFromToken(accessToken: string): Promise<ApiResult<ResolvedActorRow | null>> {
+    const admin = adminClient();
+    const { data: userData, error: userErr } = await admin.auth.getUser(accessToken);
+    if (userErr || !userData?.user) {
+      return { success: false, error: userErr?.message || "Invalid session", code: "unauthorized" };
+    }
+
+    const email = (userData.user.email || "").toLowerCase();
+    if (!email) {
+      return { success: false, error: "Session has no email", code: "unauthorized" };
+    }
+
+    const appUser = await runQuery<JsonRow | null>(
+      () =>
+        admin
+          .from(USERS)
+          .select("id, username, email, role, is_active")
+          .ilike("email", email)
+          .eq("is_active", true)
+          .maybeSingle(),
+      "user.resolveActorFromToken.hh_users"
+    );
+    if (!appUser.success) {
+      return { success: false, error: appUser.error, code: appUser.code, details: appUser.details };
+    }
+    if (!appUser.data) {
+      return { success: true, data: null };
+    }
+
+    return {
+      success: true,
+      data: {
+        userId: String(appUser.data.id),
+        email,
+        username: String(appUser.data.username || email),
+        role: String(appUser.data.role || "Staff")
+      }
+    };
   }
 };
 
@@ -156,5 +208,18 @@ export const roleRepository = {
 
   remove(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
     return deleteRow(ROLES, id, "role", opts);
+  },
+
+  async listPermissionsForRoleName(name: string, opts?: DbAccess): Promise<ApiResult<string[]>> {
+    const label = String(name || "").trim();
+    if (!label) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    const row = await runQuery<JsonRow | null>(
+      () => db.from(ROLES).select("perms").ilike("name", label).maybeSingle(),
+      "role.listPermissionsForRoleName"
+    );
+    if (!row.success) return { success: false, error: row.error, code: row.code, details: row.details };
+    if (!row.data) return { success: true, data: [] };
+    return { success: true, data: parseRolePerms(row.data.perms) };
   }
 };

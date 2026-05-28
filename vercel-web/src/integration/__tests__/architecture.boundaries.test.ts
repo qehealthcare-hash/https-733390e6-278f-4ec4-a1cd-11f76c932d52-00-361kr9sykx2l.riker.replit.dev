@@ -207,6 +207,10 @@ describe("architecture: layering boundaries", () => {
         patterns: [/^@\/validation\//]
       },
       {
+        rule: "src/database → @/lib/api/security (HTTP layer)",
+        patterns: [/^@\/lib\/api\/security$/]
+      },
+      {
         rule: "src/database → next/*",
         patterns: [/^next\b/]
       }

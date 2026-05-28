@@ -10,7 +10,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery } from "@/database/supabaseClient";
-import { sanitizeSearchTerm } from "@/lib/api/security";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 
 const TABLE = "hh_employees";
 const SCOPE = "employeeRepository";

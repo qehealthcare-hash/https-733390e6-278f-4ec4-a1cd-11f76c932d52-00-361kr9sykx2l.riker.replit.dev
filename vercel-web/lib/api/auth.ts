@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { supabaseAdmin } from "./supabase";
+import { userRepository } from "@/database/userRepository";
 import { forbidden, unauthorized } from "./errors";
 
 export type AppRole = "Admin" | "Manager" | "Staff" | "Accountant" | "Nurse" | string;
@@ -27,28 +27,16 @@ function extractBearer(req: NextRequest): string {
  */
 export async function requireActor(req: NextRequest): Promise<ActorContext> {
   const accessToken = extractBearer(req);
-  const admin = supabaseAdmin();
+  const resolved = await userRepository.resolveActorFromToken(accessToken);
+  if (!resolved.success) throw unauthorized(resolved.error || "Invalid session");
+  if (!resolved.data) throw forbidden("Account is not provisioned in CRM (hh_users)");
 
-  const { data: userData, error: userErr } = await admin.auth.getUser(accessToken);
-  if (userErr || !userData?.user) throw unauthorized("Invalid session");
-
-  const email = (userData.user.email || "").toLowerCase();
-  if (!email) throw unauthorized("Session has no email");
-
-  const { data: appUser, error: appErr } = await admin
-    .from("hh_users")
-    .select("id, username, email, role, is_active")
-    .ilike("email", email)
-    .eq("is_active", true)
-    .maybeSingle();
-  if (appErr) throw unauthorized(appErr.message);
-  if (!appUser) throw forbidden("Account is not provisioned in CRM (hh_users)");
-
+  const appUser = resolved.data;
   return {
-    userId: appUser.id,
-    email,
-    username: appUser.username || email,
-    role: appUser.role || "Staff",
+    userId: appUser.userId,
+    email: appUser.email,
+    username: appUser.username,
+    role: appUser.role,
     accessToken
   };
 }

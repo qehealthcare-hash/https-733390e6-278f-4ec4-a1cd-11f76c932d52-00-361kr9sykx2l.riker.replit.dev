@@ -24,10 +24,13 @@ import {
   sendBillSchema,
   sendTemplateSchema,
   sendTextSchema,
+  whatsappWebhookPayloadSchema,
   type SendBillInput,
   type SendTemplateInput,
-  type SendTextInput
+  type SendTextInput,
+  type WhatsAppWebhookPayload
 } from "@/validation/whatsappValidation";
+import { parseInput } from "@/validation/parseValidation";
 
 async function callWhatsApp(body: unknown): Promise<ApiResult<{
   messages?: Array<{ id?: string }>;
@@ -228,9 +231,11 @@ export const whatsappService = {
     payload: unknown,
     opts?: { verified?: boolean }
   ): Promise<ApiResult<{ ok: true; verified: boolean }>> {
-    const events =
-      ((payload as { entry?: Array<{ changes?: unknown[] }> })?.entry || [])
-        .flatMap((e) => e.changes || []) as Array<{ value?: Record<string, unknown> }>;
+    const parsed = parseInput(whatsappWebhookPayloadSchema, payload);
+    if (!parsed.success) return passFailure(parsed);
+    const body = parsed.data as WhatsAppWebhookPayload;
+
+    const events = (body.entry || []).flatMap((e) => e.changes || []);
     const verifiedFlag = opts?.verified === false ? "UNVERIFIED" : "DELIVERED";
 
     let statusUpdates = 0;
@@ -238,7 +243,7 @@ export const whatsappService = {
 
     for (const change of events) {
       const value = change.value || {};
-      const statuses = (value.statuses as Array<{ id?: string; status?: string }>) || [];
+      const statuses = value.statuses || [];
       for (const status of statuses) {
         const providerId = status?.id || "";
         const next = (status?.status || "").toUpperCase();
@@ -249,7 +254,7 @@ export const whatsappService = {
         if (!updated.success) return passFailure(updated);
         statusUpdates += 1;
       }
-      const incoming = (value.messages as Array<{ from?: string }>) || [];
+      const incoming = value.messages || [];
       for (const msg of incoming) {
         const id = newId.whatsapp();
         const inserted = await whatsappRepository.insert({

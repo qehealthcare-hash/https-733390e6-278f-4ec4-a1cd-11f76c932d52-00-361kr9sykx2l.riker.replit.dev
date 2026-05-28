@@ -21,11 +21,13 @@ import { ErrorCodes } from "@/types/common";
 import {
   dutySchema,
   dutyCancelSchema,
+  dutyCheckAtSchema,
   dutyListQuerySchema,
   dutyMaterializeSchema,
   dutyPartnersSchema,
   type DutyInput,
   type DutyCancelInput,
+  type DutyCheckAtInput,
   type DutyListQuery,
   type DutyMaterializeInput,
   type DutyPartnersInput,
@@ -885,9 +887,13 @@ export const dutyService = {
 
   async checkIn(
     id: string,
-    at: string | undefined,
+    rawInput: unknown,
     ctx: DutyServiceContext
   ): Promise<ApiResult<DutyApiRow>> {
+    const parsed = parseInput(dutyCheckAtSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const at = (parsed.data as DutyCheckAtInput).at;
+
     const existing = await loadDuty(id, ctx);
     if (!existing.success) return passFailure(existing);
     const access = dbAccess(ctx);
@@ -926,9 +932,13 @@ export const dutyService = {
 
   async checkOut(
     id: string,
-    at: string | undefined,
+    rawInput: unknown,
     ctx: DutyServiceContext
   ): Promise<ApiResult<DutyApiRow>> {
+    const parsed = parseInput(dutyCheckAtSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const at = (parsed.data as DutyCheckAtInput).at;
+
     const existing = await loadDuty(id, ctx);
     if (!existing.success) return passFailure(existing);
     const access = dbAccess(ctx);
