@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getBrowserSupabase } from "@/lib/supabase/browser";
 import { flushOfflineQueue, request } from "@/lib/api-client";
 
@@ -16,6 +16,12 @@ export function AuthProvider({ children }) {
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [syncLabel, setSyncLabel] = useState("Connecting...");
+  // Latest session for the offline-queue listeners (closures need the
+  // newest token, not the one in scope when the listener registered).
+  const sessionRef = useRef(null);
+  useEffect(function () {
+    sessionRef.current = session;
+  }, [session]);
 
   useEffect(function () {
     let mounted = true;
@@ -97,8 +103,32 @@ export function AuthProvider({ children }) {
       }
     });
 
+    // P1-3: replay the offline queue when the tab comes back online or
+    // visibility flips to "visible". Holding queued writes until the next
+    // explicit auth event (login / token refresh) meant a user who simply
+    // alt-tabbed away during a Wi-Fi blip waited until the next login to
+    // get their saves through. These listeners reuse the same session-aware
+    // flush path so an expired/refreshed session is handled centrally.
+    function handleOnline() {
+      var current = sessionRef.current;
+      if (current?.access_token) runBackgroundSync(current);
+    }
+    function handleVisibility() {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        handleOnline();
+      }
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", handleOnline);
+      window.addEventListener("visibilitychange", handleVisibility);
+    }
+
     return function cleanup() {
       mounted = false;
+      if (typeof window !== "undefined") {
+        window.removeEventListener("online", handleOnline);
+        window.removeEventListener("visibilitychange", handleVisibility);
+      }
       subscription.data.subscription.unsubscribe();
     };
   }, [supabase]);

@@ -103,10 +103,15 @@ export async function flushOfflineQueue(session) {
   if (!queue.length || !session?.access_token) return;
   var failed = [];
   for (var i = 0; i < queue.length; i += 1) {
+    var entry = queue[i] || {};
+    var attempts = Number(entry.attempts || 0);
     try {
-      await request(queue[i].path, queue[i].options, session);
+      await request(entry.path, entry.options, session);
     } catch (error) {
-      failed.push(queue[i]);
+      if (attempts + 1 < OFFLINE_RETRY_CAP) {
+        entry.attempts = attempts + 1;
+        failed.push(entry);
+      }
     }
   }
   saveQueue(failed);
@@ -169,14 +174,40 @@ export async function request(path, options, session) {
   return unwrapResponse(json, response);
 }
 
+/**
+ * P1-3: enqueue retry candidates so the offline queue replays them later.
+ * Three failure modes qualify for an enqueue:
+ *   1. fetch reject (network error) when the tab is offline
+ *   2. HTTP status >= 500 (transient 5xx — request reached the server but
+ *      something downstream barfed; replay is safe because every write
+ *      route is wrapped in withIdempotency)
+ *   3. fetch reject regardless of navigator.onLine (some browsers lag the
+ *      online flag by a few seconds after Wi-Fi recovers)
+ * GETs and the dedicated /auth/login proxy are never enqueued. Each entry
+ * carries an attempt counter so flushOfflineQueue can give up after N tries.
+ */
+var OFFLINE_RETRY_CAP = 5;
+
+function enqueueRetry(path, options) {
+  if (typeof window === "undefined") return;
+  if (!options || !options.method || options.method === "GET") return;
+  if (path === "/auth/login") return;
+  var queue = readQueue();
+  queue.push({ path: path, options: options, attempts: 0, queued_at: Date.now() });
+  saveQueue(queue);
+}
+
 export async function requestWithOfflineFallback(path, options, session) {
   try {
-    return await request(path, options, session);
+    var result = await request(path, options, session);
+    return result;
   } catch (error) {
-    if (typeof window !== "undefined" && !navigator.onLine && options?.method && options.method !== "GET") {
-      var queue = readQueue();
-      queue.push({ path, options });
-      saveQueue(queue);
+    var transient5xx = typeof error?.status === "number" && error.status >= 500;
+    var networkReject = error?.code === "network_error";
+    if (typeof window !== "undefined" && options?.method && options.method !== "GET") {
+      if (transient5xx || networkReject || !navigator.onLine) {
+        enqueueRetry(path, options);
+      }
     }
     throw error;
   }
