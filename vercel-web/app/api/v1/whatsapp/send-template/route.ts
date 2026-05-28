@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff"]);
+  requireRole(actor, ["Admin", "Manager"]);
   const body = await parseJsonBody(req);
   const result = await whatsappService.sendTemplate(body, toServiceContext(actor));
   return respond(result);
