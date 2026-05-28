@@ -1338,11 +1338,20 @@ function PayoutsPageContent() {
                   <div className="field">
                     <label>Period (YYYY-MM)</label>
                     <input
+                      type="month"
                       value={ensureForm.period_month}
                       onChange={function (event) {
-                        setEnsureForm({ ...ensureForm, period_month: event.target.value });
+                        var v = event.target.value;
+                        // P1-17: never trust the keyboard. Some browsers still
+                        // let you free-type into a type="month" input, and a
+                        // stray ":" or "13" got serialized straight into
+                        // hh_payouts.period_month, breaking every downstream
+                        // group-by. Validate against the strict month regex.
+                        if (v && !/^\d{4}-(0[1-9]|1[0-2])$/.test(v)) return;
+                        setEnsureForm({ ...ensureForm, period_month: v });
                       }}
                       placeholder={currentPeriod()}
+                      pattern="\d{4}-(0[1-9]|1[0-2])"
                       required
                     />
                   </div>
@@ -1592,11 +1601,15 @@ function PayoutsPageContent() {
                 <div className="field">
                   <label>Period</label>
                   <input
+                    type="month"
                     value={periodFilter}
                     onChange={function (event) {
-                      setPeriodFilter(event.target.value);
+                      var v = event.target.value;
+                      if (v && !/^\d{4}-(0[1-9]|1[0-2])$/.test(v)) return;
+                      setPeriodFilter(v);
                     }}
                     placeholder="YYYY-MM"
+                    pattern="\d{4}-(0[1-9]|1[0-2])"
                   />
                 </div>
                 <div className="field">
