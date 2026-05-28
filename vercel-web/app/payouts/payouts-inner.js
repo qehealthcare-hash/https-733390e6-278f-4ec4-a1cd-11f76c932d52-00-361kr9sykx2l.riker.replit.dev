@@ -98,6 +98,28 @@ function PayoutsPageContent() {
   var [adjustForm, setAdjustForm] = useState(emptyAdjustForm());
   var [payForm, setPayForm] = useState(emptyPayForm());
   var [advanceForm, setAdvanceForm] = useState(emptyAdvanceForm());
+  // P1-29: every URL.createObjectURL() we mint for a proof preview must
+  // eventually be released, otherwise the file's bytes stay in browser memory
+  // until the tab closes. The ref accumulates created URLs and the unmount
+  // cleanup + per-replace dispose calls revoke them.
+  var proofObjectUrlsRef = useRef([]);
+  useEffect(function () {
+    return function cleanup() {
+      try {
+        proofObjectUrlsRef.current.forEach(function (u) {
+          if (u) URL.revokeObjectURL(u);
+        });
+      } catch (_e) { /* tab closing — best effort */ }
+      proofObjectUrlsRef.current = [];
+    };
+  }, []);
+  function disposeProofObjectUrl(proof) {
+    if (!proof || !proof.preview_url) return;
+    try { URL.revokeObjectURL(proof.preview_url); } catch (_e) { /* noop */ }
+    proofObjectUrlsRef.current = proofObjectUrlsRef.current.filter(function (u) {
+      return u !== proof.preview_url;
+    });
+  }
   var [advanceOpen, setAdvanceOpen] = useState(false);
   var [rateRepairRate, setRateRepairRate] = useState("");
   var [pending, setPending] = useState(null);
@@ -609,6 +631,7 @@ function PayoutsPageContent() {
       try {
         if (typeof window !== "undefined" && window.URL && file) {
           previewUrl = window.URL.createObjectURL(file);
+          if (previewUrl) proofObjectUrlsRef.current.push(previewUrl);
         }
       } catch (_e) {
         previewUrl = null;
@@ -621,10 +644,13 @@ function PayoutsPageContent() {
       };
       if (target === "pay") {
         setPayForm(function (f) {
+          // P1-29: if an old proof was attached, release its blob URL first.
+          disposeProofObjectUrl(f.proof);
           return { ...f, proof: enriched };
         });
       } else {
         setAdvanceForm(function (f) {
+          disposeProofObjectUrl(f.proof);
           return { ...f, proof: enriched };
         });
       }
