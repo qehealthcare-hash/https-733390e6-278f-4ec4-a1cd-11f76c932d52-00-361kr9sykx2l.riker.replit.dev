@@ -6,10 +6,12 @@ One row per finding. The pass/fail check is the single observable that closes th
 Score = `(checks passing / total checks)`. Computed by the test suite, never by LLM judgment.
 Do not edit IDs, severity, or location — only the test that validates the check may evolve.
 
-Total rows: 73 (9 P0 + 53 P1 + 10 P2 + 1 P3).
+Total rows: 91 (12 P0 + 66 P1 + 12 P2 + 1 P3).
 
 Rows P0-1 — P1-38 are the original audit (`HOMINAL_CRM_ENTERPRISE_QA_AUDIT_2026-05-28.md`).
-Rows P0-8 onward and P1-39 onward come from the 2026-05-28 follow-up deep audit (security / integrity / a11y sweep). Once a row is added, it never moves — scoring counts every row in the table.
+Rows P0-8/P0-9 and P1-39 — P1-53 come from the 2026-05-28 follow-up deep audit (security / integrity / a11y sweep).
+Rows P0-10/P0-11 and P1-54 — P1-64 (plus P2-11) come from the 2026-05-28 RLS row-scoping sweep — see Appendix B.
+Rows P0-12, P1-65, P1-66, P2-12 come from the 2026-05-28 `npm audit` + committed-secrets sweep. Once a row is added, it never moves — scoring counts every row in the table.
 
 | ID | Sev | Location | Pass check |
 |---|---|---|---|
@@ -86,6 +88,56 @@ Rows P0-8 onward and P1-39 onward come from the 2026-05-28 follow-up deep audit 
 | P2-9 | P2 | `vercel-web/app/employees/page.js:1307-1330` + every other form page surfacing `fieldErrors` | Form inputs with server-side validation errors carry `aria-invalid="true"` AND `aria-describedby` pointing at an inline error node — no bullet-list-of-errors disconnected from the input. |
 | P2-10 | P2 | `vercel-web/components/ui/document-card.js:123-132` | `Remove` button routes through `useConfirm` before invoking `props.onRemove(doc)` — a mis-tap cannot silently drop an attached document from a patient/employee form. |
 | P3-1 | P3 | `vercel-web/app/api/v1/health/route.ts`, `vercel-web/src/services/healthService.ts:30-49` | Anonymous `/api/v1/health` response is the minimal `{status: 'ok'|'unavailable'}` shape in every environment (no `deps.openai/whatsapp/monitoring`, no raw `probe.error`) — verbose diagnostics live behind an authenticated `/admin/diagnostics` endpoint gated by `USER_ADMIN_ROLES`. |
+| P0-10 | P0 | DB policy `hh_patients_authenticated_access` on `public.hh_patients` (live: `qual=hh_is_active_app_user()`) | `hh_patients` SELECT policy is row-scoped: back-office roles see all rows; non-back-office roles see only patients with `exists(select 1 from hh_duties where patient_id=hh_patients.id and employee_id=hh_current_employee_id())` — the blanket `hh_is_active_app_user()` policy is gone. |
+| P0-11 | P0 | DB policy `hh_employees_authenticated_access` on `public.hh_employees` (live: `qual=hh_is_active_app_user()`) | `hh_employees` SELECT policy restricts non-back-office callers to their own row (`hh_employees.id = hh_current_employee_id()`); blanket `hh_is_active_app_user()` policy is replaced. Salary / Aadhar / PAN no longer enumerable by Nurse. |
+| P1-54 | P1 | DB policy `hh_billings_authenticated_access` on `public.hh_billings` | `hh_billings` SELECT policy gates non-back-office callers to bills whose `patient_id` is on a duty assigned to them; writes are split out to `Admin/Manager/Accountant`. |
+| P1-55 | P1 | DB policy `hh_receipts_authenticated_access` on `public.hh_receipts` | `hh_receipts` SELECT policy is back-office-only (`hh_is_back_office()`); writes restricted to `Admin/Manager/Accountant/Staff`. Nurse cannot enumerate payment history. |
+| P1-56 | P1 | DB policy `hh_payouts_auth_read` on `public.hh_payouts` | `hh_payouts` SELECT policy allows non-back-office callers to see only rows where `employee_id = hh_current_employee_id()` (own slip). Existing role-gated insert/update/delete policies retained. |
+| P1-57 | P1 | DB policy `hh_payout_charges_authenticated_access` on `public.hh_payout_charges` | `hh_payout_charges` SELECT policy scopes non-back-office callers to `partner_id = hh_current_employee_id()`; writes restricted to `Admin/Manager/Accountant`. |
+| P1-58 | P1 | DB policies on `public.hh_invoices` and `public.hh_invoice_lines` (both `hh_*_authenticated_access`, qual `hh_is_active_app_user()`) | Both tables: SELECT scoped to back-office OR (for invoices) join to a duty owned by caller. Writes restricted to `Admin/Manager/Accountant`. |
+| P1-59 | P1 | DB policy `hh_audit_logs_authenticated_access` on `public.hh_audit_logs` (FOR ALL) | Read restricted to `Admin`; write blocked to `authenticated` (only `service_role` writes via SECURITY DEFINER RPCs). Closes the read side of NF-2. |
+| P1-60 | P1 | DB policy `hh_whatsapp_messages_auth_write` on `public.hh_whatsapp_messages` (FOR ALL) | Read restricted to `Admin/Manager`; inbound write only through the webhook RPC (no `to authenticated` write policy). Closes the read side of NF-10. |
+| P1-61 | P1 | DB policy `hh_inquiries_authenticated_access` on `public.hh_inquiries` | Read scoped: back-office sees all; non-back-office sees only inquiries where `assigned_to` matches the caller (or `created_by`). Writes restricted to `Admin/Manager/Staff`. |
+| P1-62 | P1 | DB policy `hh_users_authenticated_access` on `public.hh_users` (FOR ALL) | Read restricted to `Admin` (full) and the caller's own row (`lower(email)=hh_auth_email()`); writes are `Admin`-only (closes NF-1 read side; write side already needs migration). |
+| P1-63 | P1 | DB policies on `public.hh_duties` and `public.hh_attendance` (both `*_auth_write` FOR ALL, qual `hh_is_active_app_user()`) | SELECT for non-back-office scoped to rows where `employee_id = hh_current_employee_id()`; writes routed through `Admin/Manager/Supervisor` policies. |
+| P1-64 | P1 | DB policy `hh_duty_days_read` on `public.hh_duty_days` | Read scoped: back-office sees all; non-back-office sees only days whose parent duty's `employee_id` matches the caller. Writes already default-deny (no `INSERT/UPDATE/DELETE` policy under RLS). |
+| P2-11 | P2 | DB policies on `public.hh_doctors`, `public.hh_vendors`, `public.hh_roles`, `public.hh_paid_transactions`, `public.hh_counters`, `public.hh_svc_entries`, `public.hh_ai_conversations`, `public.hh_ai_messages` (all FOR ALL `hh_is_active_app_user()`) | Each table's blanket FOR-ALL policy is split into `SELECT` (kept open to authenticated for catalog tables; back-office-only for financial `hh_paid_transactions` / `hh_svc_entries`) and role-gated `INSERT/UPDATE/DELETE` policies — no remaining policy uses `cmd='*'` with predicate `hh_is_active_app_user()` on `with_check`. |
+| P0-12 | P0 | `hominal_crm_*.html`, `hominal_all_scripts.js`, `vercel-legacy-web/index.html`, `hominal-healthcare-crm/apps/web/lib/supabase/browser.js:4-6` | Zero tracked files contain a literal Supabase JWT (`eyJ…`) or hardcoded `NEXT_PUBLIC_SUPABASE_ANON_KEY` fallback — anon keys load only from env / runtime config. After removal, rotate the exposed anon key in Supabase Dashboard. |
+| P1-65 | P1 | `hominal_crm_FINAL_fixed.html`, `hominal_crm_FINAL_working.html`, `hominal_crm_FINAL_workable.html`, `hominal_crm_singlefile.html`, `hominal_all_scripts.js`, `vercel-legacy-web/index.html` | Each file contains zero occurrences of the literal `admin123` (extends P0-1, which only gates `vercel-web/public/legacy-crm.html`). |
+| P1-66 | P1 | `vercel-web/package.json` (`@sentry/nextjs`) + `package-lock.json` (`uuid@9.0.1` via `@sentry/webpack-plugin`) | `@sentry/nextjs` is `>=10.54.0` AND `npm ls uuid` resolves to `>=11.1.1` with zero `npm audit` entries for GHSA-w5hq-g745-h8pq. |
+| P2-12 | P2 | `.github/workflows/audit-gate.yml` + `vercel-web/package-lock.json` | `npm audit --audit-level=high` in `vercel-web/` reports zero high or critical vulnerabilities (moderate-only advisories tracked separately in P1-66). |
+
+---
+
+## Appendix B — Proposed RLS row-scoping (not applied)
+
+Source: live `pg_policy` dump of project `hkyjxdmkqkydnrafhpgn`, 2026-05-28. The current policy
+on 20 of 25 `hh_*` tables is a single `FOR ALL TO authenticated USING (hh_is_active_app_user())
+WITH CHECK (hh_is_active_app_user())` — i.e. any active CRM user can read every row, and (per
+NF-1/NF-2/NF-10) can also write directly via PostgREST. The application layer's `requireRole`
+gates do not bind to PostgREST because RLS is the only DB-layer enforcement point.
+
+The migration that closes findings P0-10/P0-11/P1-54..P1-64/P2-11 must apply on a Supabase
+branch first, in this order:
+
+1. helpers (`hh_current_employee_id`, `hh_is_back_office`)
+2. PHI tables (P0-10, P0-11) — patients, employees
+3. financial tables (P1-54 — P1-58) — billings, receipts, payouts, payout_charges, invoices
+4. operational tables (P1-59 — P1-64) — audit_logs, whatsapp_messages, inquiries, users, duties, attendance, duty_days
+5. catalog/non-PHI tables (P2-11) — doctors, vendors, roles, paid_transactions, counters, svc_entries, ai_*
+
+After the migration the only policies still using `hh_is_active_app_user()` on its own should
+be (a) catalog tables that are intentionally org-wide readable (`hh_doctors`, `hh_vendors`,
+`hh_roles` reads) and (b) `hh_app_settings` reads (already split today).
+
+The draft SQL — exactly as it would be applied — is mirrored in this PR description. It is
+NOT in `vercel-web/supabase/migrations/` yet; apply only after a Supabase branch dry-run plus
+regression-test confirmation that:
+
+- a Nurse JWT can no longer `select` rows from `hh_patients` outside their assigned duties,
+- a Nurse JWT cannot `select` other employees' salary rows from `hh_employees`,
+- a Nurse JWT can still `select` their own `hh_payouts` row but no one else's,
+- back-office roles (Admin/Manager/Accountant/Supervisor) retain full read.
 
 ---
 
