@@ -1,0 +1,181 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { Container } from "@/components/ui/container";
+import { Section } from "@/components/ui/section";
+import { Heading } from "@/components/ui/heading";
+import { Button } from "@/components/ui/button";
+import {
+  getPublicExamBySlug,
+  formatExamScheduleIST,
+} from "@/lib/exams/public";
+import {
+  getAttemptForUser,
+  getAttemptScorecard,
+} from "@/lib/exams/attempt";
+import { requireAuth } from "@/lib/auth/session";
+import { cn } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
+
+type Props = { params: Promise<{ slug: string }> };
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { slug } = await params;
+  const exam = await getPublicExamBySlug(slug);
+  return {
+    title: exam ? `${exam.title} — Your scorecard` : "Scorecard",
+    robots: { index: false },
+  };
+}
+
+type StatProps = {
+  label: string;
+  value: string | number;
+  tone?: "default" | "success" | "error" | "muted";
+};
+
+function Stat({ label, value, tone = "default" }: StatProps) {
+  return (
+    <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "mt-2 font-display text-3xl font-bold tabular-nums",
+          tone === "success" && "text-[var(--color-success)]",
+          tone === "error" && "text-[var(--color-error)]",
+          tone === "muted" && "text-[var(--color-text-muted)]",
+        )}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+export default async function ExamResultPage({ params }: Props) {
+  const { slug } = await params;
+  const exam = await getPublicExamBySlug(slug);
+  if (!exam) notFound();
+
+  const { user } = await requireAuth({
+    requireOnboarded: true,
+    loginPath: `/login?next=${encodeURIComponent(`/exams/${slug}/result`)}`,
+  });
+
+  const attempt = await getAttemptForUser(exam.id, user.id);
+  if (!attempt) {
+    return (
+      <Section padding="lg" tone="default">
+        <Container size="md" className="text-center">
+          <Heading as="h1" size="h3">
+            No attempt found
+          </Heading>
+          <p className="mt-3 text-[var(--color-text-muted)]">
+            You have not attempted this exam.
+          </p>
+          <Button asChild className="mt-6" variant="primary">
+            <Link href={`/exams/${slug}`}>Back to exam</Link>
+          </Button>
+        </Container>
+      </Section>
+    );
+  }
+
+  if (attempt.status === "in_progress") {
+    return (
+      <Section padding="lg" tone="default">
+        <Container size="md" className="text-center">
+          <Heading as="h1" size="h3">
+            Attempt still in progress
+          </Heading>
+          <p className="mt-3 text-[var(--color-text-muted)]">
+            Resume your attempt to complete or submit it.
+          </p>
+          <Button asChild className="mt-6" variant="primary">
+            <Link href={`/exams/${slug}/attempt`}>Resume attempt →</Link>
+          </Button>
+        </Container>
+      </Section>
+    );
+  }
+
+  const scorecard = await getAttemptScorecard(attempt, exam.question_count);
+  const total = exam.total_marks || 1;
+  const finalScore = Number(attempt.final_score ?? 0);
+  const percent = Math.max(0, Math.min(100, (finalScore / total) * 100));
+
+  return (
+    <Section padding="lg" tone="default">
+      <Container size="md">
+        <p className="text-sm font-semibold uppercase tracking-wider text-[var(--color-primary-600)]">
+          Scorecard
+        </p>
+        <Heading as="h1" size="h1" className="mt-3">
+          {exam.title}
+        </Heading>
+        <p className="mt-2 text-[var(--color-text-muted)]">
+          Submitted{" "}
+          {attempt.submitted_at
+            ? formatExamScheduleIST(attempt.submitted_at)
+            : "—"}
+          {attempt.auto_submitted && " (auto-submitted at time-up)"}
+        </p>
+
+        <div className="mt-8 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center shadow-[var(--shadow-card)]">
+          <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+            Final score
+          </p>
+          <p className="mt-2 font-display text-5xl font-bold tabular-nums text-[var(--color-text)]">
+            {finalScore.toFixed(2)}
+            <span className="text-2xl text-[var(--color-text-muted)]"> / {total}</span>
+          </p>
+          <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+            {percent.toFixed(1)}% — All-India rank publishes within 60 minutes
+            of exam close.
+          </p>
+        </div>
+
+        <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Stat
+            label="Correct"
+            value={scorecard?.correct_count ?? 0}
+            tone="success"
+          />
+          <Stat
+            label="Incorrect"
+            value={scorecard?.incorrect_count ?? 0}
+            tone="error"
+          />
+          <Stat
+            label="Unattempted"
+            value={scorecard?.unattempted_count ?? 0}
+            tone="muted"
+          />
+          <Stat label="Total Q" value={scorecard?.total_questions ?? 0} />
+        </div>
+
+        <div className="mt-10 flex flex-wrap gap-3">
+          <Button asChild variant="outline">
+            <Link href="/dashboard/exams">My exams</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href={`/exams/${slug}`}>Exam details</Link>
+          </Button>
+          {exam.status === "merit_published" && (
+            <Button asChild variant="primary">
+              <Link href={`/exams/${slug}/merit`}>View merit list</Link>
+            </Button>
+          )}
+        </div>
+
+        <p className="mt-10 text-sm text-[var(--color-text-faint)]">
+          Question-level review and topic breakdown ship in milestone 14
+          alongside the merit list.
+        </p>
+      </Container>
+    </Section>
+  );
+}

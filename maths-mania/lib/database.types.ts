@@ -210,8 +210,15 @@ export interface Database {
           is_correct: boolean | null;
           marks_awarded: number | null;
         };
-        Insert: Omit<Database["public"]["Tables"]["exam_answers"]["Row"], "id"> & {
+        Insert: Omit<
+          Database["public"]["Tables"]["exam_answers"]["Row"],
+          "id" | "is_correct" | "marks_awarded" | "marked_for_review" | "time_spent_sec"
+        > & {
           id?: string;
+          is_correct?: boolean | null;
+          marks_awarded?: number | null;
+          marked_for_review?: boolean;
+          time_spent_sec?: number;
         };
         Update: Partial<Database["public"]["Tables"]["exam_answers"]["Insert"]>;
         Relationships: [];
@@ -341,6 +348,30 @@ export interface Database {
       is_admin: {
         Args: Record<string, never>;
         Returns: boolean;
+      };
+      exam_server_now: {
+        Args: Record<string, never>;
+        Returns: string;
+      };
+      start_exam_attempt: {
+        Args: { p_exam_id: string };
+        Returns: {
+          attempt_id: string;
+          started_at: string;
+          exam_ends_at: string;
+          server_now: string;
+        }[];
+      };
+      submit_exam_attempt: {
+        Args: { p_attempt_id: string; p_auto_submitted?: boolean };
+        Returns: {
+          raw_score: number;
+          final_score: number;
+          correct_count: number;
+          incorrect_count: number;
+          unattempted_count: number;
+          total_questions: number;
+        }[];
       };
     };
     Enums: Record<string, never>;

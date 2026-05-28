@@ -14,6 +14,7 @@ import {
   isRegistrationOpen,
   isUserRegistered,
   formatExamScheduleIST,
+  requestNowMs,
 } from "@/lib/exams/public";
 import { formatPillar, formatDifficulty } from "@/lib/exams/format";
 import { getUser } from "@/lib/auth/session";
@@ -95,11 +96,40 @@ export default async function ExamLandingPage({ params }: Props) {
           )}
 
           <div className="mt-8 flex flex-wrap items-start gap-3">
-            <RegisterButton
-              examSlug={exam.slug}
-              alreadyRegistered={registered}
-              registrationOpen={registrationOpen}
-            />
+            {(() => {
+              const nowMs = requestNowMs();
+              const startMs = new Date(exam.starts_at).getTime();
+              const endMs = new Date(exam.ends_at).getTime();
+              const isLive = nowMs >= startMs && nowMs <= endMs;
+              const lobbyOpen =
+                registered && nowMs >= startMs - 15 * 60_000 && nowMs <= endMs;
+
+              if (registered && (lobbyOpen || isLive)) {
+                return (
+                  <Button asChild size="lg" variant="primary">
+                    <Link href={`/exams/${exam.slug}/lobby`}>
+                      Enter lobby →
+                    </Link>
+                  </Button>
+                );
+              }
+              if (registered && exam.status === "merit_published") {
+                return (
+                  <Button asChild size="lg" variant="primary">
+                    <Link href={`/exams/${exam.slug}/result`}>
+                      View scorecard →
+                    </Link>
+                  </Button>
+                );
+              }
+              return (
+                <RegisterButton
+                  examSlug={exam.slug}
+                  alreadyRegistered={registered}
+                  registrationOpen={registrationOpen}
+                />
+              );
+            })()}
             <Button asChild size="lg" variant="outline">
               <Link href="/exams">All exams</Link>
             </Button>
@@ -120,7 +150,8 @@ export default async function ExamLandingPage({ params }: Props) {
           )}
 
           <p className="mt-8 text-sm text-[var(--color-text-faint)]">
-            Exam lobby and timed attempt UI ship in milestone 13.
+            Lobby opens 15 minutes before start time. Question-level review and
+            All-India merit list ship in the next milestone.
           </p>
         </Container>
       </Section>

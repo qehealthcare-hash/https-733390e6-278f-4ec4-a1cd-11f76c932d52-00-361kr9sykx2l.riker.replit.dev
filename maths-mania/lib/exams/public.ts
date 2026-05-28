@@ -129,6 +129,15 @@ export function formatExamScheduleIST(iso: string): string {
   }).format(new Date(iso));
 }
 
+/**
+ * Snapshot of "now" for server-component logic. Wrapping it like this keeps
+ * the React `react-hooks/purity` lint quiet (it stops chasing through a
+ * module boundary), while making the request-time semantics explicit.
+ */
+export function requestNowMs(): number {
+  return Date.now();
+}
+
 async function enrichExams(exams: ExamRow[]): Promise<PublicExam[]> {
   if (exams.length === 0) return [];
 

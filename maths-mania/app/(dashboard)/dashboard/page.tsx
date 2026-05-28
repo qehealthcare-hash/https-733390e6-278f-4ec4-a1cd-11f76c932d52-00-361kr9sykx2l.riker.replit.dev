@@ -23,7 +23,7 @@ export default async function DashboardPage() {
         <span className="font-medium text-[var(--color-text)]">
           {profile.class_or_target?.replace(/-/g, " ") ?? "your goal"}
         </span>
-        . Live exam registration and attempt history land in milestone 12–15.
+        . Manage your registrations and scorecards from the panels below.
       </p>
 
       <div className="mt-10 grid gap-6 sm:grid-cols-2">
@@ -32,12 +32,17 @@ export default async function DashboardPage() {
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">
             Register for the next All-India mock — free, timed, ranked.
           </p>
-          <Button variant="primary" size="md" className="mt-4" asChild>
-            <Link href="/exams">
-              Browse exams
-              <ArrowRight className="size-4" aria-hidden />
-            </Link>
-          </Button>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="primary" size="md" asChild>
+              <Link href="/exams">
+                Browse exams
+                <ArrowRight className="size-4" aria-hidden />
+              </Link>
+            </Button>
+            <Button variant="outline" size="md" asChild>
+              <Link href="/dashboard/exams">My exams</Link>
+            </Button>
+          </div>
         </div>
         <div className="rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
           <h2 className="font-display text-lg font-bold">Practice</h2>
