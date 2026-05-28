@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import { formatCurrency, formatDate } from "@/lib/formatters";
+import { crmDayStartIso, crmDayEndIso } from "@/src/utils/crmToday";
 
 var DUTY_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW"];
 var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -473,9 +474,16 @@ export default function DutiesPage() {
     if (!auth.session?.access_token) return;
     setLoading(true);
     try {
-      var from = viewMonth + "-01T00:00:00.000Z";
+      // P1-20: bound the month window in IST (+05:30), not UTC. With a
+      // UTC bound, queries near month-end on India time were returning
+      // duties from the *next* month — e.g. a 31-Aug 11pm IST duty
+      // landed on 1-Sep UTC and got hidden under the August filter.
+      // crmDayStartIso/crmDayEndIso emit `+05:30` offsets so the bound
+      // matches the user's calendar.
+      var from = crmDayStartIso(viewMonth + "-01");
       var endDate = new Date(ym.year, ym.monthIndex + 1, 0);
-      var to = endDate.toISOString().slice(0, 10) + "T23:59:59.999Z";
+      var endKey = endDate.getFullYear() + "-" + String(endDate.getMonth() + 1).padStart(2, "0") + "-" + String(endDate.getDate()).padStart(2, "0");
+      var to = crmDayEndIso(endKey);
       var path = "/duties?limit=150&from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to);
       if (statusFilter) path += "&status=" + encodeURIComponent(statusFilter);
       if (filterPatient) path += "&patient_id=" + encodeURIComponent(filterPatient);
