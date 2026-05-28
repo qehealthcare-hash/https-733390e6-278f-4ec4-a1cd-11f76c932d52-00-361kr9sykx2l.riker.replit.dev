@@ -10,7 +10,10 @@
     "db:types": "supabase gen types typescript --local > lib/database.types.ts",
     "perf:lighthouse": "node scripts/lighthouse.mjs",
     "a11y:contrast": "node scripts/a11y-contrast.mjs",
-    "a11y:axe": "node scripts/a11y-axe.mjs"
+    "a11y:axe": "node scripts/a11y-axe.mjs",
+    "loadtest:prepare": "node scripts/loadtest-prepare.mjs",
+    "loadtest:smoke": "k6 run scripts/loadtest-smoke.js",
+    "loadtest": "k6 run --env-file scripts/.loadtest.env scripts/loadtest.js"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.12",

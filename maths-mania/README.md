@@ -10,7 +10,7 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 19 of 22 — Accessibility pass.** ✅ Complete (m1–m19)
+**Milestone 20 of 22 — Load testing.** ✅ Complete (m1–m20)
 
 **Milestone 10 — Supabase Auth.** ✅
 
@@ -61,6 +61,14 @@ Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** 
 - Accessible submit dialog (Radix), radiogroup roving focus, live timer announcements
 - `npm run a11y:contrast` — token contrast audit · `npm run a11y:axe` — axe on key routes
 - Video card alt text, darker faint text token, auth skip link
+
+**Milestone 20 — load testing.** ✅
+
+- `scripts/loadtest.js` — k6 ramp to 500 VUs, p95 &lt; 400ms target (§14.7)
+- `POST /api/exams/attempt/start` + `/answer` — bearer JWT autosave API for k6
+- `scripts/loadtest-prepare.mjs` — mint test users + `scripts/.loadtest.env`
+- Migration: `start_exam_attempt` race-safe on `(exam_id, user_id)`
+- See [docs/LOAD_TEST.md](docs/LOAD_TEST.md)
 
 **Milestone 11 — exam admin.** ✅
 
