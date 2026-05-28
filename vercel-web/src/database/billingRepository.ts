@@ -203,6 +203,31 @@ export const billingRepository = {
   },
 
   /**
+   * P1-19: insert all svc rows + flip duty.billing_id in one Postgres
+   * transaction. Stops the half-billed state the JS for-loop could leave
+   * behind if any single insert raised mid-loop.
+   */
+  generateFromDutyRangeRpc(
+    billingId: string,
+    dutyIds: string[],
+    svcRows: JsonRow[],
+    actorEmail: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<{ billing_id: string; inserted: number; duties_linked: number } | null>> {
+    return callRpc<{ billing_id: string; inserted: number; duties_linked: number }>(
+      "hominal_generate_from_duty_range",
+      {
+        p_billing_id: billingId,
+        p_duty_ids: dutyIds,
+        p_svc_rows: svcRows,
+        p_actor: actorEmail
+      },
+      `${SCOPE}.generateFromDutyRangeRpc`,
+      opts
+    );
+  },
+
+  /**
    * Replace the entire `hh_svc_entries` slice for a given `svc_key`.
    * Backed by `hominal_replace_service_entries(p_svc_key, p_rows)`. Returns
    * the row count inserted.

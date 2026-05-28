@@ -1480,10 +1480,15 @@ export const billingService = {
       );
     }
 
-    let created = 0;
     let skipped = 0;
     const billingId = String(billingRow.id);
 
+    // P1-19: build all svc rows up-front, then hand them to
+    // hominal_generate_from_duty_range so the inserts + duty.billing_id
+    // flips happen in one Postgres transaction. The old per-duty JS
+    // for-loop could leave a billing half-populated if any insert raised.
+    const svcRows: JsonRow[] = [];
+    const dutyIds: string[] = [];
     for (const duty of dutyList.data?.rows || []) {
       const status = String(duty.status || "").toUpperCase();
       if (status === "CANCELLED" || status === "NO_SHOW") {
@@ -1501,24 +1506,32 @@ export const billingService = {
         continue;
       }
       const amount = amountForShift(String(duty.shift_type || "DAY"), input.rate_overrides);
-      const row = buildServiceEntryFromDuty({
-        dutyId: String(duty.id),
-        patientId: String(duty.patient_id || input.patient_id),
+      svcRows.push(
+        buildServiceEntryFromDuty({
+          dutyId: String(duty.id),
+          patientId: String(duty.patient_id || input.patient_id),
+          billingId,
+          employeeId: String(duty.employee_id || ""),
+          startAt: String(duty.start_at || ""),
+          shiftType: String(duty.shift_type || "DAY"),
+          serviceName: input.service_name,
+          amount
+        }) as JsonRow
+      );
+      dutyIds.push(String(duty.id));
+    }
+
+    let created = 0;
+    if (svcRows.length > 0) {
+      const rpc = await billingRepository.generateFromDutyRangeRpc(
         billingId,
-        employeeId: String(duty.employee_id || ""),
-        startAt: String(duty.start_at || ""),
-        shiftType: String(duty.shift_type || "DAY"),
-        serviceName: input.service_name,
-        amount
-      });
-      const inserted = await billingRepository.insertSvc(row, access);
-      if (!inserted.success) return passFailure(inserted);
-      await dutyRepository.update(
-        String(duty.id),
-        { billing_id: billingId, updated_by: ctx.actor.email },
+        dutyIds,
+        svcRows,
+        ctx.actor.email || "system",
         access
       );
-      created += 1;
+      if (!rpc.success) return passFailure(rpc);
+      created = Number(rpc.data?.inserted || 0);
     }
 
     const totals = await loadBundleWithTotals(billingId, ctx);
