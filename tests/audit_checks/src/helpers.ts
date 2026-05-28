@@ -55,12 +55,51 @@ export interface SupabaseEnv {
 }
 
 export function requireSupabaseEnv(): SupabaseEnv {
-  const url = process.env.SUPABASE_URL || "";
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   if (!url || !serviceRoleKey) {
     throw new Error("ENV_MISSING: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY required for this probe");
   }
   return { url, serviceRoleKey };
+}
+
+/** REST credentials: service-role when set, otherwise anon (audit probe RPCs). */
+export function supabaseRestEnv(): { url: string; key: string } {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    "";
+  if (!url || !key) {
+    throw new Error(
+      "ENV_MISSING: set SUPABASE_URL and SUPABASE_ANON_KEY (or SERVICE_ROLE_KEY) in vercel-web/.env.local"
+    );
+  }
+  return { url, key };
+}
+
+/**
+ * Call a production `audit_probe_p1_*_ok()` RPC (boolean pass/fail only).
+ * Works with anon key — no `/pg/query` or service-role required.
+ */
+export async function rpcAuditProbeOk(fn: string): Promise<boolean> {
+  const { url, key } = supabaseRestEnv();
+  const res = await fetch(`${url.replace(/\/$/, "")}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json"
+    },
+    body: "{}"
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`RPC ${fn} failed: ${res.status} — ${text.slice(0, 200)}`);
+  }
+  const data: unknown = await res.json();
+  return data === true;
 }
 
 export function requireNurseJwt(): string {

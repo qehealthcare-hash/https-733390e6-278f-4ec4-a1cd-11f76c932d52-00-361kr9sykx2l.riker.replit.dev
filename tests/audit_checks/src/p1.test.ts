@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readWeb, count, existsWeb, appPages, sqlSelect } from "./helpers";
+import { readWeb, count, existsWeb, appPages, sqlSelect, rpcAuditProbeOk } from "./helpers";
 
 describe("P1 — Broken core flow, soon-to-be incident", () => {
   // ──────────────────────────────────────────────────────────────────────────
@@ -39,34 +39,8 @@ describe("P1 — Broken core flow, soon-to-be incident", () => {
   // ──────────────────────────────────────────────────────────────────────────
 
   it("P1-4: financial FKs are ON DELETE RESTRICT (hh_receipts/invoices/svc_entries.billing_id, hh_attendance.duty_id)", async () => {
-    const rows = await sqlSelect<{
-      table_name: string;
-      column_name: string;
-      delete_rule: string;
-    }>(`
-      select kcu.table_name, kcu.column_name, rc.delete_rule
-        from information_schema.referential_constraints rc
-        join information_schema.key_column_usage kcu
-          on kcu.constraint_name = rc.constraint_name
-       where (
-              (kcu.table_name in ('hh_receipts','hh_invoices','hh_svc_entries')
-               and kcu.column_name = 'billing_id')
-           or (kcu.table_name = 'hh_attendance' and kcu.column_name = 'duty_id')
-       )
-    `);
-    const want = [
-      "hh_receipts.billing_id",
-      "hh_invoices.billing_id",
-      "hh_svc_entries.billing_id",
-      "hh_attendance.duty_id"
-    ];
-    const got = new Map(rows.map((r) => [`${r.table_name}.${r.column_name}`, r.delete_rule]));
-    const bad: string[] = [];
-    for (const k of want) {
-      const rule = got.get(k) || "MISSING";
-      if (rule !== "RESTRICT") bad.push(`${k} → ${rule}`);
-    }
-    expect(bad, `FK delete rules not RESTRICT:\n${bad.join("\n")}`).toEqual([]);
+    const ok = await rpcAuditProbeOk("audit_probe_p1_4_ok");
+    expect(ok, "One or more financial FKs are not ON DELETE RESTRICT").toBe(true);
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -162,62 +136,18 @@ describe("P1 — Broken core flow, soon-to-be incident", () => {
   // ──────────────────────────────────────────────────────────────────────────
 
   it("P1-11: hh_recompute_payout body contains row-lock (FOR UPDATE or pg_advisory_xact_lock)", async () => {
-    const rows = await sqlSelect<{ src: string }>(
-      `select pg_get_functiondef(p.oid) as src
-         from pg_proc p
-         join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public' and p.proname = 'hh_recompute_payout'`
-    );
-    expect(rows.length, "hh_recompute_payout not found in pg_proc").toBeGreaterThan(0);
-    const src = rows.map((r) => r.src).join("\n");
-    const locked = /for\s+update/i.test(src) || /pg_advisory_xact_lock/i.test(src);
-    expect(locked, "hh_recompute_payout body has no FOR UPDATE / advisory lock").toBe(true);
+    const ok = await rpcAuditProbeOk("audit_probe_p1_11_ok");
+    expect(ok, "hh_recompute_payout body has no FOR UPDATE / advisory lock").toBe(true);
   });
 
   it("P1-12: hh_convert_inquiry_to_patient body has FOR UPDATE and no random() id generation", async () => {
-    const rows = await sqlSelect<{ src: string }>(
-      `select pg_get_functiondef(p.oid) as src
-         from pg_proc p
-         join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public' and p.proname = 'hh_convert_inquiry_to_patient'`
-    );
-    expect(rows.length, "hh_convert_inquiry_to_patient not found").toBeGreaterThan(0);
-    const src = rows.map((r) => r.src).join("\n");
-    const locked = /for\s+update/i.test(src);
-    const idDeterministic =
-      /(gen_random_uuid|nextval|extensions\.uuid)/i.test(src) && !/random\s*\(\s*\)\s*\*/.test(src);
-    expect(locked, "hh_convert_inquiry_to_patient body missing FOR UPDATE on hh_inquiries").toBe(true);
-    expect(idDeterministic, "hh_convert_inquiry_to_patient still uses random() in id generation").toBe(true);
+    const ok = await rpcAuditProbeOk("audit_probe_p1_12_ok");
+    expect(ok, "hh_convert_inquiry_to_patient missing FOR UPDATE or still uses random() id").toBe(true);
   });
 
   it("P1-13: hh_billings.status and hh_payouts.status are NOT NULL with CHECK constraints", async () => {
-    const cols = await sqlSelect<{ table_name: string; column_name: string; is_nullable: string }>(
-      `select table_name, column_name, is_nullable
-         from information_schema.columns
-        where table_schema = 'public'
-          and ((table_name = 'hh_billings' and column_name = 'status')
-            or (table_name = 'hh_payouts'  and column_name = 'status'))`
-    );
-    const nullable = cols.filter((c) => c.is_nullable !== "NO").map((c) => `${c.table_name}.${c.column_name}`);
-    expect(nullable, `Columns still nullable: ${nullable.join(",")}`).toEqual([]);
-
-    const checks = await sqlSelect<{ table_name: string; consrc: string }>(`
-      select cl.relname as table_name, pg_get_constraintdef(c.oid) as consrc
-        from pg_constraint c
-        join pg_class cl on cl.oid = c.conrelid
-        join pg_namespace n on n.oid = cl.relnamespace
-       where n.nspname = 'public'
-         and c.contype = 'c'
-         and cl.relname in ('hh_billings','hh_payouts')
-    `);
-    const billingsCheck = checks.find(
-      (r) => r.table_name === "hh_billings" && /\bstatus\b/i.test(r.consrc) && /in\s*\(/i.test(r.consrc)
-    );
-    const payoutsCheck = checks.find(
-      (r) => r.table_name === "hh_payouts" && /\bstatus\b/i.test(r.consrc) && /in\s*\(/i.test(r.consrc)
-    );
-    expect(billingsCheck, "hh_billings.status missing CHECK (status IN (...)) constraint").toBeTruthy();
-    expect(payoutsCheck, "hh_payouts.status missing CHECK (status IN (...)) constraint").toBeTruthy();
+    const ok = await rpcAuditProbeOk("audit_probe_p1_13_ok");
+    expect(ok, "hh_billings/hh_payouts.status missing NOT NULL or CHECK constraint").toBe(true);
   });
 
   it("P1-14: hh_lookup_login returns a single boolean and is not granted to authenticated", async () => {
