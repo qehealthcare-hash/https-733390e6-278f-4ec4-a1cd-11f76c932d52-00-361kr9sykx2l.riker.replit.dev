@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { userRepository } from "@/database/userRepository";
+import { adminClient } from "@/database/supabaseClient";
 import { forbidden, unauthorized } from "./errors";
 
 export type AppRole = "Admin" | "Manager" | "Staff" | "Accountant" | "Nurse" | string;
@@ -22,6 +23,28 @@ function extractBearer(req: NextRequest): string {
 }
 
 /**
+ * P1-37: look up the hh_users row by email with `.eq('email', X.toLowerCase())`,
+ * never `.ilike`. The Auth user object holds the canonical email; we
+ * normalize once here and again at the repository layer so the index is
+ * actually used and we don't accidentally match partial patterns.
+ *
+ * Lookup is split between userRepository.resolveActorFromToken (which knows
+ * how to join hh_users to hh_roles for the role label) and this fallback
+ * `.eq("email", email.toLowerCase())` probe — kept here so the auth layer
+ * stays grep-able for "where does the email match happen?" audits.
+ */
+async function loadAppUserByEmail(email: string) {
+  const admin = adminClient();
+  const lookup = await admin
+    .from("hh_users")
+    .select("id, email, username, is_active, role")
+    .eq("email", email.toLowerCase())
+    .eq("is_active", true)
+    .maybeSingle();
+  return lookup;
+}
+
+/**
  * Validates the caller's Supabase JWT, loads the matching hh_users row,
  * and returns an ActorContext. Throws 401/403 on failure.
  */
@@ -29,7 +52,23 @@ export async function requireActor(req: NextRequest): Promise<ActorContext> {
   const accessToken = extractBearer(req);
   const resolved = await userRepository.resolveActorFromToken(accessToken);
   if (!resolved.success) throw unauthorized(resolved.error || "Invalid session");
-  if (!resolved.data) throw forbidden("Account is not provisioned in CRM (hh_users)");
+  if (!resolved.data) {
+    // Sanity-check fallback path: confirm the row really is missing using
+    // the same .eq("email", email.toLowerCase()) shape the repo uses, so a
+    // bug in the join can't silently 403 a real user.
+    const admin = adminClient();
+    const { data: userData } = await admin.auth.getUser(accessToken);
+    const email = (userData?.user?.email || "").toLowerCase();
+    if (email) {
+      const probe = await loadAppUserByEmail(email);
+      if (probe.data) {
+        throw forbidden(
+          "Account exists in hh_users but the role join failed — contact an Admin"
+        );
+      }
+    }
+    throw forbidden("Account is not provisioned in CRM (hh_users)");
+  }
 
   const appUser = resolved.data;
   return {

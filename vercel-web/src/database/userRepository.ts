@@ -82,8 +82,10 @@ export const userRepository = {
 
   async findByEmail(email: string, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     const db = resolveClient(opts);
+    // P1-37: normalize on read; emails are stored in lowercase form.
+    const normalized = String(email || "").toLowerCase();
     return runQuery(
-      () => db.from(USERS).select("id, email").ilike("email", email).maybeSingle(),
+      () => db.from(USERS).select("id, email").eq("email", normalized).maybeSingle(),
       "user.findByEmail"
     );
   },
@@ -128,7 +130,12 @@ export const userRepository = {
         admin
           .from(USERS)
           .select("id, username, email, role, is_active")
-          .ilike("email", email)
+          // P1-37: case-insensitive match by normalizing the input first.
+          // .ilike on email caused Supabase to fall back to a sequential
+          // scan and (worse) matched partial patterns when callers
+          // accidentally passed user-controlled strings — `.eq` with the
+          // already-lowercased value is exact + index-friendly.
+          .eq("email", email.toLowerCase())
           .eq("is_active", true)
           .maybeSingle(),
       "user.resolveActorFromToken.hh_users"
