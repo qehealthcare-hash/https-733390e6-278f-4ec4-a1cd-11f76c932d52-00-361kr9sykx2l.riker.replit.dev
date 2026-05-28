@@ -1,15 +1,8 @@
 import Link from "next/link";
 import { Logo } from "@/components/brand/logo";
 import { UserMenu } from "@/components/auth/user-menu";
+import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import { requireAuth } from "@/lib/auth/guard";
-import { cn } from "@/lib/utils";
-
-const SIDEBAR_LINKS = [
-  { href: "/dashboard", label: "Overview" },
-  { href: "/dashboard/exams", label: "My exams" },
-  { href: "/dashboard/profile", label: "Profile" },
-  { href: "/dashboard/certificates", label: "Certificates" },
-] as const;
 
 export default async function DashboardLayout({
   children,
@@ -27,24 +20,9 @@ export default async function DashboardLayout({
         </div>
       </header>
 
-      <div className="mx-auto flex w-full max-w-7xl flex-1 gap-8 px-4 py-8 sm:px-6">
-        <aside className="hidden w-48 shrink-0 lg:block">
-          <nav aria-label="Dashboard">
-            <ul className="space-y-1">
-              {SIDEBAR_LINKS.map((link) => (
-                <li key={link.href}>
-                  <Link
-                    href={link.href}
-                    className={cn(
-                      "block rounded-[var(--radius-md)] px-3 py-2 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-alt)] hover:text-[var(--color-text)]",
-                    )}
-                  >
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </nav>
+      <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:flex-row lg:gap-8 lg:py-8">
+        <aside className="lg:w-48 lg:shrink-0">
+          <DashboardNav />
         </aside>
         <main className="min-w-0 flex-1">{children}</main>
       </div>

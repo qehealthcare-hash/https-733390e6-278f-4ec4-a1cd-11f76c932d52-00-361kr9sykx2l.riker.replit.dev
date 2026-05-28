@@ -23,7 +23,7 @@ export default async function DashboardCertificatesPage() {
         Certificates
       </Heading>
       <p className="mt-2 text-[var(--color-text-muted)]">
-        Merit certificates for top 10% rankers. Anyone can verify authenticity
+        Certificates for top 10% rankers after merit publish. Verify authenticity
         at{" "}
         <Link
           href="/certificates/verify"

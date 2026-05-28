@@ -10,7 +10,7 @@ This repository will grow into a production-grade marketing site + auth-gated ex
 
 ## Status
 
-**Milestone 11 of 22 — Exam admin panel.** ✅ Complete (m1–m11)
+**Milestone 16 of 22 — Marketing pages.** ✅ Complete (m1–m16)
 
 **Milestone 10 — Supabase Auth.** ✅
 
@@ -28,7 +28,8 @@ Previously shipped through **m8** (resources, blog, self-paced quizzes). **m9** 
 - `/login`, `/signup`, `/verify` (auth), `/onboarding`, `/auth/callback`
 - Email magic link + Google OAuth + phone OTP (MSG91 when configured; dev OTP in logs / `000000`)
 - `requireAuth()` / `authGuard` server helper, `UserMenu` in navbar
-- `/dashboard` stub with sidebar (milestone 15 expands)
+- `/dashboard` — overview stats, upcoming exams, recent attempts, suggested videos
+- `/dashboard/exams`, `/dashboard/attempts/[id]`, `/dashboard/profile`, certificates archive
 - Certificate verification moved to `/certificates/verify` (auth uses `/verify`)
 
 **Milestone 11 — exam admin.** ✅
