@@ -48,22 +48,33 @@ export function useRealtimeResource(options) {
     sessionRef.current = auth.session;
   }, [auth.session]);
 
+  // P1-1: fetchOnce takes an AbortSignal and short-circuits before every
+  // setX call. The previous closure-scoped `cancelled` var let setData run
+  // even after the apiPath changed (or the component unmounted), so a slow
+  // network response could overwrite the next request's results.
   const fetchOnce = useCallback(
-    async function fetchOnce(currentPath) {
+    async function fetchOnce(currentPath, signalArg) {
       const session = sessionRef.current;
       if (!session?.access_token) return;
+      // reload() may invoke fetchOnce without a signal; treat that as never-aborted.
+      const signal = signalArg || { aborted: false };
+      if (signal.aborted) return;
       setLoading(true);
       try {
         const response = await request(currentPath, null, session);
+        if (signal.aborted) return;
         const payload = normalizeListPayload(response);
+        if (signal.aborted) return;
         setData(payload.rows);
+        if (signal.aborted) return;
         setTotal(payload.total);
+        if (signal.aborted) return;
         setError("");
       } catch (err) {
-        // Surface a friendly message; never throw out of the hook.
+        if (signal.aborted) return;
         setError(err?.message || "Could not load data");
       } finally {
-        setLoading(false);
+        if (!signal.aborted) setLoading(false);
       }
     },
     []
@@ -73,12 +84,11 @@ export function useRealtimeResource(options) {
   useEffect(
     function () {
       if (!auth.session?.access_token) return undefined;
-      let cancelled = false;
+      const controller = new AbortController();
       (async function () {
-        await fetchOnce(options.apiPath);
-        if (cancelled) return;
+        await fetchOnce(options.apiPath, controller.signal);
       })();
-      return function () { cancelled = true; };
+      return function () { controller.abort(); };
     },
     [auth.session, options.apiPath, fetchOnce]
   );
@@ -104,13 +114,17 @@ export function useRealtimeResource(options) {
       const tables = tablesRef.current;
       if (!tables.length) return undefined;
 
+      // P1-1: per-subscription AbortController so debounced refetches that
+      // fire AFTER unmount cannot setX into a torn-down component.
+      const controller = new AbortController();
       function scheduleFetch() {
         if (debounceRef.current) {
           clearTimeout(debounceRef.current);
         }
         debounceRef.current = setTimeout(function () {
           debounceRef.current = null;
-          fetchOnce(apiPathRef.current);
+          if (controller.signal.aborted) return;
+          fetchOnce(apiPathRef.current, controller.signal);
         }, 250);
       }
 
@@ -129,6 +143,7 @@ export function useRealtimeResource(options) {
       channel.subscribe();
 
       return function cleanup() {
+        controller.abort();
         if (debounceRef.current) {
           clearTimeout(debounceRef.current);
         }
@@ -144,7 +159,7 @@ export function useRealtimeResource(options) {
     loading,
     error,
     reload: function reload() {
-      return fetchOnce(apiPathRef.current);
+      return fetchOnce(apiPathRef.current, null);
     }
   };
 }
