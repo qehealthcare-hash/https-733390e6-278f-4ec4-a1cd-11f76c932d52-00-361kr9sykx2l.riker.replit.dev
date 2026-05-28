@@ -16262,40 +16262,11 @@ function patchSecureAuth() {
       null
     );
     if (!authResult.ok || !authResult.data || !authResult.data.access_token) {
-      try {
-        loadCache();
-        seedAll();
-        normalizeLoadedData();
-        var localUser = null;
-        var normalizedLogin = loginValue.toLowerCase();
-        (DB.users || []).forEach(function(u){
-          if (localUser || u.isActive === false) return;
-          var matchesLogin = String(u.username || '').toLowerCase() === normalizedLogin || String(u.email || '').toLowerCase() === normalizedLogin;
-          if (matchesLogin && u.password && String(u.password) === password) localUser = u;
-        });
-        if (localUser) {
-          var fallbackSession = {
-            user: localUser,
-            time: Date.now(),
-            accessToken: '',
-            refreshToken: '',
-            expiresAt: Date.now() + (8 * 60 * 60 * 1000),
-            authEmail: String(localUser.email || '').toLowerCase(),
-            localFallback: true
-          };
-          persistSessionState(fallbackSession);
-          applySessionState(fallbackSession);
-          if (bEl) bEl.textContent = 'Opening dashboard...';
-          showApp(localUser);
-          nav('dashboard');
-          saveDB();
-          refreshUiAfterDataSync();
-          toast('Opened with local admin fallback. Cloud reads will reconnect after Supabase Auth reset.', 'warn');
-          return;
-        }
-      } catch (fallbackErr) {
-        console.error('Local login fallback failed', fallbackErr);
-      }
+      // P0-1: legacy iframe routes exclusively through Supabase Auth — same as /login.
+      // The previous "local admin fallback" (`u.password === password` against the
+      // cached DB.users list) is removed because it re-introduced the very class of
+      // backdoor the rubric closes: anyone with write access to the local cache
+      // could mint a session without proving knowledge of the Supabase credential.
       var authMsg = parseResponseMessage(authResult, 'Invalid username or password');
       if (authMsg && authMsg.toLowerCase().indexOf('confirm') !== -1) authMsg = 'Email not confirmed yet. Please confirm this user in Supabase Auth.';
       if (eEl) { eEl.textContent = authMsg; eEl.style.display = 'block'; }
