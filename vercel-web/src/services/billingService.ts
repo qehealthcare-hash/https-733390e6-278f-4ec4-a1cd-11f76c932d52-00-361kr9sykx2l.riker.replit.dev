@@ -1628,27 +1628,23 @@ export const billingService = {
       }
     }
     const id = input.id || newId.receipt();
-    const receiptNoRes = await billingRepository.nextReceiptNoRpc(access);
-    const receiptNo =
-      receiptNoRes.success && receiptNoRes.data ? receiptNoRes.data : null;
-    const saved = await billingRepository.saveReceiptRpc(
+    // P1-18: hominal_save_receipt_v2 allocates the receipt_no, writes the
+    // row, links duty-days, and recomputes paid_status — all in one
+    // Postgres transaction. The old multi-step flow
+    // (nextReceiptNoRpc → saveReceiptRpc → stamp receipt_no →
+    //  recomputePaidStatus) raced when two receipts landed in the same
+    // window, occasionally leaving the bill in PARTIAL after the second
+    // payment cleared it.
+    const saved = await billingRepository.saveReceiptV2Rpc(
       { ...input, id, created_by: ctx.actor.email },
       access
     );
     if (!saved.success) return passFailure(saved);
+    const receiptNo: string | null =
+      saved.data && typeof (saved.data as JsonRow).receipt_no === "string"
+        ? String((saved.data as JsonRow).receipt_no)
+        : null;
 
-    if (receiptNo) {
-      const stamp = await billingRepository.updateReceipt(
-        id,
-        { receipt_no: receiptNo },
-        access
-      );
-      if (stamp.success && stamp.data) {
-        (saved.data ?? {})["receipt_no"] = receiptNo;
-      }
-    }
-
-    await recomputePaidStatus(input.billing_id, ctx);
     if (input.invoice_id) {
       await recomputeInvoiceStatus(String(input.invoice_id), ctx);
     }

@@ -187,6 +187,22 @@ export const billingRepository = {
   },
 
   /**
+   * P1-18: single atomic receipt save. Wraps `hominal_save_receipt` plus a
+   * paid_status recompute inside the same Postgres transaction so two
+   * concurrent receipts can't leave the bill in PARTIAL when it's actually
+   * PAID. Returns the receipt row augmented with the just-computed
+   * `paid_status`.
+   */
+  saveReceiptV2Rpc(receipt: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
+    return callRpc<JsonRow>(
+      "hominal_save_receipt_v2",
+      { p_receipt: receipt },
+      `${SCOPE}.saveReceiptV2Rpc`,
+      opts
+    );
+  },
+
+  /**
    * Replace the entire `hh_svc_entries` slice for a given `svc_key`.
    * Backed by `hominal_replace_service_entries(p_svc_key, p_rows)`. Returns
    * the row count inserted.
