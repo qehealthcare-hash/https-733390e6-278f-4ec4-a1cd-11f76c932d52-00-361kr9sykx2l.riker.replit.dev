@@ -19,7 +19,8 @@ type Params = { id: string };
 export const POST = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   requireRole(actor, ["Admin", "Manager", "Staff", "Executive"]);
   return withIdempotency(req, actor, { route: "POST /inquiries/[id]/convert" }, async () => {
-    const body = await parseJsonBody(req).catch(() => ({}));
+    // P1-33: surface parse errors instead of treating them as an empty body.
+    const body = await parseJsonBody(req);
     const result = await inquiryService.convertToPatient(params.id, body, { actor });
     return respond(result, 201);
   });
