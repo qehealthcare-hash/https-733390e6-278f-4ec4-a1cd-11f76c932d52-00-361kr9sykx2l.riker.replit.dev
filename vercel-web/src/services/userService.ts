@@ -92,6 +92,22 @@ export const userService = {
     const payload = buildUserPayload(parsed.data);
     if (payload.is_active === undefined) payload.is_active = true;
 
+    // P1-22: Only an Admin can mint another Admin. A Manager creating a user
+    // with role="Admin" is a privilege-escalation primitive — the audit
+    // showed it lets a phished Manager account self-promote by minting a
+    // second seat. Refuse the elevation explicitly at the service layer so
+    // the API handler does not have to reason about role grids.
+    if (
+      ctx.actor.role !== "Admin" &&
+      typeof payload.role === "string" &&
+      payload.role === "Admin"
+    ) {
+      return failure(
+        "Only an Admin can create another Admin user",
+        ErrorCodes.forbidden
+      );
+    }
+
     const existingUsername = await userRepository.findByUsername(
       String(parsed.data.username)
     );
@@ -140,6 +156,18 @@ export const userService = {
     const payload = buildUserPayload(parsed.data);
     if (Object.keys(payload).length === 0) {
       return failure("No editable fields supplied", ErrorCodes.badRequest);
+    }
+    // P1-22: A Manager cannot promote any user (including themselves) to
+    // role="Admin". Same primitive as createUser above, just via patch.
+    if (
+      ctx.actor.role !== "Admin" &&
+      typeof payload.role === "string" &&
+      payload.role === "Admin"
+    ) {
+      return failure(
+        "Only an Admin can elevate a user to Admin",
+        ErrorCodes.forbidden
+      );
     }
     const before = await userRepository.findById(id);
     const updated = await userRepository.update(id, payload);
