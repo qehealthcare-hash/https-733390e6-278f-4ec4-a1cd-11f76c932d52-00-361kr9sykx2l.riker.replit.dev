@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { idSchema, isoDate, shiftTypeSchema } from "@/validation/commonValidation";
+import { idSchema, isoDateTime, shiftTypeSchema } from "@/validation/commonValidation";
 
 /** Lifecycle status of an attendance record. */
 export const ATTENDANCE_STATUSES = [
@@ -43,8 +43,8 @@ export const attendanceSchema = z
     patient_id: z.string().trim().optional(),
     shift_type: shiftTypeSchema.optional(),
     work_date: dateKeySchema,
-    check_in_at: isoDate.optional(),
-    check_out_at: isoDate.optional(),
+    check_in_at: isoDateTime.optional(),
+    check_out_at: isoDateTime.optional(),
     status: z.enum(ATTENDANCE_STATUSES).default("PRESENT"),
     notes: z.string().optional().default("")
   })
@@ -99,8 +99,8 @@ export const attendanceDayMarkSchema = z.object({
   patient_id: z.string().trim().optional(),
   shift_type: shiftTypeSchema.optional(),
   status: z.enum(ATTENDANCE_STATUSES),
-  check_in_at: isoDate.optional(),
-  check_out_at: isoDate.optional(),
+  check_in_at: isoDateTime.optional(),
+  check_out_at: isoDateTime.optional(),
   notes: z.string().optional().default(""),
   sync_duty: z.boolean().optional().default(true)
 });

@@ -67,6 +67,29 @@ export const isoDate = z
   }, "Invalid calendar date");
 
 /**
+ * ISO-8601 instant for duty windows, attendance clock-in/out, etc.
+ * Accepts `YYYY-MM-DD` or a strict `YYYY-MM-DDThh:mm…` form (with optional
+ * seconds / timezone). Rejects loose `Date.parse` junk like "12 jan".
+ */
+export const isoDateTime = z
+  .string()
+  .trim()
+  .refine((v) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      const [y, m, d] = v.split("-").map((n) => Number.parseInt(n, 10));
+      if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      return (
+        dt.getUTCFullYear() === y &&
+        dt.getUTCMonth() === m - 1 &&
+        dt.getUTCDate() === d
+      );
+    }
+    if (!/^\d{4}-\d{2}-\d{2}T/.test(v)) return false;
+    return !Number.isNaN(Date.parse(v));
+  }, "isoDateTime must be YYYY-MM-DD or ISO-8601 datetime");
+
+/**
  * Map of three-letter English month abbreviations → 1-12. Used by the legacy
  * "D MMM YYYY" date strings that the SPA used to write into Supabase.
  */

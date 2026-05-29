@@ -29,6 +29,17 @@ import {
 
 import { POST as SignedUrlPost } from "../../../app/api/v1/uploads/signed-url/route";
 
+function signedUploadBody(overrides: Record<string, string> = {}) {
+  return {
+    bucket: "patient-documents",
+    fileName: "scan.pdf",
+    mime: "application/pdf",
+    resource: "Patients",
+    resourceId: "PID000900",
+    ...overrides
+  };
+}
+
 describe("POST /api/v1/uploads/signed-url", () => {
   beforeEach(() => {
     setActor(null);
@@ -46,7 +57,7 @@ describe("POST /api/v1/uploads/signed-url", () => {
   it("rejects buckets outside the whitelist", async () => {
     setActor(ACTORS.staff);
     const req = makeRequest("POST", "/api/v1/uploads/signed-url", {
-      body: { bucket: "evil-bucket", fileName: "x.pdf" }
+      body: signedUploadBody({ bucket: "evil-bucket", fileName: "x.pdf" })
     });
     const res = await SignedUrlPost(req, ctx({}));
     await expectErrorEnvelope(res, 400, "bad_request");
@@ -64,7 +75,7 @@ describe("POST /api/v1/uploads/signed-url", () => {
   it("returns path/token/signedUrl for patient-documents", async () => {
     setActor(ACTORS.staff);
     const req = makeRequest("POST", "/api/v1/uploads/signed-url", {
-      body: { bucket: "patient-documents", fileName: "scan.pdf" }
+      body: signedUploadBody()
     });
     const res = await SignedUrlPost(req, ctx({}));
     const data = await expectOkEnvelope<{
@@ -82,19 +93,26 @@ describe("POST /api/v1/uploads/signed-url", () => {
   it("sanitizes the filename (strips path separators)", async () => {
     setActor(ACTORS.staff);
     const req = makeRequest("POST", "/api/v1/uploads/signed-url", {
-      body: { bucket: "employee-documents", fileName: "../../etc/passwd" }
+      body: signedUploadBody({
+        bucket: "employee-documents",
+        resource: "Employees",
+        resourceId: "EMP000900",
+        fileName: "../../etc/passwd"
+      })
     });
     const res = await SignedUrlPost(req, ctx({}));
     const data = await expectOkEnvelope<{ path: string }>(res);
     // The only structural separator must be the date prefix "/" — the filename
     // portion must not contain any further "/" or "\" path separators.
+    // Path shape: `Employees/<id>/<date>/<sanitized-filename>` (P1-36).
     const parts = data.path.split("/");
-    // Exactly one separator (`<date>/<sanitized-filename>`) — no traversal.
-    expect(parts.length).toBe(2);
-    const filenamePortion = parts[1];
-    // No more path separators left inside the sanitized filename portion.
+    expect(parts[0]).toBe("Employees");
+    expect(parts[1]).toBe("EMP000900");
+    expect(parts[2]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const filenamePortion = parts[3];
+    expect(parts.length).toBe(4);
     expect(filenamePortion).not.toMatch(/[/\\]/);
-    // Path-separator chars must have been collapsed to underscores.
+    // Slashes collapsed to underscores; no extra path segments beyond the four-part layout.
     expect(filenamePortion).toMatch(/_/);
   });
 });
