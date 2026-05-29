@@ -1,3 +1,5 @@
+import { crmDateKeyFromTimestamp } from "@/utils/crmToday";
+
 export interface MonthRange {
   period: string;
   startISO: string;
@@ -19,7 +21,18 @@ export function monthRangeUTC(month?: string): MonthRange {
   return { period: m, startISO: start.toISOString(), endISO: end.toISOString() };
 }
 
-/** Payout period from duty start (M3: not checkout date). */
+/**
+ * Payout period (YYYY-MM) for a duty/attendance/check-in timestamp,
+ * computed in the CRM (IST) timezone — NOT UTC. The previous form
+ * `iso.slice(0, 7)` returned the UTC month, which split duties at IST
+ * month boundaries: e.g. a duty whose start_at was `2026-04-30T18:30:00Z`
+ * (00:00 IST May 1) reported "2026-04" and recomputed the wrong
+ * payslip / left May payouts stale. Returns "" if the input is empty
+ * or unparseable so callers can chain to fallbacks.
+ */
 export function payoutPeriodFromTimestamp(iso: string | undefined | null): string {
-  return (iso || "").slice(0, 7);
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return crmDateKeyFromTimestamp(iso).slice(0, 7);
 }

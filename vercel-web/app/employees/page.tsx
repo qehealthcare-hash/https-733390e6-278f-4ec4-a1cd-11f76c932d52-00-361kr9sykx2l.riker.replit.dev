@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Employees / HR registry (M6 Pass D — TypeScript filename).
+ * PDF helpers live in `@/lib/employeeUi`.
+ */
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
@@ -23,6 +28,21 @@ import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
 import { CameraCaptureModal } from "@/components/ui/camera-capture-lazy";
 import { DocumentCard, DocumentList } from "@/components/ui/document-card";
 import { openPrintWindow } from "@/lib/print";
+import { hasPermission } from "@/lib/permissions";
+import { EMPLOYEE_LINKS_ROLES } from "@/business/rbac";
+import {
+  buildEmployeePdfBody,
+  buildEmployeeDirectoryPdfBody,
+  employeeListPosition,
+  rowScoreTotal
+} from "@/lib/employeeUi";
+
+function roleInList(role, list) {
+  var normalized = String(role || "").trim().toLowerCase();
+  return list.some(function (r) {
+    return r.toLowerCase() === normalized;
+  });
+}
 
 function createInitialForm() {
   return {
@@ -198,22 +218,11 @@ function computeScoreTotal(form) {
   return Math.round(avg * 100) / 100;
 }
 
-function rowScoreTotal(row) {
-  if (row == null) return null;
-  if (row.score_total != null && Number.isFinite(Number(row.score_total))) {
-    return Number(row.score_total);
-  }
-  var parts = [row.score_experience, row.score_behaviour, row.score_testimonial]
-    .map(function (v) { return Number(v); })
-    .filter(function (v) { return Number.isFinite(v); });
-  if (!parts.length) return null;
-  return Math.round((parts.reduce(function (a, b) { return a + b; }, 0) / parts.length) * 100) / 100;
-}
-
 export default function EmployeesPage() {
   var auth = useAuth();
   var isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
-  var canManage = isAdmin || ["MANAGER"].includes(String(auth.profile?.role || "").trim().toUpperCase());
+  var canManage = hasPermission(auth.profile?.role, "employees.write");
+  var canViewLinks = roleInList(auth.profile?.role, EMPLOYEE_LINKS_ROLES);
   var [search, setSearch] = useState("");
   var [debouncedSearch, setDebouncedSearch] = useState("");
   useEffect(
@@ -414,7 +423,11 @@ export default function EmployeesPage() {
     });
     setError("");
     setFieldErrors(null);
-    setMessage("");
+    if (!row.updated_at) {
+      setMessage(
+        "Loaded a legacy employee without a last-modified timestamp — concurrent edit detection is disabled for this record. Save with care."
+      );
+    }
   }
 
   async function handleUpload(event) {
@@ -481,8 +494,8 @@ export default function EmployeesPage() {
     await uploadEmployeePhotoFile(file);
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault();
+  async function submitForm(formOverride) {
+    var current = formOverride || form;
     setBusy(true);
     setError("");
     setFieldErrors(null);
@@ -491,29 +504,29 @@ export default function EmployeesPage() {
       // Documents are recommended for Active employees but no longer hard-required
       // (it was blocking edits on legacy rows that never had docs uploaded).
       // Warn instead so the operator is aware.
-      if (form.status === "Active" && !form.documents.length) {
+      if (current.status === "Active" && !current.documents.length) {
         // eslint-disable-next-line no-console
         console.warn("Saving Active employee with no documents on file.");
       }
-      var fullName = [form.fn, form.mn, form.ln].filter(Boolean).join(" ").trim();
-      var cleanMobile = sanitiseMobileForForm(form.mobile);
-      var cleanRole = normaliseRoleValue(form.role);
-      var cleanDept = normaliseDeptValue(form.dept);
-      var cleanEmpType = normaliseEmpTypeValue(form.emp_type);
-      var cleanEducation = normaliseEducationValue(form.education);
-      var cleanShift = normaliseShiftValue(form.shift_type);
-      var cleanStatus = normaliseStatusValue(form.status, form.status !== "Inactive");
+      var fullName = [current.fn, current.mn, current.ln].filter(Boolean).join(" ").trim();
+      var cleanMobile = sanitiseMobileForForm(current.mobile);
+      var cleanRole = normaliseRoleValue(current.role);
+      var cleanDept = normaliseDeptValue(current.dept);
+      var cleanEmpType = normaliseEmpTypeValue(current.emp_type);
+      var cleanEducation = normaliseEducationValue(current.education);
+      var cleanShift = normaliseShiftValue(current.shift_type);
+      var cleanStatus = normaliseStatusValue(current.status, current.status !== "Inactive");
       var payload = {
-        fn: form.fn,
-        mn: form.mn,
-        ln: form.ln,
+        fn: current.fn,
+        mn: current.mn,
+        ln: current.ln,
         name: fullName,
         full_name: fullName,
         phone: cleanMobile,
         mobile: cleanMobile,
-        phone2: sanitiseMobileForForm(form.phone2 || ""),
-        gender: form.gender || "",
-        dob: form.dob || "",
+        phone2: sanitiseMobileForForm(current.phone2 || ""),
+        gender: current.gender || "",
+        dob: current.dob || "",
         dept: cleanDept,
         desig: cleanRole,
         role: cleanRole,
@@ -523,65 +536,62 @@ export default function EmployeesPage() {
         education: cleanEducation,
         shift: cleanShift,
         shift_type: cleanShift,
-        join: form.join_date || "",
-        join_date: form.join_date || "",
-        joining_date: form.join_date || "",
-        leave: form.leave_date || "",
-        leave_date: form.leave_date || "",
-        exp: form.exp || "",
-        salary: Number(form.salary || 0),
-        aadhar: form.aadhar || "",
-        pan: form.pan || "",
-        permaddr: form.permaddr || "",
-        presaddr: form.presaddr || "",
-        addr: form.permaddr || form.presaddr || "",
-        address: form.permaddr || form.presaddr || "",
-        area: form.area || "",
-        city: form.city || "",
-        pin: form.pin || "",
-        pincode: form.pin || "",
-        district: form.district || "",
-        state: form.state || "",
-        ecname: form.ecname || "",
-        ecphone: sanitiseMobileForForm(form.ecphone || ""),
-        ecrel: form.ecrel || "",
-        relname: form.ecname || "",
-        relphone: sanitiseMobileForForm(form.ecphone || ""),
-        skills: form.skills || "",
+        join: current.join_date || "",
+        join_date: current.join_date || "",
+        joining_date: current.join_date || "",
+        leave: current.leave_date || "",
+        leave_date: current.leave_date || "",
+        exp: current.exp || "",
+        salary: Number(current.salary || 0),
+        aadhar: current.aadhar || "",
+        pan: current.pan || "",
+        permaddr: current.permaddr || "",
+        presaddr: current.presaddr || "",
+        addr: current.permaddr || current.presaddr || "",
+        address: current.permaddr || current.presaddr || "",
+        area: current.area || "",
+        city: current.city || "",
+        pin: current.pin || "",
+        pincode: current.pin || "",
+        district: current.district || "",
+        state: current.state || "",
+        ecname: current.ecname || "",
+        ecphone: sanitiseMobileForForm(current.ecphone || ""),
+        ecrel: current.ecrel || "",
+        relname: current.ecname || "",
+        relphone: sanitiseMobileForForm(current.ecphone || ""),
+        skills: current.skills || "",
         status: cleanStatus,
         active: cleanStatus === "Active",
-        photo: form.photo || undefined,
-        docs: form.documents,
-        documents: form.documents
+        photo: current.photo || undefined,
+        docs: current.documents,
+        documents: current.documents
       };
-      // Only forward score fields the operator actually touched (or that
-      // already had a value loaded from the row). This prevents silent
-      // overwrites to 5/5/5 on edit-and-save of an unscored employee.
-      var touched = form.score_touched || {};
-      if (touched.score_experience && form.score_experience != null) {
-        payload.score_experience = clampScore(form.score_experience);
+      var touched = current.score_touched || {};
+      if (touched.score_experience && current.score_experience != null) {
+        payload.score_experience = clampScore(current.score_experience);
       }
-      if (touched.score_behaviour && form.score_behaviour != null) {
-        payload.score_behaviour = clampScore(form.score_behaviour);
+      if (touched.score_behaviour && current.score_behaviour != null) {
+        payload.score_behaviour = clampScore(current.score_behaviour);
       }
-      if (touched.score_testimonial && form.score_testimonial != null) {
-        payload.score_testimonial = clampScore(form.score_testimonial);
+      if (touched.score_testimonial && current.score_testimonial != null) {
+        payload.score_testimonial = clampScore(current.score_testimonial);
       }
-      var maybeTotal = computeScoreTotal(form);
+      var maybeTotal = computeScoreTotal(current);
       if (maybeTotal != null) payload.score_total = maybeTotal;
-      if (form.id && form.expected_updated_at) {
-        payload.expected_updated_at = form.expected_updated_at;
+      if (current.id && current.expected_updated_at) {
+        payload.expected_updated_at = current.expected_updated_at;
       }
-      if (form.confirm_duplicate_name) {
+      if (current.confirm_duplicate_name) {
         payload.confirm_duplicate_name = true;
       }
       var saved = await requestWithOfflineFallback(
-        form.id ? "/employees/" + form.id : "/employees",
-        { method: form.id ? "PUT" : "POST", body: payload },
+        current.id ? "/employees/" + current.id : "/employees",
+        { method: current.id ? "PUT" : "POST", body: payload },
         auth.session
       );
       await resource.reload();
-      if (form.id && saved) {
+      if (current.id && saved) {
         editEmployee(saved);
         setMessage("Employee updated — fields reflect saved values");
       } else {
@@ -600,7 +610,7 @@ export default function EmployeesPage() {
       } else if (
         code === "duplicate" &&
         (submitError?.details?.field === "name" || submitError?.details?.field === "aadhar") &&
-        !form.id
+        !current.id
       ) {
         setDuplicatePrompt({
           field: submitError.details.field,
@@ -622,6 +632,15 @@ export default function EmployeesPage() {
     }
   }
 
+  async function handleSubmit(event) {
+    event.preventDefault();
+    if (!canManage) {
+      setError("You do not have permission to create or edit employees.");
+      return;
+    }
+    return submitForm();
+  }
+
   async function reloadEmployeeFromConflict() {
     if (!form.id) {
       setConflictPrompt(null);
@@ -641,10 +660,11 @@ export default function EmployeesPage() {
     }
   }
 
-  function confirmDuplicateAndResubmit() {
+  async function confirmDuplicateAndResubmit() {
     setDuplicatePrompt(null);
-    setForm(function (current) { return { ...current, confirm_duplicate_name: true }; });
-    setMessage("Will save as a separate employee on the next save — press Save.");
+    var next = { ...form, confirm_duplicate_name: true };
+    setForm(next);
+    await submitForm(next);
   }
 
   function changeStatus(id, nextStatus, rowName) {
@@ -697,152 +717,18 @@ export default function EmployeesPage() {
   }
 
   async function openEmployeePdf(row, hideSensitive) {
-    // P1-32: open the print window SYNCHRONOUSLY inside the user gesture,
-    // before any await. Otherwise Chrome / Safari popup-block the window once
-    // the signed-URL resolution returns. The opened tab shows "Loading…" until
-    // openPrintWindow rewrites its document.
     var preOpened = window.open("about:blank", "_blank", "width=1024,height=820");
     if (preOpened && preOpened.document) {
       try {
         preOpened.document.write("<title>Preparing PDF…</title><body style='font-family:Segoe UI,Arial,sans-serif;padding:32px;color:#475569'>Loading employee profile…</body>");
       } catch (_e) { /* opaque about:blank — ignore */ }
     }
-    var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
-    var score = rowScoreTotal(row);
-    var isActive = row.status ? row.status === "Active" : row.active !== false;
     var rawDocs = row.employee_documents || row.docs || [];
     var photoDoc = row.photo && typeof row.photo === "object" && row.photo.path ? row.photo : null;
     var resolvedDocs = await resolveDocLinks(rawDocs);
     var resolvedPhoto = photoDoc ? (await resolveDocLinks([photoDoc]))[0] : null;
-    var docs = rawDocs;
-    function escape(value) {
-      return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
-        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
-      });
-    }
-    function field(label, value) {
-      return (
-        "<tr><th style='width:180px'>" +
-        escape(label) +
-        "</th><td>" +
-        escape(value || "-") +
-        "</td></tr>"
-      );
-    }
-    function mask(value) {
-      var s = String(value || "");
-      if (!s) return "";
-      if (s.length <= 4) return "****";
-      return "****" + s.slice(-4);
-    }
-    var rows = [
-      field("Employee ID", row.id),
-      field("Name", name),
-      field("Type", slugToText(row.emp_type || row.etype || row.employee_type || "")),
-      field("Designation", slugToText(row.role || row.desig || "")),
-      field("Department", slugToText(row.dept || row.department || "")),
-      field("Shift", slugToText(row.shift_type || row.shift || "")),
-      field("Education", slugToText(row.education || row.edu || "")),
-      field("Skills", row.skills),
-      field("Area", row.area),
-      field("Phone", hideSensitive ? "" : row.mobile || row.phone),
-      field("Alt phone", hideSensitive ? "" : row.phone2),
-      field("Aadhar", hideSensitive ? mask(row.aadhar) : row.aadhar),
-      field("PAN", hideSensitive ? mask(row.pan) : row.pan),
-      field("Permanent address", row.permaddr || row.addr || row.address),
-      field("Present address", row.presaddr),
-      field(
-        "PIN · District · State",
-        [row.pin || row.pincode, row.district, row.state].filter(Boolean).join(" · ")
-      ),
-      field(
-        "Emergency contact",
-        row.ecname
-          ? row.ecname + (row.ecphone ? " · " + row.ecphone : "") + (row.ecrel ? " (" + row.ecrel + ")" : "")
-          : ""
-      ),
-      field(
-        "Performance score",
-        score == null
-          ? "Not rated"
-          : score.toFixed(2) +
-              " / 10  (Exp " +
-              (row.score_experience ?? "-") +
-              " · Beh " +
-              (row.score_behaviour ?? "-") +
-              " · Tst " +
-              (row.score_testimonial ?? "-") +
-              ")"
-      ),
-      field("Status", (row.status || (isActive ? "Active" : "Inactive")) || "Active"),
-      field("Joining date", formatDate(row.join_date || row.join)),
-      row.leave_date || row.leave ? field("Leaving date", formatDate(row.leave_date || row.leave)) : "",
-      field("Salary", row.salary ? formatCurrency(row.salary) + " /mo" : ""),
-      field("Experience", row.exp),
-      field("Documents on file", String(docs.length || 0))
-    ].join("");
-    function isImg(d) {
-      var m = String(d.mime_type || "").toLowerCase();
-      if (m.indexOf("image/") === 0) return true;
-      var n = String(d.file_name || d.path || "").toLowerCase();
-      return /\.(jpe?g|png|webp|heic|heif|gif)$/.test(n);
-    }
-    function isPdf(d) {
-      if (String(d.mime_type || "").toLowerCase() === "application/pdf") return true;
-      var n = String(d.file_name || d.path || "").toLowerCase();
-      return /\.pdf$/.test(n);
-    }
-    var photoHtml = resolvedPhoto && resolvedPhoto.signedUrl
-      ? "<div style='text-align:center;margin:8px 0 16px'><img src='" +
-        escape(resolvedPhoto.signedUrl) +
-        "' alt='Employee photo' style='max-width:160px;max-height:200px;border:1px solid #cbd5e1;border-radius:8px'/></div>"
-      : "";
-    var docsHtml = "";
-    if (resolvedDocs.length) {
-      docsHtml = "<h3>Attached documents (" + resolvedDocs.length + ")</h3>";
-      docsHtml += "<ol style='line-height:1.7'>";
-      resolvedDocs.forEach(function (d) {
-        var name = escape(d.file_name || d.path || "Document");
-        var tag = isPdf(d) ? "PDF" : isImg(d) ? "IMG" : "FILE";
-        var link = d.signedUrl
-          ? "<a href='" + escape(d.signedUrl) + "' target='_blank' rel='noopener'>" + name + "</a>"
-          : name;
-        docsHtml += "<li>[" + tag + "] " + link + "</li>";
-      });
-      docsHtml += "</ol>";
-      var imageDocs = resolvedDocs.filter(function (d) {
-        return isImg(d) && d.signedUrl;
-      });
-      if (imageDocs.length) {
-        docsHtml +=
-          "<h3>Document previews</h3>" +
-          "<div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px'>" +
-          imageDocs
-            .map(function (d) {
-              return (
-                "<div style='border:1px solid #e2e8f0;border-radius:8px;padding:8px;text-align:center'>" +
-                "<div style='font-size:12px;color:#475569;margin-bottom:6px'>" +
-                escape(d.file_name || d.path) +
-                "</div>" +
-                "<img src='" +
-                escape(d.signedUrl) +
-                "' alt='" +
-                escape(d.file_name || "doc") +
-                "' style='max-width:100%;max-height:320px;object-fit:contain'/>" +
-                "</div>"
-              );
-            })
-            .join("") +
-          "</div>";
-      }
-    }
-    var body =
-      "<h2>Employee Profile</h2>" +
-      photoHtml +
-      "<table><tbody>" +
-      rows +
-      "</tbody></table>" +
-      docsHtml;
+    var body = buildEmployeePdfBody(row, hideSensitive, resolvedDocs, resolvedPhoto);
+    var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
     openPrintWindow(
       hideSensitive ? "Employee Profile (sanitised)" : "Employee Profile - " + name,
       body,
@@ -851,35 +737,7 @@ export default function EmployeesPage() {
   }
 
   function openEmployeeDirectoryPdf() {
-    var listRows = filtered
-      .map(function (row, index) {
-        var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
-        var score = rowScoreTotal(row);
-        var isActive = row.status ? row.status === "Active" : row.active !== false;
-        return (
-          "<tr>" +
-          "<td>" + (index + 1) + "</td>" +
-          "<td>" + (row.id || "-") + "</td>" +
-          "<td>" + (name || "-") + "</td>" +
-          "<td>" + slugToText(row.role || row.desig || "") + "</td>" +
-          "<td>" + slugToText(row.dept || row.department || "") + "</td>" +
-          "<td>" + slugToText(row.shift_type || row.shift || "") + "</td>" +
-          "<td>" + (score == null ? "—" : score.toFixed(1)) + "</td>" +
-          "<td>" + (row.mobile || row.phone || "") + "</td>" +
-          "<td>" + (row.status || (isActive ? "Active" : "Inactive")) + "</td>" +
-          "</tr>"
-        );
-      })
-      .join("");
-    var body =
-      "<h2>Employee Directory</h2>" +
-      "<div class='meta'>" + filtered.length + " staff · generated " + formatDate(new Date().toISOString()) + "</div>" +
-      "<table><thead><tr>" +
-      "<th>#</th><th>ID</th><th>Name</th><th>Role</th><th>Dept</th><th>Shift</th><th>Score</th><th>Phone</th><th>Status</th>" +
-      "</tr></thead><tbody>" +
-      (listRows || "<tr><td colspan='9'>No employees match the current filters.</td></tr>") +
-      "</tbody></table>";
-    openPrintWindow("Employee Directory", body);
+    openPrintWindow("Employee Directory", buildEmployeeDirectoryPdfBody(filtered));
   }
 
   function openDeleteDialog(row) {
@@ -1177,11 +1035,26 @@ export default function EmployeesPage() {
               <div className="grid-2">
                 <div className="field">
                   <label htmlFor="employees-status-31">Status</label>
-                  <select id="employees-status-31" value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
+                  <select
+                    id="employees-status-31"
+                    value={form.status}
+                    onChange={function (event) { updateField("status", event.target.value); }}
+                    disabled={Boolean(form.id)}
+                    title={
+                      form.id
+                        ? "Use Activate / On leave / Suspend / Deactivate on the registry card."
+                        : undefined
+                    }
+                  >
                     {employeeStatusOptions.map(function (s) {
                       return <option key={s.value} value={s.value}>{s.label}</option>;
                     })}
                   </select>
+                  {form.id ? (
+                    <small className="mini-muted" style={{ marginTop: 4, display: "block" }}>
+                      Status changes use the actions on each employee card (not this form).
+                    </small>
+                  ) : null}
                 </div>
                 <div className="field">
                   <label htmlFor="employees-photo-32">Photo</label>
@@ -1470,7 +1343,7 @@ export default function EmployeesPage() {
               ) : (
                 <div className="record-list">
                   {filtered.map(function (row, index) {
-                    var rowNum = (resource.page - 1) * resource.pageSize + index + 1;
+                    var rowNum = employeeListPosition(resource.page, resource.pageSize, index);
                     var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
                     var isActive = row.status ? row.status === "Active" : row.active !== false;
                     var score = rowScoreTotal(row);
@@ -1511,17 +1384,22 @@ export default function EmployeesPage() {
                           </div>
                         ) : null}
                         <div className="button-row" style={{ marginTop: 12 }}>
-                          <button className="button secondary" type="button" onClick={function () { editEmployee(row); }}>
-                            Edit
-                          </button>
-                          <button className="button ghost" type="button" onClick={function () { openHistory(row); }}>
-                            History
-                          </button>
-                          {!isActive ? (
+                          {canManage ? (
+                            <button className="button secondary" type="button" onClick={function () { editEmployee(row); }}>
+                              Edit
+                            </button>
+                          ) : null}
+                          {canViewLinks ? (
+                            <button className="button ghost" type="button" onClick={function () { openHistory(row); }}>
+                              History
+                            </button>
+                          ) : null}
+                          {canManage && !isActive ? (
                             <button className="button primary" type="button" onClick={function () { changeStatus(row.id, "Active", row.full_name || row.name); }}>
                               Activate
                             </button>
-                          ) : (
+                          ) : null}
+                          {canManage && isActive ? (
                             <>
                               <button className="button secondary" type="button" onClick={function () { changeStatus(row.id, "OnLeave", row.full_name || row.name); }}>
                                 On leave
@@ -1533,7 +1411,7 @@ export default function EmployeesPage() {
                                 Deactivate
                               </button>
                             </>
-                          )}
+                          ) : null}
                           <button className="button secondary" type="button" onClick={function () { openEmployeePdf(row, false); }}>
                             PDF
                           </button>

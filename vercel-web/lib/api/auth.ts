@@ -1,9 +1,22 @@
 import type { NextRequest } from "next/server";
 import { userRepository } from "@/database/userRepository";
 import { adminClient } from "@/database/supabaseClient";
+import type { Role } from "@/business/rbac";
 import { forbidden, unauthorized } from "./errors";
 
-export type AppRole = "Admin" | "Manager" | "Staff" | "Accountant" | "Nurse" | string;
+/**
+ * M2-H1: `AppRole` is now the canonical `Role` union from
+ * `@/business/rbac`. The legacy `| string` escape hatch was removed so
+ * every `requireRole(actor, [...])` call is type-checked against the
+ * known role catalogue. If you genuinely need to accept a custom DB
+ * role label here, update `CANONICAL_ROLES` and the migration that
+ * seeds it — there should be no other path.
+ *
+ * `actor.role` is still effectively runtime-typed (the JWT may carry
+ * any string), but the static narrowing protects callers that pass
+ * `allowed` literals.
+ */
+export type AppRole = Role;
 
 export interface ActorContext {
   userId: string;
@@ -71,16 +84,21 @@ export async function requireActor(req: NextRequest): Promise<ActorContext> {
   }
 
   const appUser = resolved.data;
+  // M2-H1: `appUser.role` is typed as `string` by the repository (the DB
+  // column has no enum constraint), but our `AppRole` is narrow. We accept
+  // the value as-is and rely on `requireRole(...)` to deny anything outside
+  // CANONICAL_ROLES at runtime — exactly matching the original "if you
+  // typo a role, you get 403" behaviour.
   return {
     userId: appUser.userId,
     email: appUser.email,
     username: appUser.username,
-    role: appUser.role,
+    role: appUser.role as AppRole,
     accessToken
   };
 }
 
-export function requireRole(actor: ActorContext, allowed: AppRole[]): void {
+export function requireRole(actor: ActorContext, allowed: readonly AppRole[]): void {
   const role = (actor.role || "").toLowerCase();
   const ok = allowed.some((r) => r.toLowerCase() === role);
   if (!ok) throw forbidden(`Requires role: ${allowed.join(" | ")}`);

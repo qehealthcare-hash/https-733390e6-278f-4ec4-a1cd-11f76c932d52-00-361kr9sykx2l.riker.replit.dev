@@ -35,6 +35,7 @@ import {
   generateFromDutySchema,
   generateFromDutyRangeSchema,
   generateInvoiceSchema,
+  finalInvoiceSchema,
   billingListQuerySchema,
   type BillingInput,
   type BillingStatusInput,
@@ -47,6 +48,7 @@ import {
   type GenerateFromDutyInput,
   type GenerateFromDutyRangeInput,
   type GenerateInvoiceInput,
+  type FinalInvoiceInput,
   type BillingListQuery,
   type BillingStatus
 } from "@/validation/billingValidation";
@@ -192,8 +194,14 @@ async function capLinkedDutiesOnBillingClose(
             console.error("[capLinkedDutiesOnBillingClose] cap audit failed", err);
           });
         }
-        const capped = { ...duty, end_at: cappedEnd } as JsonRow;
-        const mat = await dutyDiaryService.materializeDuty(capped, ctx);
+        // Only override end_at when we actually capped the duty. Passing
+        // `cappedEnd` for a duty that already ended earlier would make
+        // materializeDuty extend svc_entries past the real duty end —
+        // billing phantom days the patient never received.
+        const dutyForMaterialize = needsCap
+          ? ({ ...duty, end_at: cappedEnd } as JsonRow)
+          : (duty as JsonRow);
+        const mat = await dutyDiaryService.materializeDuty(dutyForMaterialize, ctx);
         if (!mat.success) {
           out.errors.push({ duty_id: dutyId, error: mat.error || "materialize failed" });
           continue;
@@ -1036,9 +1044,56 @@ export const billingService = {
       }
     }
 
-    // Re-validate against the post-cap snapshot. If the cap removed every
-    // svc row (edge case: open-ended duty had no past-day entries), the
-    // guard's services-count check would now fail — return a clean error.
+    // Auto-raise the FINAL closing invoice (deposit applied as a Security
+    // receipt against the new invoice) BEFORE the post-cap guard runs, so
+    // outstanding drops and close can succeed without force when the deposit
+    // covers the bill. Idempotent — repeat close attempts reuse the FINAL.
+    // Best-effort: "nothing to finalize" is treated as a no-op so closing
+    // a bill that already has everything invoiced + no deposit still
+    // succeeds.
+    let finalInvoiceSummary: {
+      invoice_no?: string;
+      sec_dep_applied: number;
+      gross: number;
+      net: number;
+      refund_amount: number;
+    } | null = null;
+    try {
+      const finalRes = await this.generateFinalInvoice({ billing_id: id }, ctx);
+      if (finalRes.success && finalRes.data) {
+        finalInvoiceSummary = {
+          invoice_no: String(finalRes.data.invoice.invoice_no || ""),
+          sec_dep_applied: Number(finalRes.data.sec_dep_applied || 0),
+          gross: Number(finalRes.data.gross || 0),
+          net: Number(finalRes.data.net || 0),
+          refund_amount: Number(finalRes.data.refund_amount || 0)
+        };
+      } else if (!finalRes.success) {
+        const msg = String(finalRes.error || "").toLowerCase();
+        if (!msg.includes("nothing to finalize")) {
+          return failure(
+            finalRes.error || "Could not raise FINAL invoice before close",
+            finalRes.code,
+            finalRes.details
+          );
+        }
+      }
+    } catch (err) {
+      console.error("[billingService.close] FINAL invoice generation threw", err);
+      return failure(
+        `Could not raise FINAL invoice before close: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        ErrorCodes.internal
+      );
+    }
+
+    // Re-validate against the post-cap + post-FINAL snapshot. If the cap
+    // removed every svc row (edge case: open-ended duty had no past-day
+    // entries), the guard's services-count check would now fail — return
+    // a clean error. The guard also sees the deposit already applied
+    // (FINAL invoice's credit line + zeroed sec_dep), so a bill whose
+    // deposit covers the remaining services closes cleanly.
     const postCap = await loadBundleWithTotals(id, ctx);
     if (!postCap.success) {
       return failure(postCap.error || "Post-cap refetch failed", postCap.code, postCap.details);
@@ -1049,10 +1104,19 @@ export const billingService = {
       input.force
     );
     if (!postCapGuard.success) {
+      const guardDetails =
+        postCapGuard.details && typeof postCapGuard.details === "object"
+          ? { ...(postCapGuard.details as Record<string, unknown>) }
+          : postCapGuard.details !== undefined
+            ? { reason: postCapGuard.details }
+            : {};
+      if (finalInvoiceSummary) {
+        (guardDetails as Record<string, unknown>).final_invoice = finalInvoiceSummary;
+      }
       return failure(
         postCapGuard.error || "Cannot close bill after diary cap",
         postCapGuard.code,
-        postCapGuard.details
+        Object.keys(guardDetails).length ? guardDetails : undefined
       );
     }
 
@@ -1641,6 +1705,17 @@ export const billingService = {
       }
     }
     const id = input.id || newId.receipt();
+    const patientId =
+      (typeof input.patient_id === "string" && input.patient_id.trim()
+        ? input.patient_id.trim()
+        : String(billing.data.patient_id || "").trim()) || "";
+    if (!patientId) {
+      return failure(
+        "This bill has no linked patient — cannot record a receipt until patient_id is set on the billing",
+        ErrorCodes.business,
+        { billing_id: input.billing_id }
+      );
+    }
     // P1-18: hominal_save_receipt_v2 allocates the receipt_no, writes the
     // row, links duty-days, and recomputes paid_status — all in one
     // Postgres transaction. The old multi-step flow
@@ -1649,7 +1724,7 @@ export const billingService = {
     // window, occasionally leaving the bill in PARTIAL after the second
     // payment cleared it.
     const saved = await billingRepository.saveReceiptV2Rpc(
-      { ...input, id, created_by: ctx.actor.email },
+      { ...input, id, patient_id: patientId, created_by: ctx.actor.email },
       access
     );
     if (!saved.success) return passFailure(saved);
@@ -1669,7 +1744,7 @@ export const billingService = {
       {
         id,
         billing_id: input.billing_id,
-        patient_id: input.patient_id,
+        patient_id: patientId,
         from_date: input.from_date,
         to_date: input.to_date,
         paid_dates: input.paid_dates ?? null,
@@ -1957,6 +2032,104 @@ export const billingService = {
         lines: linesAfter.success ? linesAfter.data || [] : [],
         duplicate: false
       }
+    );
+  },
+
+  /**
+   * Generate a FINAL closing invoice for a billing. Atomic Postgres RPC:
+   *   1. Snapshots all unbilled svc entries (invoice amount = gross).
+   *   2. Creates a `type='Security'` receipt for min(sec_dep, gross) linked
+   *      to the FINAL invoice so billing outstanding drops for close.
+   *   3. If sec_dep > gross, auto-creates a Refund receipt for the excess.
+   *   4. Zeroes hh_billings.sec_dep.
+   * Also invoked automatically from `close()` and `hominal_close_patient`.
+   */
+  async generateFinalInvoice(
+    rawInput: unknown,
+    ctx: BillingServiceContext
+  ): Promise<
+    ApiResult<{
+      invoice: JsonRow;
+      lines: JsonRow[];
+      duplicate: boolean;
+      security_receipt_id: string | null;
+      refund_id: string | null;
+      refund_amount: number;
+      sec_dep_applied: number;
+      gross: number;
+      net: number;
+    }>
+  > {
+    const parsed = parseInput(finalInvoiceSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const input = parsed.data as FinalInvoiceInput;
+    const access = dbAccess(ctx);
+
+    const billing = await billingRepository.findBillingById(input.billing_id, access);
+    if (!billing.success) return passFailure(billing);
+    if (!billing.data) return notFoundFailure("Billing", input.billing_id);
+
+    // Cancelled bills can never get a FINAL. Closed bills CAN — that
+    // is the recovery path for bills closed before the FINAL flow
+    // shipped. The unique-final-per-billing partial index keeps it
+    // idempotent and the RPC re-checks the Cancelled status.
+    const billingStatus = String(billing.data.status || "");
+    if (billingStatus === "Cancelled") {
+      return failure(
+        "Bill is Cancelled — cannot issue a FINAL invoice",
+        ErrorCodes.business
+      );
+    }
+
+    const rpc = await billingRepository.generateFinalInvoiceRpc(
+      input.billing_id,
+      ctx.actor.email || "system",
+      input.notes || "",
+      access
+    );
+    if (!rpc.success) return passFailure(rpc);
+    if (!rpc.data || !rpc.data.invoice_id) {
+      return failure("FINAL invoice generation returned no row", ErrorCodes.internal);
+    }
+
+    const invoiceId = String(rpc.data.invoice_id);
+    const [invoiceRes, linesRes] = await Promise.all([
+      billingRepository.findInvoiceById(invoiceId, access),
+      billingRepository.listInvoiceLines(invoiceId, access)
+    ]);
+    if (!invoiceRes.success) return passFailure(invoiceRes);
+    if (!invoiceRes.data) return notFoundFailure("Invoice", invoiceId);
+
+    const lines = linesRes.success ? linesRes.data || [] : [];
+
+    const payload = {
+      invoice: invoiceRes.data,
+      lines,
+      duplicate: !!rpc.data.duplicate,
+      security_receipt_id: rpc.data.security_receipt_id || null,
+      refund_id: rpc.data.refund_id || null,
+      refund_amount: Number(rpc.data.refund_amount || 0),
+      sec_dep_applied: Number(rpc.data.sec_dep_applied || 0),
+      gross: Number(rpc.data.gross || 0),
+      net: Number(rpc.data.net || 0)
+    };
+
+    if (rpc.data.duplicate) {
+      return success(payload);
+    }
+
+    return finalizeWithAudit(
+      await fireAudit(ctx, "billing", {
+        entity_id: invoiceId,
+        action: "create",
+        after: invoiceRes.data,
+        stamp: `FINAL ${invoiceRes.data.invoice_no || invoiceId}` +
+          ` gross ₹${rpc.data.gross}` +
+          ` deposit ₹${rpc.data.sec_dep_applied}` +
+          ` net ₹${rpc.data.net}` +
+          (rpc.data.refund_amount > 0 ? ` refund ₹${rpc.data.refund_amount}` : "")
+      }),
+      payload
     );
   },
 

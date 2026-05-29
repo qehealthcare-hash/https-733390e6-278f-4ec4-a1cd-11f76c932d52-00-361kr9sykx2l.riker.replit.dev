@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Payout ledger UI (M9 Pass D). Date/form helpers: `@/lib/payoutUi`.
+ * All writes via `/api/v1/payouts/*`.
+ */
+
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
@@ -12,62 +17,34 @@ import { paymentMethodOptions } from "@/lib/crm-options";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { openPrintWindow } from "@/lib/print";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
-import { hasPermission } from "@/lib/permissions";
+import {
+  PAYOUT_PAY_ROLES,
+  PAYOUT_REOPEN_ROLES,
+  PAYOUT_WRITE_ROLES
+} from "@/business/rbac";
+import {
+  PAYOUT_STATUS_OPTIONS,
+  currentPeriod,
+  emptyAdjustForm,
+  emptyAdvanceForm,
+  emptyEnsureForm,
+  emptyPayForm,
+  istDayKey
+} from "@/lib/payoutUi";
 
-var payoutStatusOptions = [
-  { value: "OPEN", label: "Open" },
-  { value: "LOCKED", label: "Locked" },
-  { value: "PAID", label: "Paid" }
-];
-
-function currentPeriod() {
-  var d = new Date();
-  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
-}
-
-function emptyEnsureForm() {
-  return {
-    employee_id: "",
-    period_month: currentPeriod(),
-    advance: 0,
-    deduction: 0,
-    bonus: 0,
-    remarks: ""
-  };
-}
-
-function emptyAdjustForm() {
-  return { advance: 0, deduction: 0, bonus: 0, remarks: "" };
-}
-
-function emptyPayForm() {
-  return {
-    paid_on: new Date().toISOString().slice(0, 10),
-    method: "UPI",
-    amount: "",
-    remarks: "",
-    proof: null
-  };
-}
-
-function emptyAdvanceForm() {
-  return {
-    paid_on: new Date().toISOString().slice(0, 10),
-    method: "UPI",
-    amount: "",
-    remarks: "",
-    proof: null
-  };
+function roleInList(role, list) {
+  var normalized = String(role || "").trim().toLowerCase();
+  return list.some(function (r) {
+    return r.toLowerCase() === normalized;
+  });
 }
 
 function PayoutsPageContent() {
   var auth = useAuth();
   var userRole = auth.profile?.role || "";
-  var canWrite = hasPermission(userRole, "payouts.write");
-  var canDisburse =
-    hasPermission(userRole, "payouts.write") ||
-    String(userRole).toLowerCase() === "admin" ||
-    String(userRole).toLowerCase() === "accountant";
+  var canWrite = roleInList(userRole, PAYOUT_WRITE_ROLES);
+  var canDisburse = roleInList(userRole, PAYOUT_PAY_ROLES);
+  var canReopen = roleInList(userRole, PAYOUT_REOPEN_ROLES);
   var searchParams = useSearchParams();
   var [employees, setEmployees] = useState([]);
   var [payouts, setPayouts] = useState([]);
@@ -293,6 +270,11 @@ function PayoutsPageContent() {
       loadAuditTrail(id);
       var row = data?.payout || {};
       if (reqId !== openPayoutSeq.current) return;
+      if (!row.updated_at) {
+        setMessage(
+          "Legacy payout without server updated_at — save carefully; another user may have edited it."
+        );
+      }
       setAdjustForm({
         advance: Number(row.advance || 0),
         deduction: Number(row.deduction || 0),
@@ -336,8 +318,7 @@ function PayoutsPageContent() {
           setEmployees([]);
         });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [auth.session, periodFilter, statusFilter, employeeFilter]
+    [auth.session?.access_token, periodFilter, statusFilter, employeeFilter]
   );
 
   // Deep-link from duty calendar: if the URL carries ?employee_id=&period=
@@ -422,6 +403,7 @@ function PayoutsPageContent() {
 
   async function handleEnsure(event) {
     event.preventDefault();
+    if (!canWrite) return;
     if (!ensureForm.employee_id) return;
     setBusy(true);
     setError("");
@@ -460,6 +442,7 @@ function PayoutsPageContent() {
 
   async function handleAdjust(event) {
     event.preventDefault();
+    if (!canDisburse) return;
     if (!selectedId) return;
     setBusy(true);
     setError("");
@@ -492,6 +475,7 @@ function PayoutsPageContent() {
 
   async function handleSetRate(event) {
     if (event && event.preventDefault) event.preventDefault();
+    if (!canWrite) return;
     if (!payout) return;
     var rate = Number(rateRepairRate);
     if (!rate || rate <= 0) {
@@ -533,6 +517,7 @@ function PayoutsPageContent() {
   }
 
   async function handleRecompute() {
+    if (!canWrite) return;
     if (!selectedId) return;
     setBusy(true);
     setError("");
@@ -555,6 +540,7 @@ function PayoutsPageContent() {
   }
 
   async function handleLock() {
+    if (!canWrite) return;
     if (!selectedId) return;
     var reason = String(lockReason || "").trim();
     if (!reason) {
@@ -589,6 +575,7 @@ function PayoutsPageContent() {
   }
 
   async function handleReopen() {
+    if (!canReopen) return;
     if (!selectedId) return;
     var reason = String(reopenReason || "").trim();
     if (!reason) {
@@ -744,6 +731,7 @@ function PayoutsPageContent() {
 
   async function handlePay(event) {
     event.preventDefault();
+    if (!canDisburse) return;
     if (!selectedId) return;
     if (!payForm.proof) {
       setError("Attach a payout proof before marking paid");
@@ -793,6 +781,7 @@ function PayoutsPageContent() {
 
   async function handleAdvance(event) {
     event.preventDefault();
+    if (!canDisburse) return;
     if (!selectedId) return;
     if (!advanceForm.amount || Number(advanceForm.amount) <= 0) {
       setError("Advance amount must be greater than zero");
@@ -1450,8 +1439,11 @@ function PayoutsPageContent() {
               </form>
             </ModuleShell>
             ) : (
-              <ModuleShell title="Ensure / recompute" description="Read-only access — contact Admin or Accountant to create payouts.">
-                <div className="helper-box">You can view payouts and pending totals but cannot ensure or pay.</div>
+              <ModuleShell title="Ensure / recompute" description="Read-only access — contact Admin, Manager, or Accountant to create payouts.">
+                <div className="helper-box">
+                  You can view payouts and pending totals. Only Admin, Manager, and Accountant can
+                  ensure or lock; only Admin and Accountant can pay or adjust.
+                </div>
               </ModuleShell>
             )}
 
@@ -1665,7 +1657,7 @@ function PayoutsPageContent() {
                     }}
                   >
                     <option value="">All</option>
-                    {payoutStatusOptions.map(function (o) {
+                    {PAYOUT_STATUS_OPTIONS.map(function (o) {
                       return (
                         <option key={o.value} value={o.value}>
                           {o.label}
@@ -2070,8 +2062,8 @@ function PayoutsPageContent() {
                                     <span>{d.duty_id}</span>
                                     <span>{d.service_name || ""}</span>
                                     <span>
-                                      {String(d.start_at || "").slice(0, 10)} →{" "}
-                                      {String(d.end_at || "").slice(0, 10)}
+                                      {istDayKey(d.start_at) || "—"} →{" "}
+                                      {istDayKey(d.end_at) || "—"}
                                     </span>
                                     <span className={"status " + String(d.status || "").toLowerCase()}>
                                       {d.status}
@@ -2259,7 +2251,7 @@ function PayoutsPageContent() {
                         </button>
                       </div>
                     ) : null}
-                    {canWrite && status === "LOCKED" ? (
+                    {canReopen && status === "LOCKED" ? (
                       <div className="stack" style={{ flex: 1, minWidth: 220 }}>
                         <label className="mini-muted">Reason for reopening (required)</label>
                         <input
@@ -2294,7 +2286,7 @@ function PayoutsPageContent() {
                     ) : null}
                   </div>
 
-                  {canWrite && (!isLocked || status === "LOCKED") ? (
+                  {canDisburse && (!isLocked || status === "LOCKED") ? (
                     <form className="stack" onSubmit={handleAdjust}>
                       <strong>Adjust</strong>
                       <div className="grid-2">

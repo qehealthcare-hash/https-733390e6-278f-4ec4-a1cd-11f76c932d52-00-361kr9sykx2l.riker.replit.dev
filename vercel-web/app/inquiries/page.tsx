@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+/**
+ * Inquiries / lead management page (M4 Pass D — TypeScript).
+ *
+ * Presentation-only: all writes go through `/api/v1/inquiries/*`. Shared
+ * overdue/status rules live in `@/business/inquiryRules`; PDF/WhatsApp
+ * helpers in `@/lib/inquiryUi`.
+ */
+
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -16,11 +24,78 @@ import {
 } from "@/lib/crm-options";
 import { formatDate } from "@/lib/formatters";
 import { openPrintWindow } from "@/lib/print";
+import {
+  buildInquiryPdfBody,
+  buildInquiryWhatsAppUrl,
+  inquiryDisplayName,
+  inquiryListPosition,
+  type InquiryListRow
+} from "@/lib/inquiryUi";
+import {
+  INQUIRY_OPEN_STATUSES,
+  INQUIRY_CLOSED_STATUSES,
+  type InquiryStatus
+} from "@/validation/inquiryValidation";
+import { isOverdueFollowup as inquiryIsOverdueFollowup } from "@/business/inquiryRules";
 
-var OPEN_STATUSES = ["New", "Contacted", "FollowUp", "Negotiating"];
-var CLOSED_STATUSES = ["Converted", "Closed", "Lost"];
+const OPEN_STATUSES = INQUIRY_OPEN_STATUSES;
+const CLOSED_STATUSES = INQUIRY_CLOSED_STATUSES;
 
-function createInitialForm() {
+interface InquiryFormState {
+  id: string;
+  patient_name: string;
+  mobile: string;
+  area: string;
+  city: string;
+  service_required: string;
+  source: string;
+  potential: string;
+  /** Create form only — edits use the status dialog. */
+  status: string;
+  assigned_to: string;
+  followup_date: string;
+  emergency_level: number | string | null;
+  flexibility_score: number | string | null;
+  priority_score: number | string | null;
+  rating_touched: {
+    emergency_level: boolean;
+    flexibility_score: boolean;
+    priority_score: boolean;
+  };
+  expected_updated_at: string;
+  confirm_existing_patient: boolean;
+  notes: string;
+}
+
+interface StatusDialogState {
+  id: string;
+  name: string;
+  nextStatus: InquiryStatus;
+  reason: string;
+  followup_date: string;
+  requiresReason: boolean;
+}
+
+interface DeleteDialogState {
+  id: string;
+  name: string;
+  reason: string;
+  hard: boolean;
+}
+
+interface ConvertDialogState {
+  id: string;
+  name: string;
+  notes: string;
+}
+
+interface EmployeeOption {
+  id: string;
+  full_name?: string;
+  name?: string;
+}
+
+function createInitialForm(): InquiryFormState {
   return {
     id: "",
     patient_name: "",
@@ -47,27 +122,25 @@ function createInitialForm() {
   };
 }
 
-function isOverdueFollowup(row) {
-  var fd = row.followup_date;
-  if (!fd) return false;
-  if (CLOSED_STATUSES.indexOf(row.status || "") >= 0) return false;
-  var d = Date.parse(fd);
-  if (Number.isNaN(d)) return false;
-  var today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return d < today.getTime();
+/** Local adapter — forwards API row primitives to the shared business rule. */
+function isOverdueFollowup(row: InquiryListRow): boolean {
+  return inquiryIsOverdueFollowup(row.followup_date, row.status);
 }
 
 export default function InquiriesPage() {
-  var auth = useAuth();
-  var isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
-  var [search, setSearch] = useState("");
-  var [debouncedSearch, setDebouncedSearch] = useState("");
-  var [employees, setEmployees] = useState([]);
-  var [potentialFilter, setPotentialFilter] = useState("");
-  var [statusFilter, setStatusFilter] = useState("");
-  var [sourceFilter, setSourceFilter] = useState("");
-  var [openOnly, setOpenOnly] = useState(true);
+  const auth = useAuth() as unknown as {
+    session?: { access_token?: string } | null;
+    profile?: { role?: string } | null;
+  };
+  const isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [employeesError, setEmployeesError] = useState("");
+  const [potentialFilter, setPotentialFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [openOnly, setOpenOnly] = useState(true);
 
   useEffect(
     function () {
@@ -79,20 +152,47 @@ export default function InquiriesPage() {
     [search]
   );
 
+  // M4-L1: depend on the access token string instead of the session object
+  // identity. Supabase mints a new session object on every onAuthStateChange
+  // fire even when the token is unchanged, which would re-fire this effect
+  // unnecessarily and risk a stale-response race.
+  var accessToken = auth.session?.access_token || "";
   useEffect(
     function () {
+      if (!accessToken) {
+        setEmployees([]);
+        setEmployeesError("");
+        return undefined;
+      }
+      var cancelled = false;
+      setEmployeesError("");
       request("/lookups/employees", null, auth.session)
         .then(function (rows) {
+          if (cancelled) return;
           setEmployees(Array.isArray(rows) ? rows : rows?.rows || rows?.data || []);
         })
-        .catch(function () {
+        .catch(function (lookupError) {
+          if (cancelled) return;
           setEmployees([]);
+          // M4-M5: surface the underlying error so operators know the
+          // dropdown is empty because the lookup failed, not because the
+          // employees table is empty. Swallowing this caused field reports
+          // of "I can't assign inquiries".
+          setEmployeesError(
+            (lookupError && lookupError.message)
+              ? "Could not load employees: " + lookupError.message
+              : "Could not load employees"
+          );
         });
+      return function () { cancelled = true; };
     },
-    [auth.session]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- accessToken is
+    // the real identity of auth.session for this fetch; depending on
+    // auth.session directly would defeat the point of this fix.
+    [accessToken]
   );
 
-  var listQuery = useMemo(
+  const listQuery = useMemo(
     function () {
       return {
         q: debouncedSearch || undefined,
@@ -104,7 +204,7 @@ export default function InquiriesPage() {
     [debouncedSearch, statusFilter, sourceFilter, openOnly]
   );
 
-  var resource = usePaginatedResource({
+  const resource = usePaginatedResource({
     basePath: "/inquiries",
     table: "hh_inquiries",
     channel: "inquiries",
@@ -112,37 +212,49 @@ export default function InquiriesPage() {
     resetKey: debouncedSearch + "|" + statusFilter + "|" + sourceFilter + "|" + (openOnly ? "1" : "0"),
     pageSize: 50
   });
-  var [form, setForm] = useState(createInitialForm());
-  var [busy, setBusy] = useState(false);
-  var [error, setError] = useState("");
-  var [message, setMessage] = useState("");
+  const [form, setForm] = useState<InquiryFormState>(createInitialForm);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
-  var [statusDialog, setStatusDialog] = useState(null);
-  var [deleteDialog, setDeleteDialog] = useState(null);
-  var [convertDialog, setConvertDialog] = useState(null);
-  var [conflictPrompt, setConflictPrompt] = useState(null);
-  var [duplicatePatientPrompt, setDuplicatePatientPrompt] = useState(null);
+  const [statusDialog, setStatusDialog] = useState<StatusDialogState | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
+  const [convertDialog, setConvertDialog] = useState<ConvertDialogState | null>(null);
+  const [conflictPrompt, setConflictPrompt] = useState<{
+    actual?: string;
+    message: string;
+  } | null>(null);
+  const [duplicatePatientPrompt, setDuplicatePatientPrompt] = useState<{
+    message: string;
+  } | null>(null);
 
-  var filtered = useMemo(
-    function () {
-      if (!potentialFilter) return resource.data;
-      return resource.data.filter(function (row) {
-        return row.potential === potentialFilter;
-      });
-    },
-    [resource.data, potentialFilter]
-  );
+  const filtered = useMemo((): InquiryListRow[] => {
+    const rows = (resource.data || []) as InquiryListRow[];
+    if (!potentialFilter) return rows;
+    return rows.filter((row) => row.potential === potentialFilter);
+  }, [resource.data, potentialFilter]);
 
-  var overdueCount = useMemo(
+  const overdueCount = useMemo(
     function () {
       return filtered.filter(function (row) { return isOverdueFollowup(row); }).length;
     },
     [filtered]
   );
 
-  function updateField(name, value) {
+  function errorMessage(err: unknown, fallback: string): string {
+    if (err && typeof err === "object" && "message" in err) {
+      const msg = (err as { message?: unknown }).message;
+      if (typeof msg === "string" && msg.trim()) return msg;
+    }
+    return fallback;
+  }
+
+  function updateField<K extends keyof InquiryFormState>(
+    name: K,
+    value: InquiryFormState[K]
+  ) {
     setForm(function (current) {
-      var next = { ...current, [name]: value };
+      const next = { ...current, [name]: value };
       if (name === "emergency_level" || name === "flexibility_score" || name === "priority_score") {
         next.rating_touched = { ...current.rating_touched, [name]: true };
       }
@@ -158,7 +270,7 @@ export default function InquiriesPage() {
     setDuplicatePatientPrompt(null);
   }
 
-  function editInquiry(row) {
+  function editInquiry(row: InquiryListRow) {
     setForm({
       id: row.id,
       patient_name: row.patient_name || row.name || "",
@@ -184,73 +296,100 @@ export default function InquiriesPage() {
       notes: row.notes || row.remarks || ""
     });
     setError("");
-    setMessage("");
+    // M4-M4: legacy rows can lack `updated_at` (the column was added later).
+    // Without it, optimistic-concurrency control silently degrades to "last
+    // write wins" — a concurrent edit elsewhere will be clobbered without
+    // the conflict dialog firing. Surface that to the operator so they
+    // know to be careful and reach out for a manual reconciliation if
+    // needed. The save itself is still allowed (the legacy SPA cannot fix
+    // these rows retroactively from the UI).
+    if (!row.updated_at) {
+      setMessage(
+        "Loaded a legacy inquiry without a last-modified timestamp — concurrent edit detection is disabled for this record. Save with care."
+      );
+    } else {
+      setMessage("");
+    }
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault();
+  // Internal — accepts an optional `formOverride` so the duplicate-patient
+  // "Save anyway" branch can pass an updated form snapshot synchronously
+  // (M4-M3). The previous flow relied on React state to flip
+  // `confirm_existing_patient` and then asked the user to click Save again.
+  async function submitForm(formOverride?: InquiryFormState) {
+    const current = formOverride || form;
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      var payload = {
-        patient_name: form.patient_name,
-        mobile: form.mobile,
-        area: form.area,
-        city: form.city,
-        service_required: form.service_required,
-        source: form.source,
-        potential: form.potential,
-        status: form.status,
-        assigned_to: form.assigned_to || "",
-        followup_date: form.followup_date || "",
-        notes: form.notes
+      const payload: Record<string, unknown> = {
+        patient_name: current.patient_name,
+        mobile: current.mobile,
+        area: current.area,
+        city: current.city,
+        service_required: current.service_required,
+        source: current.source,
+        potential: current.potential,
+        status: current.status,
+        assigned_to: current.assigned_to || "",
+        followup_date: current.followup_date || "",
+        notes: current.notes
       };
-      var touched = form.rating_touched || {};
-      if (touched.emergency_level && form.emergency_level != null) {
-        payload.emergency_level = Number(form.emergency_level);
+      const touched = current.rating_touched || {};
+      if (touched.emergency_level && current.emergency_level != null) {
+        payload.emergency_level = Number(current.emergency_level);
       }
-      if (touched.flexibility_score && form.flexibility_score != null) {
-        payload.flexibility_score = Number(form.flexibility_score);
+      if (touched.flexibility_score && current.flexibility_score != null) {
+        payload.flexibility_score = Number(current.flexibility_score);
       }
-      if (touched.priority_score && form.priority_score != null) {
-        payload.priority_score = Number(form.priority_score);
+      if (touched.priority_score && current.priority_score != null) {
+        payload.priority_score = Number(current.priority_score);
       }
-      if (form.id && form.expected_updated_at) {
-        payload.expected_updated_at = form.expected_updated_at;
+      if (current.id && current.expected_updated_at) {
+        payload.expected_updated_at = current.expected_updated_at;
       }
-      if (form.confirm_existing_patient) {
+      if (current.confirm_existing_patient) {
         payload.confirm_existing_patient = true;
       }
       await requestWithOfflineFallback(
-        form.id ? "/inquiries/" + form.id : "/inquiries",
-        { method: form.id ? "PUT" : "POST", body: payload },
+        current.id ? "/inquiries/" + current.id : "/inquiries",
+        { method: current.id ? "PUT" : "POST", body: payload },
         auth.session
       );
       await resource.reload();
       resetForm();
-      setMessage(form.id ? "Inquiry updated" : "Inquiry created");
-    } catch (submitError) {
-      var code = submitError?.code;
+      setMessage(current.id ? "Inquiry updated" : "Inquiry created");
+    } catch (submitError: unknown) {
+      const err = submitError as {
+        code?: string;
+        message?: string;
+        details?: { actual_updated_at?: string; field?: string };
+      };
+      const code = err?.code;
       if (code === "conflict") {
         setConflictPrompt({
-          actual: submitError?.details?.actual_updated_at,
-          message: submitError.message || "Inquiry was modified by another user."
+          actual: err?.details?.actual_updated_at,
+          message: err.message || "Inquiry was modified by another user."
         });
       } else if (
         code === "duplicate" &&
-        submitError?.details?.field === "phone_existing_patient" &&
-        !form.id
+        err?.details?.field === "phone_existing_patient" &&
+        !current.id
       ) {
         setDuplicatePatientPrompt({
-          message: submitError.message || "This phone is already a registered patient."
+          message: err.message || "This phone is already a registered patient."
         });
       } else {
-        setError(submitError.message || "Unable to save inquiry");
+        setError(errorMessage(submitError, "Unable to save inquiry"));
       }
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    return submitForm();
   }
 
   async function reloadInquiryFromConflict() {
@@ -264,24 +403,29 @@ export default function InquiriesPage() {
       editInquiry(fresh);
       setConflictPrompt(null);
       setMessage("Inquiry reloaded — your previous edits were discarded.");
-    } catch (reloadError) {
-      setError(reloadError.message || "Could not reload inquiry.");
+    } catch (reloadError: unknown) {
+      setError(errorMessage(reloadError, "Could not reload inquiry."));
     } finally {
       setBusy(false);
     }
   }
 
-  function confirmExistingPatientAndResubmit() {
+  // M4-M3: previously this only mutated state and asked the user to click
+  // Save a second time. Build the next form snapshot synchronously, push
+  // it into React state (so the form stays in sync), and re-submit using
+  // the override path on submitForm so we don't wait for a re-render.
+  async function confirmExistingPatientAndResubmit() {
     setDuplicatePatientPrompt(null);
-    setForm(function (current) { return { ...current, confirm_existing_patient: true }; });
-    setMessage("Will save anyway on the next Save — press Save again.");
+    var next = { ...form, confirm_existing_patient: true };
+    setForm(next);
+    await submitForm(next);
   }
 
-  function openStatusDialog(row, nextStatus) {
-    var rowStatus = row.status || "New";
-    var reopening =
+  function openStatusDialog(row: InquiryListRow, nextStatus: InquiryStatus) {
+    const rowStatus = (row.status || "New") as InquiryStatus;
+    const reopening =
       (rowStatus === "Closed" || rowStatus === "Lost") &&
-      OPEN_STATUSES.indexOf(nextStatus) >= 0;
+      (OPEN_STATUSES as readonly string[]).includes(nextStatus);
     setStatusDialog({
       id: row.id,
       name: row.patient_name || row.name || row.id,
@@ -325,14 +469,14 @@ export default function InquiriesPage() {
       setStatusDialog(null);
       await resource.reload();
       if (form.id === statusDialog.id) resetForm();
-    } catch (statusError) {
-      setError(statusError.message || "Unable to change status");
+    } catch (statusError: unknown) {
+      setError(errorMessage(statusError, "Unable to change status"));
     } finally {
       setBusy(false);
     }
   }
 
-  function openDeleteDialog(row) {
+  function openDeleteDialog(row: InquiryListRow) {
     setDeleteDialog({
       id: row.id,
       name: row.patient_name || row.name || row.id,
@@ -361,14 +505,14 @@ export default function InquiriesPage() {
           : "Inquiry closed (history preserved)"
       );
       setDeleteDialog(null);
-    } catch (deleteError) {
-      setError(deleteError.message || "Unable to delete inquiry");
+    } catch (deleteError: unknown) {
+      setError(errorMessage(deleteError, "Unable to delete inquiry"));
     } finally {
       setBusy(false);
     }
   }
 
-  function openConvertDialog(row) {
+  function openConvertDialog(row: InquiryListRow) {
     setConvertDialog({
       id: row.id,
       name: row.patient_name || row.name || row.id,
@@ -393,49 +537,22 @@ export default function InquiriesPage() {
       );
       setConvertDialog(null);
       await resource.reload();
-    } catch (convertError) {
-      setError(convertError.message || "Unable to convert inquiry");
+    } catch (convertError: unknown) {
+      setError(errorMessage(convertError, "Unable to convert inquiry"));
     } finally {
       setBusy(false);
     }
   }
 
-  function openInquiryPdf(row, hideMobile) {
-    var body = [
-      "<h2>Inquiry Summary</h2>",
-      "<div class='meta'><strong>Patient:</strong> " + (row.patient_name || row.name) + "</div>",
-      hideMobile ? "" : "<div class='meta'><strong>Mobile:</strong> " + (row.mobile || row.phone || "") + "</div>",
-      "<div class='meta'><strong>Location:</strong> " + (row.area || "") + ", " + (row.city || "") + "</div>",
-      "<div class='meta'><strong>Service Required:</strong> " + (row.service_required || row.service || "") + "</div>",
-      "<div class='meta'><strong>Source:</strong> " + (row.source || "") + "</div>",
-      "<div class='meta'><strong>Potential:</strong> " + (row.potential || "") + "</div>",
-      "<div class='meta'><strong>Status:</strong> " + (row.status || "") + "</div>",
-      "<table><thead><tr><th>Metric</th><th>Score</th></tr></thead><tbody>" +
-        "<tr><td>Emergency Level</td><td>" + (row.emergency_level ?? row.rating_emergency ?? "-") + "/10</td></tr>" +
-        "<tr><td>Flexibility</td><td>" + (row.flexibility_score ?? row.rating_flexibility ?? "-") + "/10</td></tr>" +
-        "<tr><td>Overall Priority</td><td>" + (row.priority_score ?? row.rating_overall ?? "-") + "/10</td></tr>" +
-      "</tbody></table>",
-      "<div class='meta'><strong>Notes:</strong> " + (row.notes || row.remarks || "-") + "</div>",
-      "<div class='stamp'>Created/Processed on " + formatDate(row.created_at) + "</div>"
-    ].join("");
-    openPrintWindow(hideMobile ? "Inquiry PDF (without mobile)" : "Inquiry PDF", body);
+  function openInquiryPdf(row: InquiryListRow, hideMobile: boolean) {
+    openPrintWindow(
+      hideMobile ? "Inquiry PDF (without mobile)" : "Inquiry PDF",
+      buildInquiryPdfBody(row, hideMobile)
+    );
   }
 
-  function sendWhatsApp(row) {
-    var phone = row.mobile || row.phone || "";
-    var text =
-      "New Inquiry: " +
-      (row.patient_name || row.name) +
-      " needs " +
-      (row.service_required || row.service || "") +
-      " in " +
-      (row.area || "") +
-      ". Emergency: " +
-      (row.emergency_level ?? row.rating_emergency ?? "-") +
-      "/10. Please contact: " +
-      phone +
-      ". — Hominal Healthcare | 7211136600";
-    window.open("https://wa.me/91" + phone + "?text=" + encodeURIComponent(text), "_blank");
+  function sendWhatsApp(row: InquiryListRow) {
+    window.open(buildInquiryWhatsAppUrl(row), "_blank");
   }
 
   return (
@@ -445,6 +562,7 @@ export default function InquiriesPage() {
           <ModuleShell
             title={form.id ? "Edit Inquiry" : "Create Inquiry"}
             description="Capture leads with status workflow, follow-ups and convert-to-patient."
+            actions={undefined}
           >
             <form className="stack" onSubmit={handleSubmit}>
               <div className="grid-2">
@@ -486,11 +604,22 @@ export default function InquiriesPage() {
                 </div>
                 <div className="field">
                   <label htmlFor="inquiries-status-8">Status</label>
-                  <select id="inquiries-status-8" value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
+                  <select
+                    id="inquiries-status-8"
+                    value={form.status}
+                    onChange={function (event) { updateField("status", event.target.value); }}
+                    disabled={Boolean(form.id)}
+                    title={form.id ? "Use the Change Status button below to move this inquiry through its lifecycle." : undefined}
+                  >
                     {inquiryStatusOptions.map(function (item) {
                       return <option key={item.value} value={item.value}>{item.label}</option>;
                     })}
                   </select>
+                  {form.id ? (
+                    <small className="mini-muted" style={{ marginTop: 4, display: "block" }}>
+                      Status changes go through the Change Status action — pick a target status from the inquiry card on the right (Mark Contacted, Follow-up, Negotiating, Lost, Reopen).
+                    </small>
+                  ) : null}
                 </div>
                 <div className="field">
                   <label htmlFor="inquiries-assigned-to-9">Assigned to</label>
@@ -501,6 +630,11 @@ export default function InquiriesPage() {
                       return <option key={emp.id} value={emp.id}>{label}</option>;
                     })}
                   </select>
+                  {employeesError ? (
+                    <small className="error-text" style={{ marginTop: 4, display: "block" }}>
+                      {employeesError}
+                    </small>
+                  ) : null}
                 </div>
                 <div className="field">
                   <label htmlFor="inquiries-follow-up-date-10">Follow-up date</label>
@@ -520,7 +654,7 @@ export default function InquiriesPage() {
                     min="1"
                     max="10"
                     value={form.emergency_level != null ? form.emergency_level : 5}
-                    onChange={function (event) { updateField("emergency_level", event.target.value); }}
+                    onChange={function (event) { updateField("emergency_level", Number(event.target.value)); }}
                   />
                   <small>{form.emergency_level != null ? form.emergency_level : "Not rated"}/10</small>
                 </div>
@@ -531,7 +665,7 @@ export default function InquiriesPage() {
                     min="1"
                     max="10"
                     value={form.flexibility_score != null ? form.flexibility_score : 5}
-                    onChange={function (event) { updateField("flexibility_score", event.target.value); }}
+                    onChange={function (event) { updateField("flexibility_score", Number(event.target.value)); }}
                   />
                   <small>{form.flexibility_score != null ? form.flexibility_score : "Not rated"}/10</small>
                 </div>
@@ -542,14 +676,14 @@ export default function InquiriesPage() {
                     min="1"
                     max="10"
                     value={form.priority_score != null ? form.priority_score : 5}
-                    onChange={function (event) { updateField("priority_score", event.target.value); }}
+                    onChange={function (event) { updateField("priority_score", Number(event.target.value)); }}
                   />
                   <small>{form.priority_score != null ? form.priority_score : "Not rated"}/10</small>
                 </div>
               </div>
               <div className="field">
                 <label htmlFor="inquiries-notes-14">Notes</label>
-                <textarea id="inquiries-notes-14" rows="3" value={form.notes} onChange={function (event) { updateField("notes", event.target.value); }} />
+                <textarea id="inquiries-notes-14" rows={3} value={form.notes} onChange={function (event) { updateField("notes", event.target.value); }} />
               </div>
               {conflictPrompt ? (
                 <div className="error-text" style={{ border: "1px solid var(--warn, #d97706)", background: "rgba(217,119,6,0.08)", padding: "10px 12px", borderRadius: 6 }}>
@@ -591,7 +725,11 @@ export default function InquiriesPage() {
             </form>
           </ModuleShell>
 
-          <ModuleShell title="Inquiry Tracker" description="Status workflow, conversion to patient, follow-ups, WhatsApp & PDF.">
+          <ModuleShell
+            title="Inquiry Tracker"
+            description="Status workflow, conversion to patient, follow-ups, WhatsApp & PDF."
+            actions={undefined}
+          >
             <div className="toolbar">
               <div className="field">
                 <label htmlFor="inquiries-search-15">Search</label>
@@ -637,6 +775,7 @@ export default function InquiriesPage() {
               total={resource.total}
               onPageChange={resource.setPage}
               onPageSizeChange={resource.setPageSize}
+              pageSizeOptions={undefined}
             />
             <div className="mini-muted" style={{ margin: "0.25rem 0 0.75rem" }}>
               {debouncedSearch ? "Search: \"" + debouncedSearch + "\" — " : ""}
@@ -657,16 +796,21 @@ export default function InquiriesPage() {
             ) : (
               <div className="record-list">
                 {filtered.map(function (row, index) {
-                  var status = row.status || "New";
-                  var isClosed = CLOSED_STATUSES.indexOf(status) >= 0;
-                  var overdue = isOverdueFollowup(row);
+                  const status = row.status || "New";
+                  const isClosed = (CLOSED_STATUSES as readonly string[]).includes(status);
+                  const overdue = isOverdueFollowup(row);
+                  const listPosition = inquiryListPosition(
+                    resource.page,
+                    resource.pageSize,
+                    index
+                  );
                   return (
                     <div className="record-card" key={row.id}>
                       <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
                           <h3>
-                            <span className="row-number">#{index + 1}</span>
-                            {row.patient_name || row.name}
+                            <span className="row-number">#{listPosition}</span>
+                            {inquiryDisplayName(row)}
                             {overdue ? <span className="status" style={{ marginLeft: 8, background: "var(--danger)" }}>Overdue</span> : null}
                           </h3>
                           <div className="record-meta">
@@ -697,7 +841,7 @@ export default function InquiriesPage() {
                             Convert to patient
                           </button>
                         ) : null}
-                        {OPEN_STATUSES.indexOf(status) >= 0 && status !== "Contacted" ? (
+                        {(OPEN_STATUSES as readonly string[]).includes(status) && status !== "Contacted" ? (
                           <button className="button secondary" type="button" onClick={function () { openStatusDialog(row, "Contacted"); }} disabled={busy}>
                             Mark Contacted
                           </button>
@@ -773,7 +917,7 @@ export default function InquiriesPage() {
                   : " (optional)"}
               </label>
               <textarea id="inquiries-reason-21"
-                rows="3"
+                rows={3}
                 value={statusDialog.reason}
                 onChange={function (e) {
                   var v = e.target.value;
@@ -805,7 +949,7 @@ export default function InquiriesPage() {
             <div className="field">
               <label htmlFor="inquiries-reason-optional-22">Reason (optional)</label>
               <textarea id="inquiries-reason-optional-22"
-                rows="3"
+                rows={3}
                 value={deleteDialog.reason}
                 onChange={function (e) {
                   var v = e.target.value;
@@ -851,7 +995,7 @@ export default function InquiriesPage() {
             <div className="field">
               <label htmlFor="inquiries-conversion-notes-optiona-24">Conversion notes (optional)</label>
               <textarea id="inquiries-conversion-notes-optiona-24"
-                rows="3"
+                rows={3}
                 value={convertDialog.notes}
                 onChange={function (e) {
                   var v = e.target.value;

@@ -14,7 +14,7 @@ export function Sidebar({ open = false, onNavigate }) {
 
   const navItems = modules.filter(function (item) {
     if (!item.permission) return Boolean(auth.session);
-    return hasPermission(auth.profile?.role, item.permission, auth.profile?.permissions);
+    return hasPermission(auth.profile?.role, item.permission);
   });
 
   return (

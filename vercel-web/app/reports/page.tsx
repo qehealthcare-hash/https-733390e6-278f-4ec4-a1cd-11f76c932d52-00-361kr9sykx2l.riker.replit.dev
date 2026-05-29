@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Financial reports (M10 Pass D). Period helpers: `@/lib/reportUi`.
+ * All data via `/api/v1/reports/*`.
+ */
+
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
@@ -12,23 +17,23 @@ import { downloadCsv } from "@/lib/csv";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { openPrintWindow } from "@/lib/print";
 import { useNotify } from "@/components/ui/confirm-dialog";
+import { REPORT_READ_ROLES } from "@/business/rbac";
+import {
+  currentPeriod,
+  periodFromMonthInput,
+  reportTabClass
+} from "@/lib/reportUi";
 
-function currentPeriod() {
-  var now = new Date();
-  return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
-}
-
-function periodFromMonthInput(monthValue) {
-  if (monthValue && /^\d{4}-\d{2}$/.test(monthValue)) return monthValue;
-  return currentPeriod();
-}
-
-function tabClass(active) {
-  return "button " + (active ? "primary" : "secondary");
+function roleInList(role, list) {
+  var normalized = String(role || "").trim().toLowerCase();
+  return list.some(function (r) {
+    return r.toLowerCase() === normalized;
+  });
 }
 
 export default function ReportsPage() {
   var auth = useAuth();
+  var canViewReports = roleInList(auth.profile?.role, REPORT_READ_ROLES);
   var notify = useNotify();
   var [period, setPeriod] = useState(currentPeriod());
   var [tab, setTab] = useState("overview");
@@ -53,7 +58,7 @@ export default function ReportsPage() {
 
   useEffect(
     function () {
-      if (!auth.session?.access_token) return;
+      if (!auth.session?.access_token || !canViewReports) return;
       var q = "?period=" + encodeURIComponent(periodFromMonthInput(period));
       setLoading(true);
       setError("");
@@ -76,12 +81,12 @@ export default function ReportsPage() {
           setLoading(false);
         });
     },
-    [auth.session, period]
+    [auth.session?.access_token, period, canViewReports]
   );
 
   useEffect(
     function () {
-      if (!auth.session?.access_token) return;
+      if (!auth.session?.access_token || !canViewReports) return;
       var p = periodFromMonthInput(period);
       var qs = "?period=" + encodeURIComponent(p) + "&limit=200";
       var datasetErrors = [];
@@ -116,7 +121,7 @@ export default function ReportsPage() {
         }
       });
     },
-    [auth.session, period]
+    [auth.session?.access_token, period, canViewReports]
   );
 
   var payrollRows = useMemo(function () { return (payroll && payroll.rows) || []; }, [payroll]);
@@ -199,6 +204,19 @@ export default function ReportsPage() {
     <AuthGuard permission="reports.read">
       <AppShell title="Reports">
         <div className="page-grid">
+          {!canViewReports ? (
+            <ModuleShell
+              title="Access restricted"
+              description="Financial report APIs are limited to Admin, Manager, Accountant, and Executive roles."
+            >
+              <div className="helper-box">
+                Your role can open this page via navigation but cannot load financial totals. Contact
+                an Admin if you need report access.
+              </div>
+            </ModuleShell>
+          ) : null}
+          {canViewReports ? (
+          <>
           <section className="kpi-grid">
             <StatCard
               label="Service total"
@@ -236,13 +254,13 @@ export default function ReportsPage() {
               </div>
             </div>
             <div className="button-row" style={{ flexWrap: "wrap" }}>
-              <button type="button" className={tabClass(tab === "overview")} onClick={function () { setTab("overview"); }}>Overview</button>
-              <button type="button" className={tabClass(tab === "billing")} onClick={function () { setTab("billing"); }}>Billing</button>
-              <button type="button" className={tabClass(tab === "payout")} onClick={function () { setTab("payout"); }}>Payouts</button>
-              <button type="button" className={tabClass(tab === "payroll")} onClick={function () { setTab("payroll"); }}>Payroll</button>
-              <button type="button" className={tabClass(tab === "attendance")} onClick={function () { setTab("attendance"); }}>Attendance</button>
-              <button type="button" className={tabClass(tab === "inquiry")} onClick={function () { setTab("inquiry"); }}>Inquiries</button>
-              <button type="button" className={tabClass(tab === "patients")} onClick={function () { setTab("patients"); }}>Patients</button>
+              <button type="button" className={reportTabClass(tab === "overview")} onClick={function () { setTab("overview"); }}>Overview</button>
+              <button type="button" className={reportTabClass(tab === "billing")} onClick={function () { setTab("billing"); }}>Billing</button>
+              <button type="button" className={reportTabClass(tab === "payout")} onClick={function () { setTab("payout"); }}>Payouts</button>
+              <button type="button" className={reportTabClass(tab === "payroll")} onClick={function () { setTab("payroll"); }}>Payroll</button>
+              <button type="button" className={reportTabClass(tab === "attendance")} onClick={function () { setTab("attendance"); }}>Attendance</button>
+              <button type="button" className={reportTabClass(tab === "inquiry")} onClick={function () { setTab("inquiry"); }}>Inquiries</button>
+              <button type="button" className={reportTabClass(tab === "patients")} onClick={function () { setTab("patients"); }}>Patients</button>
             </div>
             {loading ? <div className="mini-muted">Loading…</div> : null}
             {error ? <div className="error-text">{error}</div> : null}
@@ -664,6 +682,8 @@ export default function ReportsPage() {
                 })}
               </div>
             </ModuleShell>
+          ) : null}
+          </>
           ) : null}
         </div>
       </AppShell>

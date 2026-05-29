@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+/**
+ * Patients / client registry (M5 Pass D — TypeScript).
+ *
+ * Presentation-only: all writes go through `/api/v1/patients/*`. PDF helpers
+ * live in `@/lib/patientUi`.
+ */
+
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -21,12 +28,63 @@ import { openPrintWindow } from "@/lib/print";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
 import { CameraCaptureModal } from "@/components/ui/camera-capture-lazy";
 import { DocumentCard, DocumentList } from "@/components/ui/document-card";
+import { hasPermission } from "@/lib/permissions";
+import {
+  PATIENT_CLOSE_ROLES,
+  PATIENT_HISTORY_ROLES,
+  type Role
+} from "@/business/rbac";
+import {
+  buildPatientPdfBody,
+  patientDisplayName,
+  patientListPosition,
+  type PatientDocRef,
+  type PatientListRow
+} from "@/lib/patientUi";
+
+interface RelativeContact {
+  name: string;
+  phone: string;
+}
+
+interface PatientFormState {
+  id: string;
+  full_name: string;
+  dob: string;
+  age: number | string;
+  gender: string;
+  address: string;
+  area: string;
+  city: string;
+  pincode: string;
+  mobile: string;
+  disease_condition: string;
+  assigned_staff_id: string;
+  shift_type: string;
+  start_date: string;
+  status: string;
+  status_reason: string;
+  status_reason_other: string;
+  photo: PatientDocRef | null;
+  documents: PatientDocRef[];
+  relative_contacts: RelativeContact[];
+  expected_updated_at: string;
+  confirm_duplicate_name: boolean;
+  aadhar?: string;
+}
+
+function roleInList(role: unknown, list: readonly Role[]): boolean {
+  const normalized = String(role || "")
+    .trim()
+    .toLowerCase();
+  return list.some((r) => r.toLowerCase() === normalized);
+}
 
 function emptyRelative() {
   return { name: "", phone: "" };
 }
 
-function createInitialForm() {
+function createInitialForm(): PatientFormState {
   return {
     id: "",
     full_name: "",
@@ -65,7 +123,11 @@ function deriveAgeFromDob(dob) {
 }
 
 export default function PatientsPage() {
-  var auth = useAuth();
+  const auth = useAuth();
+  const accessToken = auth.session?.access_token ?? "";
+  const canWrite = hasPermission(auth.profile?.role, "patients.write");
+  const canClose = roleInList(auth.profile?.role, PATIENT_CLOSE_ROLES);
+  const canViewHistory = roleInList(auth.profile?.role, PATIENT_HISTORY_ROLES);
   var [search, setSearch] = useState("");
   var [debouncedSearch, setDebouncedSearch] = useState("");
   var [statusFilter, setStatusFilter] = useState("");
@@ -143,23 +205,36 @@ export default function PatientsPage() {
   var [historyLoading, setHistoryLoading] = useState(false);
   var [historyError, setHistoryError] = useState("");
 
-  var isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
+  const isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
 
   useEffect(
     function () {
-      if (!auth.session?.access_token) return;
-      lookupsClient.employees(auth.session)
-        .then(setEmployees)
-        .catch(function (lookupError) {
+      if (!accessToken) return;
+      let cancelled = false;
+      lookupsClient
+        .employees(auth.session)
+        .then(function (rows) {
+          if (!cancelled) setEmployees(rows);
+        })
+        .catch(function (lookupError: unknown) {
+          if (cancelled) return;
           setEmployees([]);
+          const msg =
+            lookupError &&
+            typeof lookupError === "object" &&
+            "message" in lookupError &&
+            typeof (lookupError as { message?: unknown }).message === "string"
+              ? (lookupError as { message: string }).message
+              : "unknown error";
           setError(
-            "Could not load the employee list — " +
-              (lookupError.message || "unknown error") +
-              ". Assignment lists may be incomplete."
+            "Could not load the employee list — " + msg + ". Assignment lists may be incomplete."
           );
         });
+      return function () {
+        cancelled = true;
+      };
     },
-    [auth.session]
+    [accessToken, auth.session]
   );
 
   var rows = useMemo(
@@ -297,7 +372,7 @@ export default function PatientsPage() {
     await uploadPhotoFile(file);
   }
 
-  function editPatient(row) {
+  function editPatient(row: PatientListRow) {
     setError("");
     setMessage("");
     var rels = [
@@ -334,8 +409,14 @@ export default function PatientsPage() {
       photo: row.photo && typeof row.photo === "object" ? row.photo : null,
       documents: row.patient_documents || row.docs || [],
       relative_contacts: rels,
-      expected_updated_at: row.updated_at || ""
+      expected_updated_at: row.updated_at || "",
+      confirm_duplicate_name: false
     });
+    if (!row.updated_at) {
+      setMessage(
+        "Loaded a legacy patient without a last-modified timestamp — concurrent edit detection is disabled for this record. Save with care."
+      );
+    }
   }
 
   function resetForm() {
@@ -344,89 +425,99 @@ export default function PatientsPage() {
     setMessage("");
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault();
+  async function submitForm(formOverride?: PatientFormState) {
+    const current = formOverride ?? form;
     setBusy(true);
     setError("");
     setMessage("");
     setConflictPrompt(null);
     setDuplicatePrompt(null);
     try {
-      if (form.status !== "Active" && !form.status_reason.trim()) {
+      if (current.status !== "Active" && !current.id && !current.status_reason.trim()) {
         throw new Error("Reason is required when patient is not Active");
       }
-      if (form.status_reason === "Other" && !form.status_reason_other.trim()) {
-        throw new Error("Specify the other reason for " + form.status);
+      if (current.status_reason === "Other" && !current.status_reason_other.trim()) {
+        throw new Error("Specify the other reason for " + current.status);
       }
-      var payload = {
-        full_name: form.full_name,
-        name: form.full_name,
-        dob: form.dob || "",
-        age: String(form.age || ""),
-        gender: form.gender,
-        address: form.address || "",
-        addr: form.address || "",
-        area: form.area,
-        city: form.city,
-        pincode: form.pincode,
-        pin: form.pincode,
-        mobile: form.mobile,
-        phone: form.mobile,
-        disease_condition: form.disease_condition,
-        assigned_staff_id: form.assigned_staff_id || undefined,
-        caretaker_id: form.assigned_staff_id || undefined,
-        shift_type: form.shift_type,
-        start_date: form.start_date,
-        status: form.status,
-        status_reason: form.status_reason || "",
-        status_reason_other: form.status_reason_other || "",
-        relname: form.relative_contacts[0]?.name || "",
-        relphone: form.relative_contacts[0]?.phone || "",
-        relname2: form.relative_contacts[1]?.name || "",
-        relphone2: form.relative_contacts[1]?.phone || "",
-        relname3: form.relative_contacts[2]?.name || "",
-        relphone3: form.relative_contacts[2]?.phone || "",
-        relative_contacts: form.relative_contacts.filter(function (item) {
+      const payload: Record<string, unknown> = {
+        id: current.id || undefined,
+        full_name: current.full_name,
+        name: current.full_name,
+        dob: current.dob || "",
+        age: String(current.age || ""),
+        gender: current.gender,
+        address: current.address || "",
+        addr: current.address || "",
+        area: current.area,
+        city: current.city,
+        pincode: current.pincode,
+        pin: current.pincode,
+        mobile: current.mobile,
+        phone: current.mobile,
+        disease_condition: current.disease_condition,
+        assigned_staff_id: current.assigned_staff_id || undefined,
+        caretaker_id: current.assigned_staff_id || undefined,
+        shift_type: current.shift_type,
+        start_date: current.start_date,
+        status: current.status,
+        status_reason: current.status_reason || "",
+        status_reason_other: current.status_reason_other || "",
+        relname: current.relative_contacts[0]?.name || "",
+        relphone: current.relative_contacts[0]?.phone || "",
+        relname2: current.relative_contacts[1]?.name || "",
+        relphone2: current.relative_contacts[1]?.phone || "",
+        relname3: current.relative_contacts[2]?.name || "",
+        relphone3: current.relative_contacts[2]?.phone || "",
+        relative_contacts: current.relative_contacts.filter(function (item) {
           return item.name && item.phone;
         }),
-        photo: form.photo || undefined,
-        docs: form.documents,
-        documents: form.documents
+        photo: current.photo || undefined,
+        docs: current.documents,
+        documents: current.documents
       };
-      if (form.id && form.expected_updated_at) {
-        payload.expected_updated_at = form.expected_updated_at;
+      if (current.id && current.expected_updated_at) {
+        payload.expected_updated_at = current.expected_updated_at;
       }
-      if (form.confirm_duplicate_name) {
+      if (current.confirm_duplicate_name) {
         payload.confirm_duplicate_name = true;
       }
       await patientsClient.save(auth.session, payload);
       await resource.reload();
       resetForm();
-      setMessage(form.id ? "Patient updated successfully" : "Patient created successfully");
-    } catch (submitError) {
-      var code = submitError?.code;
+      setMessage(current.id ? "Patient updated successfully" : "Patient created successfully");
+    } catch (submitError: unknown) {
+      const err = submitError as {
+        code?: string;
+        message?: string;
+        details?: { actual_updated_at?: string; field?: string };
+      };
+      const code = err?.code;
       if (code === "conflict") {
-        var actual = submitError?.details?.actual_updated_at;
         setConflictPrompt({
-          actual: actual,
+          actual: err?.details?.actual_updated_at,
           message:
-            submitError.message ||
+            err.message ||
             "Patient was modified by another user — reload to see their changes."
         });
-      } else if (
-        code === "duplicate" &&
-        submitError?.details?.field === "name" &&
-        !form.id
-      ) {
+      } else if (code === "duplicate" && err?.details?.field === "name" && !current.id) {
         setDuplicatePrompt({
-          message: submitError.message || "An active patient with this name already exists."
+          message: err.message || "An active patient with this name already exists."
         });
       } else {
-        setError(submitError.message || "Unable to save patient");
+        setError(err.message || "Unable to save patient");
       }
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!canWrite) {
+      setError("You do not have permission to create or edit patients.");
+      return;
+    }
+    return submitForm();
   }
 
   async function reloadPatientFromConflict() {
@@ -450,8 +541,9 @@ export default function PatientsPage() {
 
   async function confirmDuplicateAndResubmit() {
     setDuplicatePrompt(null);
-    setForm(function (current) { return { ...current, confirm_duplicate_name: true }; });
-    setMessage("Will create as a separate patient on the next save — press Save.");
+    const next = { ...form, confirm_duplicate_name: true };
+    setForm(next);
+    await submitForm(next);
   }
 
   function isActiveStatus(status) {
@@ -599,119 +691,33 @@ export default function PatientsPage() {
     return resolved;
   }
 
-  async function openPatientPdf(row, hideSensitive) {
-    // P1-32: pre-open the print window inside the user gesture (BEFORE any
-    // await) so the popup blocker doesn't kill it after signed-URL fetches.
-    var preOpened = window.open("about:blank", "_blank", "width=1024,height=820");
+  async function openPatientPdf(row: PatientListRow, hideSensitive: boolean) {
+    const preOpened = window.open("about:blank", "_blank", "width=1024,height=820");
     if (preOpened && preOpened.document) {
       try {
-        preOpened.document.write("<title>Preparing PDF…</title><body style='font-family:Segoe UI,Arial,sans-serif;padding:32px;color:#475569'>Loading patient profile…</body>");
-      } catch (_e) { /* ignore opaque about:blank */ }
-    }
-    var name = row.full_name || row.name || row.id;
-    var rels = [
-      { name: row.relname || "", phone: row.relphone || "" },
-      { name: row.relname2 || "", phone: row.relphone2 || "" },
-      { name: row.relname3 || "", phone: row.relphone3 || "" }
-    ].filter(function (r) { return r.name || r.phone; });
-    var rawDocs = row.patient_documents || row.docs || [];
-    var photoDoc = row.photo && typeof row.photo === "object" && row.photo.path ? row.photo : null;
-    var resolvedDocs = await resolvePatientDocLinks(rawDocs);
-    var resolvedPhoto = photoDoc ? (await resolvePatientDocLinks([photoDoc]))[0] : null;
-
-    function escape(value) {
-      return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
-        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
-      });
-    }
-    function field(label, value) {
-      return (
-        "<tr><th style='width:180px'>" + escape(label) + "</th><td>" + escape(value || "-") + "</td></tr>"
-      );
-    }
-    function mask(value) {
-      var s = String(value || "");
-      if (!s) return "";
-      if (s.length <= 4) return "****";
-      return "****" + s.slice(-4);
-    }
-    function isImg(d) {
-      var m = String(d.mime_type || "").toLowerCase();
-      if (m.indexOf("image/") === 0) return true;
-      var n = String(d.file_name || d.path || "").toLowerCase();
-      return /\.(jpe?g|png|webp|heic|heif|gif)$/.test(n);
-    }
-    function isPdf(d) {
-      if (String(d.mime_type || "").toLowerCase() === "application/pdf") return true;
-      var n = String(d.file_name || d.path || "").toLowerCase();
-      return /\.pdf$/.test(n);
-    }
-    var rows = [
-      field("Patient ID", row.id),
-      field("Name", name),
-      field("Date of birth · age", [row.dob, row.age].filter(Boolean).join(" · ")),
-      field("Gender", row.gender),
-      field("Phone", hideSensitive ? mask(row.mobile || row.phone) : row.mobile || row.phone),
-      field("Address", row.address || row.addr),
-      field("Area · city · PIN",
-        [row.area, row.city, row.pincode || row.pin].filter(Boolean).join(" · ")),
-      field("Shift", slugToText(row.shift_type || row.shift)),
-      field("Assigned caretaker", caretakerLabel(row.caretaker_id || row.assigned_staff_id)),
-      field("Disease / condition", row.disease_condition),
-      field("Status", row.status),
-      field("Status reason", row.status_reason || row.close_reason),
-      field("Start date", formatDate(row.start_date || row.created_at)),
-      rels.length
-        ? field("Relative contacts",
-            rels.map(function (r) { return r.name + (r.phone ? " · " + r.phone : ""); }).join(" | "))
-        : "",
-      field("Documents on file", String(resolvedDocs.length || 0))
-    ].join("");
-
-    var photoHtml = resolvedPhoto && resolvedPhoto.signedUrl
-      ? "<div style='text-align:center;margin:8px 0 16px'><img src='" +
-        escape(resolvedPhoto.signedUrl) +
-        "' alt='Patient photo' style='max-width:160px;max-height:200px;border:1px solid #cbd5e1;border-radius:8px'/></div>"
-      : "";
-
-    var docsHtml = "";
-    if (resolvedDocs.length) {
-      docsHtml = "<h3>Attached documents (" + resolvedDocs.length + ")</h3><ol style='line-height:1.7'>";
-      resolvedDocs.forEach(function (d) {
-        var nm = escape(d.file_name || d.path || "Document");
-        var tag = isPdf(d) ? "PDF" : isImg(d) ? "IMG" : "FILE";
-        var link = d.signedUrl
-          ? "<a href='" + escape(d.signedUrl) + "' target='_blank' rel='noopener'>" + nm + "</a>"
-          : nm;
-        docsHtml += "<li>[" + tag + "] " + link + "</li>";
-      });
-      docsHtml += "</ol>";
-      var imageDocs = resolvedDocs.filter(function (d) { return isImg(d) && d.signedUrl; });
-      if (imageDocs.length) {
-        docsHtml +=
-          "<h3>Document previews</h3>" +
-          "<div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px'>" +
-          imageDocs.map(function (d) {
-            return (
-              "<div style='border:1px solid #e2e8f0;border-radius:8px;padding:8px;text-align:center'>" +
-              "<div style='font-size:12px;color:#475569;margin-bottom:6px'>" +
-              escape(d.file_name || d.path) +
-              "</div>" +
-              "<img src='" + escape(d.signedUrl) + "' alt='" + escape(d.file_name || "doc") +
-              "' style='max-width:100%;max-height:320px;object-fit:contain'/></div>"
-            );
-          }).join("") +
-          "</div>";
+        preOpened.document.write(
+          "<title>Preparing PDF…</title><body style='font-family:Segoe UI,Arial,sans-serif;padding:32px;color:#475569'>Loading patient profile…</body>"
+        );
+      } catch {
+        /* ignore opaque about:blank */
       }
     }
-
-    var body =
-      "<h2>Patient Profile</h2>" +
-      photoHtml +
-      "<table><tbody>" + rows + "</tbody></table>" +
-      docsHtml;
+    const rawDocs = row.patient_documents || row.docs || [];
+    const photoDoc =
+      row.photo && typeof row.photo === "object" && row.photo.path ? row.photo : null;
+    const resolvedDocs = await resolvePatientDocLinks(rawDocs);
+    const resolvedPhoto = photoDoc ? (await resolvePatientDocLinks([photoDoc]))[0] : null;
+    const body = buildPatientPdfBody(
+      row,
+      hideSensitive,
+      resolvedDocs,
+      resolvedPhoto,
+      caretakerLabel(row.caretaker_id || row.assigned_staff_id || "")
+    );
     openPrintWindow(
-      hideSensitive ? "Patient Profile (sanitised)" : "Patient Profile - " + name,
+      hideSensitive
+        ? "Patient Profile (sanitised)"
+        : "Patient Profile - " + patientDisplayName(row),
       body,
       preOpened
     );
@@ -828,11 +834,26 @@ export default function PatientsPage() {
                 </div>
                 <div className="field">
                   <label htmlFor="patients-status-15">Status</label>
-                  <select id="patients-status-15" value={form.status} onChange={function (event) { updateField("status", event.target.value); }}>
+                  <select
+                    id="patients-status-15"
+                    value={form.status}
+                    onChange={function (event) { updateField("status", event.target.value); }}
+                    disabled={Boolean(form.id)}
+                    title={
+                      form.id
+                        ? "Use Close or Reopen on the registry — status changes run the cascade workflow."
+                        : undefined
+                    }
+                  >
                     {patientStatusOptions.map(function (item) {
                       return <option key={item.value} value={item.value}>{item.label}</option>;
                     })}
                   </select>
+                  {form.id ? (
+                    <small className="mini-muted" style={{ marginTop: 4, display: "block" }}>
+                      Status changes use Close or Reopen on the patient registry (not this form).
+                    </small>
+                  ) : null}
                 </div>
               </div>
               {form.status !== "Active" ? (
@@ -1004,14 +1025,18 @@ export default function PatientsPage() {
                 <div className="error-text">Live patient list error — {resource.error}</div>
               ) : null}
               {message ? <div className="success-text">{message}</div> : null}
-              <div className="button-row">
-                <button className="button primary" type="submit" disabled={busy}>
-                  {busy ? "Saving..." : form.id ? "Update patient" : "Create patient"}
-                </button>
-                <button className="button secondary" type="button" onClick={resetForm}>
-                  Clear
-                </button>
-              </div>
+              {canWrite ? (
+                <div className="button-row">
+                  <button className="button primary" type="submit" disabled={busy}>
+                    {busy ? "Saving..." : form.id ? "Update patient" : "Create patient"}
+                  </button>
+                  <button className="button secondary" type="button" onClick={resetForm}>
+                    Clear
+                  </button>
+                </div>
+              ) : (
+                <p className="mini-muted">You have read-only access to patient records.</p>
+              )}
             </form>
           </ModuleShell>
 
@@ -1130,7 +1155,8 @@ export default function PatientsPage() {
                     </thead>
                     <tbody>
                       {rows.map(function (row, index) {
-                        var rowNum = (resource.page - 1) * resource.pageSize + index + 1;
+                        const listRow = row as PatientListRow;
+                        const rowNum = patientListPosition(resource.page, resource.pageSize, index);
                         return (
                           <tr key={row.id}>
                             <td>{rowNum}</td>
@@ -1150,48 +1176,52 @@ export default function PatientsPage() {
                             <td>{formatDate(row.registered_at || row.created_at || row.created)}</td>
                             <td>
                               <div className="button-row">
+                                {canViewHistory ? (
+                                  <button
+                                    className="button ghost"
+                                    type="button"
+                                    onClick={function () { openHistory(listRow); }}
+                                    disabled={busy}
+                                  >
+                                    History
+                                  </button>
+                                ) : null}
                                 <button
                                   className="button ghost"
                                   type="button"
-                                  onClick={function () { openHistory(row); }}
-                                  disabled={busy}
-                                >
-                                  History
-                                </button>
-                                <button
-                                  className="button ghost"
-                                  type="button"
-                                  onClick={function () { openPatientPdf(row, false); }}
+                                  onClick={function () { openPatientPdf(listRow, false); }}
                                   disabled={busy}
                                   title="Print profile with photo + documents"
                                 >
                                   Print
                                 </button>
-                                {!isRegistryClosed(row.status) ? (
+                                {canWrite && !isRegistryClosed(listRow.status) ? (
                                   <button
                                     className="button secondary"
                                     type="button"
-                                    onClick={function () { editPatient(row); }}
+                                    onClick={function () { editPatient(listRow); }}
                                     disabled={busy}
                                   >
                                     Edit
                                   </button>
                                 ) : null}
-                                {!isActiveStatus(row.status) ? (
+                                {!isActiveStatus(listRow.status) ? (
                                   <>
-                                    <button
-                                      className="button secondary"
-                                      type="button"
-                                      onClick={function () { openReopenDialog(row); }}
-                                      disabled={busy}
-                                    >
-                                      Reopen
-                                    </button>
-                                    {isAdmin && isRegistryClosed(row.status) ? (
+                                    {canClose ? (
+                                      <button
+                                        className="button secondary"
+                                        type="button"
+                                        onClick={function () { openReopenDialog(listRow); }}
+                                        disabled={busy}
+                                      >
+                                        Reopen
+                                      </button>
+                                    ) : null}
+                                    {isAdmin && isRegistryClosed(listRow.status) ? (
                                       <button
                                         className="button danger"
                                         type="button"
-                                        onClick={function () { deletePatientPermanently(row.id); }}
+                                        onClick={function () { deletePatientPermanently(listRow.id); }}
                                         disabled={busy}
                                         title="Permanent delete (Admin only). Refused if linked billings, duties, or receipts exist."
                                       >
@@ -1199,16 +1229,16 @@ export default function PatientsPage() {
                                       </button>
                                     ) : null}
                                   </>
-                                ) : (
+                                ) : canClose ? (
                                   <button
                                     className="button danger"
                                     type="button"
-                                    onClick={function () { openCloseDialog(row); }}
+                                    onClick={function () { openCloseDialog(listRow); }}
                                     disabled={busy}
                                   >
                                     Close
                                   </button>
-                                )}
+                                ) : null}
                               </div>
                             </td>
                           </tr>

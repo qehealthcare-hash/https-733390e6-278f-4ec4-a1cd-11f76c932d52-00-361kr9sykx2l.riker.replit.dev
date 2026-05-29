@@ -1,5 +1,7 @@
 "use client";
 
+/** Payout ledger shell (M9) — UI in `./payouts-inner`. */
+
 import dynamic from "next/dynamic";
 
 var PayoutsInner = dynamic(

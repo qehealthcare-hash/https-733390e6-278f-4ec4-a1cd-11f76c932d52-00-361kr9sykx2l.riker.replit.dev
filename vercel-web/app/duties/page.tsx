@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Duty calendar & per-day diary (M7 Pass D).
+ * Calendar date helpers: `@/lib/dutyUi`. All writes via `/api/v1/duties/*`.
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
@@ -9,28 +14,55 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { crmDayStartIso, crmDayEndIso } from "@/src/utils/crmToday";
+import {
+  DUTY_STATUSES,
+  daysInMonthGrid,
+  isOpenEndedIso,
+  istDayKey,
+  monthKey,
+  partnerDisplayName
+} from "@/lib/dutyUi";
+import {
+  DUTY_CANCEL_ROLES,
+  DUTY_CHECK_IN_ROLES,
+  DUTY_DELETE_ROLES,
+  DUTY_DIARY_WRITE_ROLES,
+  DUTY_MATERIALIZE_ROLES,
+  DUTY_WRITE_ROLES
+} from "@/business/rbac";
 
-var DUTY_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW"];
 var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function pad2(n) {
-  return n < 10 ? "0" + n : String(n);
-}
-
-function monthKey(d) {
-  return d.getFullYear() + "-" + pad2(d.getMonth() + 1);
+function roleInList(role, list) {
+  var normalized = String(role || "").trim().toLowerCase();
+  return list.some(function (r) {
+    return r.toLowerCase() === normalized;
+  });
 }
 
 function createInitialForm() {
   var start = new Date();
   start.setHours(8, 0, 0, 0);
+  var pad = function (n) {
+    return String(n).padStart(2, "0");
+  };
+  var localDefault =
+    start.getFullYear() +
+    "-" +
+    pad(start.getMonth() + 1) +
+    "-" +
+    pad(start.getDate()) +
+    "T" +
+    pad(start.getHours()) +
+    ":" +
+    pad(start.getMinutes());
   return {
     id: "",
     patient_id: "",
     employee_id: "",
     service_name: "Care Taker Services",
     shift_type: "DAY",
-    start_at: start.toISOString().slice(0, 16),
+    start_at: localDefault,
     end_at: "",
     open_ended: true,
     status: "SCHEDULED",
@@ -42,11 +74,6 @@ function createInitialForm() {
     notes: "",
     expected_updated_at: ""
   };
-}
-
-function isOpenEndedIso(iso) {
-  if (!iso) return true;
-  return String(iso).slice(0, 10) === "2099-12-31";
 }
 
 function toIsoFromLocal(local) {
@@ -79,32 +106,10 @@ function crmTodayIso() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
 }
 
-function partnerDisplayName(employeeId, storedPartner, employeeNameById) {
-  var lookup = employeeNameById[employeeId];
-  if (lookup && lookup !== employeeId) return lookup;
-  if (storedPartner && storedPartner !== employeeId) return storedPartner;
-  return lookup || storedPartner || employeeId || "—";
-}
-
-function daysInMonthGrid(year, monthIndex) {
-  var first = new Date(year, monthIndex, 1);
-  var startPad = first.getDay();
-  var days = new Date(year, monthIndex + 1, 0).getDate();
-  var cells = [];
-  var i;
-  for (i = 0; i < startPad; i++) cells.push(null);
-  for (i = 1; i <= days; i++) {
-    cells.push(year + "-" + pad2(monthIndex + 1) + "-" + pad2(i));
-  }
-  while (cells.length % 7 !== 0) cells.push(null);
-  return cells;
-}
-
 function dutyTouchesDay(row, isoDay) {
   if (!row.start_at || !isoDay) return false;
-  var start = String(row.start_at).slice(0, 10);
-  var rawEnd = String(row.end_at || row.start_at).slice(0, 10);
-  // Only open-ended duties clip to today; fixed future ranges stay visible.
+  var start = istDayKey(row.start_at);
+  var rawEnd = istDayKey(row.end_at || row.start_at);
   var today = crmTodayIso();
   var end = isOpenEndedIso(row.end_at) ? today : rawEnd;
   return isoDay >= start && isoDay <= end;
@@ -293,6 +298,13 @@ function FinancialBifurcation(props) {
 
 export default function DutiesPage() {
   var auth = useAuth();
+  var accessToken = auth.session?.access_token ?? "";
+  var canWrite = roleInList(auth.profile?.role, DUTY_WRITE_ROLES);
+  var canCancel = roleInList(auth.profile?.role, DUTY_CANCEL_ROLES);
+  var canCheckIn = roleInList(auth.profile?.role, DUTY_CHECK_IN_ROLES);
+  var canMaterialize = roleInList(auth.profile?.role, DUTY_MATERIALIZE_ROLES);
+  var canDiaryEdit = roleInList(auth.profile?.role, DUTY_DIARY_WRITE_ROLES);
+  var canHardDelete = roleInList(auth.profile?.role, DUTY_DELETE_ROLES);
   var [viewMonth, setViewMonth] = useState(monthKey(new Date()));
   var [rows, setRows] = useState([]);
   // P1-28: track API limit + server total for the "Showing first N of M"
@@ -619,7 +631,7 @@ export default function DutiesPage() {
         })
         .catch(function () { setServices([]); });
     },
-    [auth.session]
+    [accessToken, auth.session]
   );
 
   useEffect(
@@ -730,7 +742,12 @@ export default function DutiesPage() {
       notes: row.notes || "",
       expected_updated_at: row.updated_at || ""
     });
-    setSelectedDay(String(row.start_at || "").slice(0, 10));
+    setSelectedDay(istDayKey(row.start_at));
+    if (!row.updated_at) {
+      setMessage(
+        "Loaded a legacy duty without a last-modified timestamp — concurrent edit detection is disabled. Save with care."
+      );
+    }
   }
 
   function addExtraPartner() {
@@ -816,6 +833,10 @@ export default function DutiesPage() {
 
   async function handleSubmit(event) {
     event.preventDefault();
+    if (!canWrite) {
+      setError("You do not have permission to create or edit duties.");
+      return;
+    }
     setBusy(true);
     setError("");
     setMessage("");
@@ -1150,6 +1171,16 @@ export default function DutiesPage() {
             title={form.id ? "Edit duty assignment" : "New duty assignment"}
             description="Per-day patient charges and partner payouts sync to billing (legacy duty diary parity)"
           >
+            {!canWrite ? (
+              <div className="info-text" role="status">
+                You have read-only access. Only Admin, Manager, and Staff can create or edit duties.
+              </div>
+            ) : null}
+            <fieldset
+              className="stack"
+              style={{ border: 0, padding: 0, margin: 0 }}
+              disabled={!canWrite}
+            >
             <form className="stack" onSubmit={handleSubmit}>
               <div className="grid-2">
                 <div className="field">
@@ -1408,6 +1439,7 @@ export default function DutiesPage() {
                 </button>
               </div>
             </form>
+            </fieldset>
           </ModuleShell>
 
           <ModuleShell
@@ -1657,18 +1689,22 @@ export default function DutiesPage() {
                               </div>
                             </div>
                             <div className="button-row">
-                              <button className="button secondary" type="button" onClick={function () { editDuty(row); }}>
-                                Edit
-                              </button>
-                              <button
-                                className="button secondary"
-                                type="button"
-                                disabled={busy}
-                                onClick={function () { runMaterialize(row.id, false); }}
-                              >
-                                Sync diary
-                              </button>
-                              {row.status === "SCHEDULED" ? (
+                              {canWrite ? (
+                                <button className="button secondary" type="button" onClick={function () { editDuty(row); }}>
+                                  Edit
+                                </button>
+                              ) : null}
+                              {canMaterialize ? (
+                                <button
+                                  className="button secondary"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={function () { runMaterialize(row.id, false); }}
+                                >
+                                  Sync diary
+                                </button>
+                              ) : null}
+                              {canCheckIn && row.status === "SCHEDULED" ? (
                                 <button
                                   className="button success"
                                   type="button"
@@ -1678,7 +1714,7 @@ export default function DutiesPage() {
                                   Check in
                                 </button>
                               ) : null}
-                              {row.status === "IN_PROGRESS" ? (
+                              {canCheckIn && row.status === "IN_PROGRESS" ? (
                                 <button
                                   className="button success"
                                   type="button"
@@ -1688,26 +1724,28 @@ export default function DutiesPage() {
                                   Check out
                                 </button>
                               ) : null}
-                              <button
-                                className="button danger ghost"
-                                type="button"
-                                disabled={busy}
-                                style={{ background: "transparent", color: "#b91c1c", borderColor: "#fecaca" }}
-                                onClick={function () {
-                                  var endLabel = row.end_at && String(row.end_at).slice(0, 10) !== "2099-12-31"
-                                    ? String(row.end_at).slice(0, 10)
-                                    : "open-ended";
-                                  setDeleteDialog({
-                                    id: row.id,
-                                    patient: patientNameById[row.patient_id] || row.patient_id,
-                                    employee: employeeNameById[row.employee_id] || row.employee_id || "—",
-                                    range: String(row.start_at || "").slice(0, 10) + " → " + endLabel
-                                  });
-                                }}
-                              >
-                                Delete
-                              </button>
-                              {row.status !== "CANCELLED" && row.status !== "COMPLETED" ? (
+                              {canHardDelete ? (
+                                <button
+                                  className="button danger ghost"
+                                  type="button"
+                                  disabled={busy}
+                                  style={{ background: "transparent", color: "#b91c1c", borderColor: "#fecaca" }}
+                                  onClick={function () {
+                                    var endLabel = row.end_at && String(row.end_at).slice(0, 10) !== "2099-12-31"
+                                      ? istDayKey(row.end_at)
+                                      : "open-ended";
+                                    setDeleteDialog({
+                                      id: row.id,
+                                      patient: patientNameById[row.patient_id] || row.patient_id,
+                                      employee: employeeNameById[row.employee_id] || row.employee_id || "—",
+                                      range: istDayKey(row.start_at) + " → " + endLabel
+                                    });
+                                  }}
+                                >
+                                  Delete
+                                </button>
+                              ) : null}
+                              {canCancel && row.status !== "CANCELLED" && row.status !== "COMPLETED" ? (
                                 <button
                                   className="button danger"
                                   type="button"
@@ -1833,59 +1871,61 @@ export default function DutiesPage() {
                                         ₹{Number(entry.payout || 0).toLocaleString("en-IN")}
                                       </div>
                                     )}
-                                    <div className="button-row">
-                                      {draft ? (
-                                        <>
-                                          <button
-                                            className="button primary"
-                                            type="button"
-                                            disabled={entryBusy}
-                                            onClick={function () { saveDayEdit(row.id, entry); }}
-                                          >
-                                            Save
-                                          </button>
-                                          <button
-                                            className="button secondary"
-                                            type="button"
-                                            disabled={entryBusy}
-                                            onClick={function () { cancelEditDay(row.id, entry); }}
-                                          >
-                                            Cancel
-                                          </button>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <button
-                                            className="button secondary"
-                                            type="button"
-                                            disabled={entryBusy}
-                                            onClick={function () { startEditDay(row.id, entry); }}
-                                          >
-                                            Edit
-                                          </button>
-                                          {entry.manual ? (
+                                    {canDiaryEdit ? (
+                                      <div className="button-row">
+                                        {draft ? (
+                                          <>
+                                            <button
+                                              className="button primary"
+                                              type="button"
+                                              disabled={entryBusy}
+                                              onClick={function () { saveDayEdit(row.id, entry); }}
+                                            >
+                                              Save
+                                            </button>
                                             <button
                                               className="button secondary"
                                               type="button"
                                               disabled={entryBusy}
-                                              title="Drop the manual lock and let the next sync recompute this day"
-                                              onClick={function () { clearDayManual(row.id, entry); }}
+                                              onClick={function () { cancelEditDay(row.id, entry); }}
                                             >
-                                              Unlock
+                                              Cancel
                                             </button>
-                                          ) : null}
-                                          <button
-                                            className="button danger ghost"
-                                            type="button"
-                                            disabled={entryBusy}
-                                            style={{ background: "transparent", color: "#b91c1c", borderColor: "#fecaca" }}
-                                            onClick={function () { deleteDay(row.id, entry); }}
-                                          >
-                                            Delete
-                                          </button>
-                                        </>
-                                      )}
-                                    </div>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <button
+                                              className="button secondary"
+                                              type="button"
+                                              disabled={entryBusy}
+                                              onClick={function () { startEditDay(row.id, entry); }}
+                                            >
+                                              Edit
+                                            </button>
+                                            {entry.manual ? (
+                                              <button
+                                                className="button secondary"
+                                                type="button"
+                                                disabled={entryBusy}
+                                                title="Drop the manual lock and let the next sync recompute this day"
+                                                onClick={function () { clearDayManual(row.id, entry); }}
+                                              >
+                                                Unlock
+                                              </button>
+                                            ) : null}
+                                            <button
+                                              className="button danger ghost"
+                                              type="button"
+                                              disabled={entryBusy}
+                                              style={{ background: "transparent", color: "#b91c1c", borderColor: "#fecaca" }}
+                                              onClick={function () { deleteDay(row.id, entry); }}
+                                            >
+                                              Delete
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                    ) : null}
                                   </div>
                                 );
                               })

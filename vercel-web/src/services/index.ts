@@ -51,6 +51,14 @@ export { lookupService } from "@/services/lookupService";
 
 export { userService } from "@/services/userService";
 
+export { authService } from "@/services/authService";
+export type {
+  AuthServiceActor,
+  LogoutMeta,
+  LogoutResult,
+  LogoutScope
+} from "@/services/authService";
+
 /* --------------------------- Cross-cutting services ----------------------- */
 
 export { auditService } from "@/services/auditService";

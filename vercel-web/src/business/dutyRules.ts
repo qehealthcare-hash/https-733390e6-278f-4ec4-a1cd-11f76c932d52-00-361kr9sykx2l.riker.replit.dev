@@ -2,6 +2,7 @@ import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
 import type { DutyShiftType, DutyStatus } from "@/validation/dutyValidation";
 import { DUTY_SHIFT_TYPES } from "@/validation/dutyValidation";
+import { crmDateKeyFromTimestamp } from "@/utils/crmToday";
 
 export { DUTY_SHIFT_TYPES };
 export type { DutyShiftType, DutyStatus };
@@ -36,6 +37,15 @@ export function openEndedSentinelFor(_startAt: string): string {
  * (bill close or explicit end_at) is set, it caps to whichever is earlier.
  *
  * `nowIso` is injected for deterministic tests.
+ *
+ * Note on comparisons: we compare ISO timestamps via `Date.parse` so a `Z`
+ * suffix vs `+05:30` offset doesn't trip the lexical ordering. Before this
+ * fix, comparing `"2026-05-29T20:00:00Z"` (≈01:30 IST May 30) with
+ * `"2026-05-29T23:59:59.999+05:30"` (today's IST end) made the Z-suffixed
+ * value look "earlier" alphabetically, so the materializer extended past
+ * today and seeded phantom diary rows that billing/payout then had to
+ * dedup. Fixing the comparison keeps duty calendar ↔ billing/payout
+ * boundaries aligned to the same instant in time.
  */
 export function effectiveMaterializeEndAt(
   duty: { end_at?: string | null },
@@ -43,12 +53,22 @@ export function effectiveMaterializeEndAt(
   nowIso: string
 ): string {
   const today = nowIso;
+  const todayMs = Date.parse(today);
   let candidate = today;
+  let candidateMs = todayMs;
   if (duty.end_at && !isOpenEndedEndAt(duty.end_at)) {
-    candidate = duty.end_at < today ? duty.end_at : today;
+    const endMs = Date.parse(duty.end_at);
+    if (Number.isFinite(endMs) && endMs < todayMs) {
+      candidate = duty.end_at;
+      candidateMs = endMs;
+    }
   }
   if (billClosedAt) {
-    candidate = billClosedAt < candidate ? billClosedAt : candidate;
+    const closedMs = Date.parse(billClosedAt);
+    if (Number.isFinite(closedMs) && closedMs < candidateMs) {
+      candidate = billClosedAt;
+      candidateMs = closedMs;
+    }
   }
   return candidate;
 }
@@ -206,11 +226,25 @@ export function dutyCheckOutPatch(actorEmail: string) {
 }
 
 /**
- * Payout period for a duty is the YYYY-MM of its scheduled start (M3 rule:
- * "aggregate by the duty's own month, not the checkout date").
+ * Payout period for a duty is the YYYY-MM of its scheduled start in the
+ * CRM (IST) timezone (M3 rule: "aggregate by the duty's own month, not
+ * the checkout date").
+ *
+ * Date-format fix: the previous form `iso.slice(0, 7)` returned the UTC
+ * month, so a duty starting at `2026-04-30T18:30:00Z` (= 00:00 IST May 1)
+ * was billed in May (per `eachDutyCalendarDay`'s IST window) but recompute
+ * was triggered for "2026-04". The April payslip got rebuilt while May —
+ * the actual payout month — went stale. Now we always derive the period
+ * from the IST calendar day, matching the diary/billing/payout windows.
  */
 export function payoutPeriodForDuty(dutyStartAt: string, fallbackTimestamp: string): string {
-  return (dutyStartAt || fallbackTimestamp).slice(0, 7);
+  const source = dutyStartAt || fallbackTimestamp;
+  if (!source) return "";
+  const d = new Date(source);
+  if (Number.isNaN(d.getTime())) {
+    return String(source).slice(0, 7);
+  }
+  return crmDateKeyFromTimestamp(source).slice(0, 7);
 }
 
 /** Compute the shift's default end timestamp from start + shift type. */

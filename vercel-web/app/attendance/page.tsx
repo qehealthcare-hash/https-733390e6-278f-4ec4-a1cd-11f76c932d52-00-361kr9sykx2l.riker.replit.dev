@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Attendance board + log (M8 Pass D).
+ * Date helpers: `@/lib/attendanceUi`. All writes via `/api/v1/attendance/*`.
+ */
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
@@ -8,74 +13,33 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import { formatDate } from "@/lib/formatters";
+import { crmTodayIso } from "@/src/utils/crmToday";
+import {
+  ATTENDANCE_DELETE_ROLES,
+  ATTENDANCE_WRITE_ROLES
+} from "@/business/rbac";
+import {
+  ATTENDANCE_SHIFT_OPTIONS,
+  ATTENDANCE_STATUS_OPTIONS,
+  DERIVED_STATUS_STYLES,
+  emptyMarkForm,
+  istDayKey,
+  isoDateTime,
+  startOfWeek,
+  todayDate
+} from "@/lib/attendanceUi";
 
-function crmTodayIso() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
-}
-
-var DERIVED_STATUS_STYLES = {
-  PRESENT: { bg: "#dcfce7", border: "#16a34a", text: "#14532d" },
-  IN_PROGRESS: { bg: "#dbeafe", border: "#2563eb", text: "#1e3a8a" },
-  COMPLETED: { bg: "#e0e7ff", border: "#4f46e5", text: "#312e81" },
-  LATE: { bg: "#fef3c7", border: "#d97706", text: "#92400e" },
-  HALF_DAY: { bg: "#fef9c3", border: "#ca8a04", text: "#854d0e" },
-  ABSENT: { bg: "#fee2e2", border: "#dc2626", text: "#7f1d1d" },
-  LEAVE: { bg: "#ede9fe", border: "#7c3aed", text: "#4c1d95" },
-  HOLIDAY: { bg: "#cffafe", border: "#0e7490", text: "#155e75" },
-  SCHEDULED: { bg: "#f1f5f9", border: "#64748b", text: "#1f2937" },
-  UNMARKED: { bg: "#f8fafc", border: "#cbd5e1", text: "#475569" }
-};
-
-var ATTENDANCE_STATUSES = [
-  { value: "PRESENT", label: "Present" },
-  { value: "ABSENT", label: "Absent" },
-  { value: "LATE", label: "Late" },
-  { value: "HALF_DAY", label: "Half day" },
-  { value: "LEAVE", label: "Leave" },
-  { value: "HOLIDAY", label: "Holiday" }
-];
-
-var SHIFT_TYPES = [
-  { value: "DAY", label: "Day (9-7)" },
-  { value: "NIGHT", label: "Night (8-8)" },
-  { value: "24H", label: "24 hours" },
-  { value: "FULL", label: "Full" }
-];
-
-function todayDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function startOfWeek() {
-  var d = new Date();
-  d.setHours(0, 0, 0, 0);
-  var dow = d.getDay();
-  d.setDate(d.getDate() - dow);
-  return d.toISOString().slice(0, 10);
-}
-
-function isoDateTime(date, time) {
-  if (!date) return "";
-  if (!time) return date + "T09:00:00.000+05:30";
-  return date + "T" + time + ":00.000+05:30";
-}
-
-function emptyMarkForm() {
-  return {
-    duty_id: "",
-    employee_id: "",
-    patient_id: "",
-    shift_type: "DAY",
-    work_date: todayDate(),
-    check_in_time: "09:00",
-    check_out_time: "",
-    status: "PRESENT",
-    notes: ""
-  };
+function roleInList(role, list) {
+  var normalized = String(role || "").trim().toLowerCase();
+  return list.some(function (r) {
+    return r.toLowerCase() === normalized;
+  });
 }
 
 export default function AttendancePage() {
   var auth = useAuth();
+  var canWrite = roleInList(auth.profile?.role, ATTENDANCE_WRITE_ROLES);
+  var canDelete = roleInList(auth.profile?.role, ATTENDANCE_DELETE_ROLES);
   var [rows, setRows] = useState([]);
   var [loading, setLoading] = useState(true);
   var [employees, setEmployees] = useState([]);
@@ -168,6 +132,7 @@ export default function AttendancePage() {
   );
 
   async function quickMarkBoard(row, status) {
+    if (!canWrite) return;
     if (!auth.session?.access_token) return;
     setBoardBusyKey(row.key);
     setBoardError("");
@@ -377,16 +342,14 @@ export default function AttendancePage() {
           setPatients([]);
         });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [auth.session, from, to, statusFilter, employeeFilter]
+    [auth.session?.access_token, from, to, statusFilter, employeeFilter]
   );
 
   useEffect(
     function () {
       loadMissing();
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [missingFor, from, to, auth.session]
+    [missingFor, from, to, auth.session?.access_token]
   );
 
   var stats = useMemo(
@@ -450,6 +413,10 @@ export default function AttendancePage() {
 
   async function handleSubmit(event) {
     event.preventDefault();
+    if (!canWrite) {
+      setError("You do not have permission to mark attendance");
+      return;
+    }
     if (!form.employee_id) {
       setError("Employee is required");
       return;
@@ -485,7 +452,19 @@ export default function AttendancePage() {
   }
 
   function startEdit(row) {
-    var date = String(row.check_in_at || "").slice(0, 10) || todayDate();
+    if (!canWrite) return;
+    if (!row.updated_at) {
+      setMessage(
+        "Legacy row without server updated_at — save carefully; another user may have edited it."
+      );
+    }
+    // Prefer the persisted IST work_date when available, otherwise derive
+    // the IST date from the check-in timestamp. UTC-slicing check_in_at
+    // misreports the calendar day for any check-in after 18:30 UTC.
+    var date =
+      String(row.work_date || "").slice(0, 10) ||
+      istDayKey(row.check_in_at) ||
+      todayDate();
     var checkIn = String(row.check_in_at || "").slice(11, 16) || "";
     var checkOut = String(row.check_out_at || "").slice(11, 16) || "";
     setForm({
@@ -508,10 +487,13 @@ export default function AttendancePage() {
   }
 
   async function handleQuickMark(dutyRow, status) {
+    if (!canWrite) return;
     setBusy(true);
     setError("");
     try {
-      var date = String(dutyRow.start_at || dutyRow.date || todayDate()).slice(0, 10);
+      // IST date for the duty (or today). Stripping the UTC ISO with
+      // slice(0,10) misattributes late-evening duties to the prior day.
+      var date = istDayKey(dutyRow.start_at) || String(dutyRow.date || "").slice(0, 10) || todayDate();
       var payload = {
         employee_id: dutyRow.employee_id,
         duty_id: dutyRow.id,
@@ -539,6 +521,7 @@ export default function AttendancePage() {
   }
 
   async function handleDelete(id) {
+    if (!canDelete) return;
     if (!window.confirm("Delete this attendance row?")) return;
     setBusy(true);
     setError("");
@@ -569,6 +552,12 @@ export default function AttendancePage() {
           title={"All staff attendance — " + (boardData?.date || boardDate)}
           description="Synchronised with the duty calendar. Mark Present / Absent / Late and the underlying duty status updates automatically."
         >
+          {!canWrite ? (
+            <div className="helper-box" style={{ marginBottom: 12 }}>
+              You have read-only access. Only Admin, Manager, Staff, Nurse, and Supervisor can mark
+              attendance.
+            </div>
+          ) : null}
           <div className="toolbar" style={{ flexWrap: "wrap" }}>
             <div className="field">
               <label htmlFor="attendance-date-1">Date</label>
@@ -727,7 +716,13 @@ export default function AttendancePage() {
                             <button
                               className="button success"
                               type="button"
-                              disabled={busyKey || row.derived_status === "PRESENT" || row.derived_status === "IN_PROGRESS" || row.derived_status === "COMPLETED"}
+                              disabled={
+                                !canWrite ||
+                                busyKey ||
+                                row.derived_status === "PRESENT" ||
+                                row.derived_status === "IN_PROGRESS" ||
+                                row.derived_status === "COMPLETED"
+                              }
                               onClick={function () {
                                 quickMarkBoard(row, "PRESENT");
                               }}
@@ -738,7 +733,7 @@ export default function AttendancePage() {
                             <button
                               className="button secondary"
                               type="button"
-                              disabled={busyKey || row.derived_status === "LATE"}
+                              disabled={!canWrite || busyKey || row.derived_status === "LATE"}
                               onClick={function () {
                                 quickMarkBoard(row, "LATE");
                               }}
@@ -749,7 +744,7 @@ export default function AttendancePage() {
                             <button
                               className="button secondary"
                               type="button"
-                              disabled={busyKey || row.derived_status === "HALF_DAY"}
+                              disabled={!canWrite || busyKey || row.derived_status === "HALF_DAY"}
                               onClick={function () {
                                 quickMarkBoard(row, "HALF_DAY");
                               }}
@@ -760,7 +755,7 @@ export default function AttendancePage() {
                             <button
                               className="button danger"
                               type="button"
-                              disabled={busyKey || row.derived_status === "ABSENT"}
+                              disabled={!canWrite || busyKey || row.derived_status === "ABSENT"}
                               onClick={function () {
                                 quickMarkBoard(row, "ABSENT");
                               }}
@@ -771,7 +766,7 @@ export default function AttendancePage() {
                             <button
                               className="button secondary"
                               type="button"
-                              disabled={busyKey}
+                              disabled={!canWrite || busyKey}
                               onClick={function () {
                                 quickMarkBoard(row, "LEAVE");
                               }}
@@ -821,7 +816,7 @@ export default function AttendancePage() {
                 }}
               >
                 <option value="">All</option>
-                {ATTENDANCE_STATUSES.map(function (o) {
+                {ATTENDANCE_STATUS_OPTIONS.map(function (o) {
                   return (
                     <option key={o.value} value={o.value}>
                       {o.label}
@@ -942,7 +937,7 @@ export default function AttendancePage() {
                         </td>
                         <td className="mini-muted">{r.notes || r.remarks || "—"}</td>
                         <td>
-                          {r.attendance_id ? (
+                          {r.attendance_id && canDelete ? (
                             <div className="button-row">
                               <button
                                 className="button danger"
@@ -974,6 +969,7 @@ export default function AttendancePage() {
               description="Per-duty or standalone clock-in/out. Status auto-handles timestamp rules."
             >
               <form className="stack" onSubmit={handleSubmit}>
+                <fieldset className="stack" disabled={!canWrite} style={{ border: 0, margin: 0, padding: 0 }}>
                 <div className="grid-2">
                   <div className="field">
                     <label htmlFor="attendance-employee-12">Employee</label>
@@ -1020,7 +1016,7 @@ export default function AttendancePage() {
                         setForm({ ...form, status: event.target.value });
                       }}
                     >
-                      {ATTENDANCE_STATUSES.map(function (o) {
+                      {ATTENDANCE_STATUS_OPTIONS.map(function (o) {
                         return (
                           <option key={o.value} value={o.value}>
                             {o.label}
@@ -1037,7 +1033,7 @@ export default function AttendancePage() {
                         setForm({ ...form, shift_type: event.target.value });
                       }}
                     >
-                      {SHIFT_TYPES.map(function (o) {
+                      {ATTENDANCE_SHIFT_OPTIONS.map(function (o) {
                         return (
                           <option key={o.value} value={o.value}>
                             {o.label}
@@ -1116,6 +1112,7 @@ export default function AttendancePage() {
                     </button>
                   ) : null}
                 </div>
+                </fieldset>
               </form>
             </ModuleShell>
 
@@ -1174,7 +1171,7 @@ export default function AttendancePage() {
                               onClick={function () {
                                 handleQuickMark(d, "PRESENT");
                               }}
-                              disabled={busy}
+                              disabled={busy || !canWrite}
                             >
                               Present
                             </button>
@@ -1184,7 +1181,7 @@ export default function AttendancePage() {
                               onClick={function () {
                                 handleQuickMark(d, "ABSENT");
                               }}
-                              disabled={busy}
+                              disabled={busy || !canWrite}
                             >
                               Absent
                             </button>

@@ -15,9 +15,23 @@ describe("dutyDiaryRules", () => {
     expect(billingSvcKey("INVE001", "Care Taker Services")).toBe("INVE001_Care Taker Services");
   });
 
-  it("expands inclusive calendar days", () => {
+  it("expands inclusive calendar days in IST", () => {
+    // 10:00 UTC = 15:30 IST → IST day = May 1; 08:00 UTC = 13:30 IST → May 3.
     const days = eachDutyCalendarDay("2026-05-01T10:00:00Z", "2026-05-03T08:00:00Z");
     expect(days).toEqual(["2026-05-01", "2026-05-02", "2026-05-03"]);
+  });
+
+  it("treats start_at after IST midnight on its UTC-prior day as the IST day", () => {
+    // 18:30 UTC on Apr 30 = 00:00 IST on May 1.
+    // Duty calendar (IST) should NOT include Apr 30.
+    const days = eachDutyCalendarDay("2026-04-30T18:30:00Z", "2026-05-02T18:30:00Z");
+    expect(days).toEqual(["2026-05-01", "2026-05-02", "2026-05-03"]);
+  });
+
+  it("single-day duty bills exactly that one IST day", () => {
+    // Both timestamps in the same IST day → bills only that day.
+    const days = eachDutyCalendarDay("2026-05-11T03:30:00Z", "2026-05-11T13:30:00Z");
+    expect(days).toEqual(["2026-05-11"]);
   });
 
   it("dedupes partners by employee_id", () => {
@@ -69,7 +83,8 @@ describe("dutyDiaryRules", () => {
     expect(parseDutyDiaryRemarks("legacy")).toBeNull();
   });
 
-  it("builds expected slot keys for window", () => {
+  it("builds expected slot keys for window (IST)", () => {
+    // 10:00 UTC May 1 = 15:30 IST May 1; 10:00 UTC May 2 = 15:30 IST May 2.
     const keys = expectedDiarySlotKeys(
       "2026-05-01T10:00:00Z",
       "2026-05-02T10:00:00Z",

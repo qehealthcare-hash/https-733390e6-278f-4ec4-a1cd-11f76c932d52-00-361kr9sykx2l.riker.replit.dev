@@ -539,10 +539,23 @@ export const ACTORS = {
     role: "Nurse",
     is_active: true
   } as HarnessActor,
+  /**
+   * "Unknown role" fixture (legacy name `viewer` preserved so existing
+   * RBAC matrix tests keep compiling). The role string "Viewer" is NOT
+   * in CANONICAL_ROLES — production has never had this role — but the
+   * fixture is intentionally kept to drive the route-level 403 path
+   * for any unrecognised role. The `role` field is cast through
+   * `unknown` because `HarnessActor.role` is typed as `Role` now;
+   * the cast is the explicit "yes, this is invalid on purpose" signal.
+   *
+   * If you find yourself using this fixture in a test that expects a
+   * 200, you're using the wrong fixture — pick `staff` / `nurse` /
+   * etc. instead.
+   */
   viewer: {
-    userId: "USER_VIEWER",
-    email: "viewer@hominal.test",
-    username: "viewer",
+    userId: "USER_UNKNOWN_ROLE",
+    email: "unknown-role@hominal.test",
+    username: "unknown_role",
     role: "Viewer",
     is_active: true
   } as HarnessActor

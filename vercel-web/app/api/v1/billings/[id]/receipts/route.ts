@@ -11,7 +11,8 @@ export const dynamic = "force-dynamic";
 type Params = { id: string };
 
 export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Accountant", "Staff", "Viewer"]);
+  // M2-H1: dropped the "Viewer" literal — role never existed in hh_roles.
+  requireRole(actor, ["Admin", "Manager", "Accountant", "Staff"]);
   const result = await billingService.listReceiptsForBilling(params.id, { actor });
   return respond(result);
 });

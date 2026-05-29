@@ -1,15 +1,16 @@
-/** Roles that may read payout ledgers and period-scoped pending totals. */
-export const PAYOUT_READ_ROLES = [
-  "Admin",
-  "Manager",
-  "Accountant",
-  "Staff",
-  "Executive",
-  "Nurse"
-] as const;
+/**
+ * Payout-specific RBAC role lists.
+ *
+ * M2-H1 (2026-05-29): values now live in `src/business/rbac.ts`. This
+ * file is a thin shim so existing route handlers continue importing
+ * from `@/lib/api/payoutRoles` without churn. Prefer
+ * `@/business/rbac` in new code.
+ */
 
-/** Roles that may ensure, adjust, lock, pay, or record advances. */
-export const PAYOUT_WRITE_ROLES = ["Admin", "Manager", "Accountant"] as const;
-
-/** Final disbursement and advance cash-out (stricter than ensure/lock). */
-export const PAYOUT_PAY_ROLES = ["Admin", "Accountant"] as const;
+export {
+  PAYOUT_READ_ROLES,
+  PAYOUT_WRITE_ROLES,
+  PAYOUT_PAY_ROLES,
+  PAYOUT_ADJUST_ROLES,
+  PAYOUT_REOPEN_ROLES
+} from "@/business/rbac";

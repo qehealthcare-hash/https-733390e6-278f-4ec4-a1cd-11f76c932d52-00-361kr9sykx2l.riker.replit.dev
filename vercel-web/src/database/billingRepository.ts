@@ -578,6 +578,63 @@ export const billingRepository = {
     return deleteRow(INVOICES, id, `${SCOPE}.deleteInvoice`, opts);
   },
 
+  /**
+   * Atomic FINAL invoice generation: snapshots unbilled svc lines at gross,
+   * creates a Security-type receipt for min(sec_dep, gross) against the new
+   * invoice, auto-creates a Refund receipt for any deposit excess, and zeroes
+   * hh_billings.sec_dep. Idempotent per billing (duplicate=true).
+   */
+  generateFinalInvoiceRpc(
+    billingId: string,
+    actor: string,
+    notes: string,
+    opts?: DbAccess
+  ): Promise<
+    ApiResult<{
+      invoice_id: string;
+      invoice_no?: string;
+      duplicate: boolean;
+      security_receipt_id: string | null;
+      refund_id: string | null;
+      refund_amount: number;
+      sec_dep_applied: number;
+      gross: number;
+      net: number;
+      line_count?: number;
+    } | null>
+  > {
+    return callRpc(
+      "hominal_generate_final_invoice",
+      { p_billing_id: billingId, p_actor: actor, p_notes: notes },
+      `${SCOPE}.generateFinalInvoiceRpc`,
+      opts
+    );
+  },
+
+  /**
+   * Cross-duty per-billing diary cleanup. Called after every materializeDuty
+   * pass to drop phantom (out-of-IST-window) and per-day duplicate rows.
+   * Safe to invoke repeatedly.
+   */
+  dedupBillingDiaryRpc(
+    billingId: string,
+    opts?: DbAccess
+  ): Promise<
+    ApiResult<{
+      svc_phantoms_deleted: number;
+      payout_phantoms_deleted: number;
+      svc_duplicates_deleted: number;
+      payout_duplicates_deleted: number;
+    } | null>
+  > {
+    return callRpc(
+      "hominal_dedup_billing_diary",
+      { p_billing_id: billingId },
+      `${SCOPE}.dedupBillingDiaryRpc`,
+      opts
+    );
+  },
+
   /** Atomic delete + receipt detach + sequence compact (Postgres RPC). */
   deleteInvoiceRpc(
     invoiceId: string,

@@ -15,7 +15,6 @@ import {
 import { runListQuery, runQuery } from "@/database/supabaseClient";
 import { adminClient } from "@/database/clients";
 import { sanitizeSearchTerm } from "@/utils/searchTerm";
-import { parseRolePerms } from "@/utils/rolePermissions";
 
 const USERS = "hh_users";
 const ROLES = "hh_roles";
@@ -215,18 +214,8 @@ export const roleRepository = {
 
   remove(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
     return deleteRow(ROLES, id, "role", opts);
-  },
-
-  async listPermissionsForRoleName(name: string, opts?: DbAccess): Promise<ApiResult<string[]>> {
-    const label = String(name || "").trim();
-    if (!label) return { success: true, data: [] };
-    const db = resolveClient(opts);
-    const row = await runQuery<JsonRow | null>(
-      () => db.from(ROLES).select("perms").ilike("name", label).maybeSingle(),
-      "role.listPermissionsForRoleName"
-    );
-    if (!row.success) return { success: false, error: row.error, code: row.code, details: row.details };
-    if (!row.data) return { success: true, data: [] };
-    return { success: true, data: parseRolePerms(row.data.perms) };
   }
+  // M2-C1: `listPermissionsForRoleName` was deleted with `parseRolePerms`.
+  // The CRM is role-based; the `hh_roles.perms` column is preserved on
+  // disk for audit / future use but never read at runtime.
 };

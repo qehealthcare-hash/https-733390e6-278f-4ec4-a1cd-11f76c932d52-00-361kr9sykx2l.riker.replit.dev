@@ -169,6 +169,25 @@ export function AuthProvider({ children }) {
       return { session: setResult.data.session, user: setResult.data.user };
     },
     async signOut() {
+      // M1-C1: hit the server logout first so GoTrue revokes the refresh
+      // token globally. Local clear must run regardless (network failure,
+      // already-expired token, etc.) so the user is never stranded on a
+      // logged-in UI after clicking "Sign out".
+      var currentToken = sessionRef.current?.access_token;
+      if (currentToken) {
+        try {
+          await fetch("/api/v1/auth/logout", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: "Bearer " + currentToken
+            },
+            body: JSON.stringify({ scope: "global" })
+          });
+        } catch (_revokeErr) {
+          /* server-side revoke is best-effort; local clear is canonical */
+        }
+      }
       try {
         localStorage.removeItem("hhcrm-offline-queue");
       } catch (_err) {

@@ -139,7 +139,12 @@ export async function request(path, options, session) {
     response = await fetch(appConfig.apiUrl + path, {
       method: method,
       headers: headers,
-      body: options?.body ? JSON.stringify(options.body) : undefined
+      body: options?.body ? JSON.stringify(options.body) : undefined,
+      // M3-H1: caller-supplied AbortSignal lets callers cancel in-flight
+      // requests on unmount / period-change so a stale response can't
+      // overwrite a fresher one. No existing call site passed a signal
+      // before this change, so the addition is purely opt-in.
+      signal: options?.signal
     });
   } catch (networkError) {
     var nerr = new Error(

@@ -23,7 +23,7 @@ export function AuthGuard({ children, permission }) {
       if (
         permission &&
         auth.profile &&
-        !hasPermission(auth.profile?.role, permission, auth.profile?.permissions)
+        !hasPermission(auth.profile?.role, permission)
       ) {
         router.replace("/dashboard");
       }
@@ -71,7 +71,7 @@ export function AuthGuard({ children, permission }) {
   if (
     permission &&
     auth.profile &&
-    !hasPermission(auth.profile?.role, permission, auth.profile?.permissions)
+    !hasPermission(auth.profile?.role, permission)
   ) {
     return null;
   }

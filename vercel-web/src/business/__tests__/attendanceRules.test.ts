@@ -22,6 +22,20 @@ describe("attendanceRules", () => {
     expect(attendancePayoutPeriod(null, null, "2026-05-15")).toBe("2026-05");
   });
 
+  it("attendancePayoutPeriod resolves the IST month for a UTC duty start", () => {
+    // 18:30 UTC Apr 30 = 00:00 IST May 1 — the duty belongs to the
+    // May payslip. The previous slice-based form put it in April.
+    expect(
+      attendancePayoutPeriod(null, "2026-04-30T18:30:00Z", null)
+    ).toBe("2026-05");
+  });
+
+  it("attendancePayoutPeriod falls back to check-in if duty start missing", () => {
+    expect(
+      attendancePayoutPeriod("2026-05-31T22:00:00Z", null, null)
+    ).toBe("2026-06");
+  });
+
   it("findAttendanceDuplicate matches duty + employee", () => {
     const dup = findAttendanceDuplicate(
       [

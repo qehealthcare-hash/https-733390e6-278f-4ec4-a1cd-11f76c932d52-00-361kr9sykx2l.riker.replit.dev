@@ -20,7 +20,7 @@ import {
   type DutyPartnerAssignment
 } from "@/business/dutyDiaryRules";
 import { effectiveMaterializeEndAt, isOpenEndedEndAt } from "@/business/dutyRules";
-import { crmTodayEndIso, crmTodayIso } from "@/utils/crmToday";
+import { crmDateKeyFromTimestamp, crmTodayEndIso, crmTodayIso } from "@/utils/crmToday";
 import { billingRepository } from "@/database/billingRepository";
 import { employeeRepository } from "@/database/employeeRepository";
 import { dutyRepository } from "@/database/dutyRepository";
@@ -391,8 +391,16 @@ export const dutyDiaryService = {
     // current partner list doesn't yet include (or to themselves with
     // edited rates). They are still pruned when the date falls outside
     // the duty's window (date-shrink / cancel still cleans up).
-    const startDay = String(duty.start_at || "").slice(0, 10);
-    const endDay = materializeEnd.slice(0, 10);
+    //
+    // CRITICAL — these MUST be IST date keys, not UTC slices. The
+    // legacy `slice(0, 10)` returned the UTC date of the timestamp,
+    // so a duty whose start_at was `2026-04-30T18:30:00Z` (00:00 IST
+    // May 1) would compute startDay = "2026-04-30" while
+    // eachDutyCalendarDay yields ["2026-05-01", ...]. Manual rows
+    // dated May 1 then sat outside `[startDay, endDay]` and got
+    // pruned even though they were inside the duty's IST window.
+    const startDay = crmDateKeyFromTimestamp(String(duty.start_at || ""));
+    const endDay = crmDateKeyFromTimestamp(materializeEnd);
     function isInWindow(iso: string): boolean {
       if (!iso) return false;
       return iso >= startDay && iso <= endDay;
@@ -719,6 +727,38 @@ export const dutyDiaryService = {
         after: result
       });
     }
+
+    // Cross-duty cleanup: drop phantom IST rows + dedup per-day across
+    // handovers/overlapping duties. Per-duty materialize cannot see other
+    // duties' rows, so this is run once on the parent billing each pass.
+    // Best-effort: if it fails we still return the materialize result.
+    try {
+      const dedup = await billingRepository.dedupBillingDiaryRpc(billingId, access);
+      if (dedup.success && dedup.data) {
+        const d = dedup.data;
+        const total =
+          (d.svc_phantoms_deleted || 0) +
+          (d.payout_phantoms_deleted || 0) +
+          (d.svc_duplicates_deleted || 0) +
+          (d.payout_duplicates_deleted || 0);
+        if (total > 0) {
+          await emitDiaryAudit(ctx, dutyId, "update", {
+            stamp:
+              `Diary dedup · svc-phantom:${d.svc_phantoms_deleted}` +
+              ` payout-phantom:${d.payout_phantoms_deleted}` +
+              ` svc-dup:${d.svc_duplicates_deleted}` +
+              ` payout-dup:${d.payout_duplicates_deleted}`,
+            before: null,
+            after: d
+          });
+        }
+      } else if (!dedup.success) {
+        console.error("[materializeDuty] dedup helper failed", dedup.error);
+      }
+    } catch (err) {
+      console.error("[materializeDuty] dedup helper threw", err);
+    }
+
     return success(result);
   },
 
@@ -1255,7 +1295,12 @@ export const dutyDiaryService = {
       matResult = mat.data;
     }
 
-    const monthAnchor = String(duty.start_at || new Date().toISOString()).slice(0, 10);
+    // IST date key — UTC slice would put a duty starting at 18:30 UTC
+    // on Apr 30 (which is 00:00 IST May 1) into the April payout period
+    // and never recompute May, leaving the partner's payslip stale.
+    const monthAnchor = crmDateKeyFromTimestamp(
+      String(duty.start_at || new Date().toISOString())
+    );
     const partnerIds = Array.from(
       new Set(
         prevExtra

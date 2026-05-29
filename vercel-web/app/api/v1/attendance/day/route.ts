@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { ATTENDANCE_READ_ROLES } from "@/business/rbac";
 import { attendanceService } from "@/services/attendanceService";
 import { respond } from "@/lib/api/apiResultBridge";
 
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
  * rows into a single payload designed for the operator screen.
  */
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff", "Nurse", "Supervisor"]);
+  requireRole(actor, [...ATTENDANCE_READ_ROLES]);
   const url = new URL(req.url);
   const date = url.searchParams.get("date") || undefined;
   const employee_id = url.searchParams.get("employee_id") || undefined;

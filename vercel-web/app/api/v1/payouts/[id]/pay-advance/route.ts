@@ -12,6 +12,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { PAYOUT_PAY_ROLES } from "@/lib/api/payoutRoles";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { payoutService } from "@/services/payoutService";
 import { respond } from "@/lib/api/apiResultBridge";
@@ -23,7 +24,7 @@ export const dynamic = "force-dynamic";
 
 export const POST = withAuth<{ id: string }>(
   async (req: NextRequest, { params, actor }) => {
-    requireRole(actor, ["Admin", "Accountant"]);
+    requireRole(actor, [...PAYOUT_PAY_ROLES]);
     return withIdempotency(
       req,
       actor,

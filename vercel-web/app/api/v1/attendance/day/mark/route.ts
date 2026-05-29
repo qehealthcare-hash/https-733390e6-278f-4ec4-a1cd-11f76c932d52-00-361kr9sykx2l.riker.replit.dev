@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { ATTENDANCE_WRITE_ROLES } from "@/business/rbac";
 import { attendanceService } from "@/services/attendanceService";
 import { respond } from "@/lib/api/apiResultBridge";
 import { parseJsonBody } from "@/lib/api/handler";
@@ -30,7 +31,7 @@ export const dynamic = "force-dynamic";
  * duty lifecycle so the calendar stays in sync.
  */
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff", "Nurse", "Supervisor"]);
+  requireRole(actor, [...ATTENDANCE_WRITE_ROLES]);
   const body = await parseJsonBody(req);
   const result = await attendanceService.dayMark(body, { actor });
   return respond(result);

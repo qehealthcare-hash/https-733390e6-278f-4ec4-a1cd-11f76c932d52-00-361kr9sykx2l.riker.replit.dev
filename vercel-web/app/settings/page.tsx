@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * App settings (M11 Pass D). Helpers: `@/lib/settingsUi`.
+ */
+
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
@@ -8,39 +12,29 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import {
+  SETTINGS_DELETE_ROLES,
+  SETTINGS_READ_ROLES,
+  SETTINGS_WRITE_ROLES
+} from "@/business/rbac";
+import {
+  SETTINGS_KNOWN_KEYS,
+  parseSettingsValue,
+  settingsValueToString
+} from "@/lib/settingsUi";
 
-var KNOWN_KEYS = [
-  { key: "signatoryName", label: "Signatory name" },
-  { key: "signatoryTitle", label: "Signatory title" },
-  { key: "signature", label: "Signature image URL" },
-  { key: "seal", label: "Company seal image URL" },
-  { key: "services", label: "Service catalogue (JSON array)", textarea: true, json: true },
-  { key: "shiftRates", label: "Shift rates (JSON, e.g. {\"DAY\":700,\"NIGHT\":900})", textarea: true, json: true },
-  { key: "company", label: "Company info (JSON)", textarea: true, json: true }
-];
-
-function valueToString(value) {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch (err) {
-    return String(value);
-  }
-}
-
-function parseValue(input, isJson) {
-  if (input === "") return null;
-  if (!isJson) return input;
-  try {
-    return JSON.parse(input);
-  } catch (err) {
-    throw new Error("Value for this key must be valid JSON");
-  }
+function roleInList(role, list) {
+  var normalized = String(role || "").trim().toLowerCase();
+  return list.some(function (r) {
+    return r.toLowerCase() === normalized;
+  });
 }
 
 export default function SettingsPage() {
   var auth = useAuth();
+  var canRead = roleInList(auth.profile?.role, SETTINGS_READ_ROLES);
+  var canWrite = roleInList(auth.profile?.role, SETTINGS_WRITE_ROLES);
+  var canDelete = roleInList(auth.profile?.role, SETTINGS_DELETE_ROLES);
   var confirm = useConfirm();
   var [settings, setSettings] = useState({});
   var [drafts, setDrafts] = useState({});
@@ -52,17 +46,17 @@ export default function SettingsPage() {
   var [loading, setLoading] = useState(true);
 
   async function reload() {
-    if (!auth.session?.access_token) return;
+    if (!auth.session?.access_token || !canRead) return;
     setLoading(true);
     try {
       var data = await request("/settings", null, auth.session);
       setSettings(data || {});
       var initialDrafts = {};
-      KNOWN_KEYS.forEach(function (k) {
-        initialDrafts[k.key] = valueToString(data ? data[k.key] : null);
+      SETTINGS_KNOWN_KEYS.forEach(function (k) {
+        initialDrafts[k.key] = settingsValueToString(data ? data[k.key] : null);
       });
       Object.keys(data || {}).forEach(function (k) {
-        if (!(k in initialDrafts)) initialDrafts[k] = valueToString(data[k]);
+        if (!(k in initialDrafts)) initialDrafts[k] = settingsValueToString(data[k]);
       });
       setDrafts(initialDrafts);
       setError("");
@@ -78,17 +72,17 @@ export default function SettingsPage() {
     function () {
       reload();
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [auth.session]
+    [auth.session?.access_token, canRead]
   );
 
   async function saveKey(keyDef) {
+    if (!canWrite) return;
     setBusy(true);
     setError("");
     setMessage("");
     try {
       var raw = drafts[keyDef.key] !== undefined ? drafts[keyDef.key] : "";
-      var value = parseValue(raw, keyDef.json);
+      var value = parseSettingsValue(raw, !!keyDef.json);
       await requestWithOfflineFallback(
         "/settings/" + encodeURIComponent(keyDef.key),
         { method: "PUT", body: { value: value } },
@@ -104,6 +98,7 @@ export default function SettingsPage() {
   }
 
   async function deleteKey(key) {
+    if (!canDelete) return;
     var ok = await confirm({
       title: "Delete setting '" + key + "'?",
       description: "Removing a setting may affect downstream modules until it is restored.",
@@ -125,6 +120,7 @@ export default function SettingsPage() {
   }
 
   async function addCustom() {
+    if (!canWrite) return;
     if (!customKey.trim()) {
       setError("Custom key is required");
       return;
@@ -157,7 +153,7 @@ export default function SettingsPage() {
   }
 
   var customKeys = Object.keys(settings).filter(function (k) {
-    return !KNOWN_KEYS.some(function (def) {
+    return !SETTINGS_KNOWN_KEYS.some(function (def) {
       return def.key === k;
     });
   });
@@ -167,11 +163,16 @@ export default function SettingsPage() {
       <AppShell title="Settings">
         <div className="page-split">
           <ModuleShell title="App settings" description="Branding, signatures, services and rate config. All changes audited.">
+            {!canWrite ? (
+              <div className="helper-box" style={{ marginBottom: 12 }}>
+                Read-only — only Admin and Manager can change settings. Accountant can view values.
+              </div>
+            ) : null}
             {loading ? (
               <EmptyState title="Loading…" description="Fetching settings from hh_app_settings." />
             ) : (
-              <div className="stack">
-                {KNOWN_KEYS.map(function (def) {
+              <fieldset className="stack" disabled={!canWrite} style={{ border: 0, margin: 0, padding: 0 }}>
+                {SETTINGS_KNOWN_KEYS.map(function (def) {
                   return (
                     <div className="field" key={def.key}>
                       <label htmlFor="settings-codedef-keycode-def-labe-1">
@@ -194,10 +195,12 @@ export default function SettingsPage() {
                         />
                       )}
                       <div className="button-row" style={{ marginTop: 4 }}>
-                        <button className="button primary" type="button" onClick={function () { saveKey(def); }} disabled={busy}>
-                          Save
-                        </button>
-                        {settings[def.key] !== undefined ? (
+                        {canWrite ? (
+                          <button className="button primary" type="button" onClick={function () { saveKey(def); }} disabled={busy}>
+                            Save
+                          </button>
+                        ) : null}
+                        {canDelete && settings[def.key] !== undefined ? (
                           <button
                             className="button danger"
                             type="button"
@@ -211,13 +214,14 @@ export default function SettingsPage() {
                     </div>
                   );
                 })}
-              </div>
+              </fieldset>
             )}
             {error ? <div className="error-text">{error}</div> : null}
             {message ? <div className="success-text">{message}</div> : null}
           </ModuleShell>
 
           <ModuleShell title="Custom settings" description="Add any key/value not in the standard list.">
+            <fieldset className="stack" disabled={!canWrite} style={{ border: 0, margin: 0, padding: 0 }}>
             <form
               className="stack"
               onSubmit={function (event) {
@@ -249,6 +253,7 @@ export default function SettingsPage() {
                 </button>
               </div>
             </form>
+            </fieldset>
             {customKeys.length ? (
               <div className="table-wrap" style={{ marginTop: 12 }}>
                 <strong>Existing custom keys</strong>
@@ -266,12 +271,14 @@ export default function SettingsPage() {
                         <tr key={k}>
                           <td><code>{k}</code></td>
                           <td>
-                            <code className="mini-muted">{valueToString(settings[k]).slice(0, 120)}</code>
+                            <code className="mini-muted">{settingsValueToString(settings[k]).slice(0, 120)}</code>
                           </td>
                           <td>
-                            <button className="button danger" type="button" onClick={function () { deleteKey(k); }} disabled={busy}>
-                              Delete
-                            </button>
+                            {canDelete ? (
+                              <button className="button danger" type="button" onClick={function () { deleteKey(k); }} disabled={busy}>
+                                Delete
+                              </button>
+                            ) : null}
                           </td>
                         </tr>
                       );

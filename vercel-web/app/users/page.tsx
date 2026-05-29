@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * Users & roles admin (M11). Canonical roles from `@/business/rbac`.
+ */
+
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
@@ -8,24 +12,21 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import {
+  CANONICAL_ROLES,
+  ROLE_ADMIN_ROLES,
+  USER_ADMIN_ROLES,
+  USER_CREATE_ROLES,
+  USER_DEACTIVATE_ROLES,
+  USER_UPDATE_ROLES
+} from "@/business/rbac";
 
-var PERMISSION_MODULES = [
-  "dashboard",
-  "patients",
-  "employees",
-  "inquiries",
-  "duties",
-  "attendance",
-  "billings",
-  "payouts",
-  "doctors",
-  "vendors",
-  "reports",
-  "settings",
-  "users",
-  "audits"
-];
-var PERMISSION_ACTIONS = ["read", "write"];
+function roleInList(role, list) {
+  var normalized = String(role || "").trim().toLowerCase();
+  return list.some(function (r) {
+    return r.toLowerCase() === normalized;
+  });
+}
 
 function emptyUserForm() {
   return {
@@ -41,13 +42,17 @@ function emptyUserForm() {
 function emptyRoleForm() {
   return {
     id: "",
-    name: "",
-    perms: {}
+    name: ""
   };
 }
 
 export default function UsersPage() {
   var auth = useAuth();
+  var canAdminUsers = roleInList(auth.profile?.role, USER_ADMIN_ROLES);
+  var canCreateUser = roleInList(auth.profile?.role, USER_CREATE_ROLES);
+  var canUpdateUser = roleInList(auth.profile?.role, USER_UPDATE_ROLES);
+  var canDeactivateUser = roleInList(auth.profile?.role, USER_DEACTIVATE_ROLES);
+  var canManageRoles = roleInList(auth.profile?.role, ROLE_ADMIN_ROLES);
   var confirm = useConfirm();
   var [users, setUsers] = useState([]);
   var [roles, setRoles] = useState([]);
@@ -80,8 +85,7 @@ export default function UsersPage() {
     function () {
       reload();
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [auth.session]
+    [auth.session?.access_token, canAdminUsers]
   );
 
   var visibleUsers = useMemo(
@@ -124,6 +128,7 @@ export default function UsersPage() {
 
   async function submitUser(event) {
     event.preventDefault();
+    if (userForm.id ? !canUpdateUser : !canCreateUser) return;
     setBusy(true);
     setError("");
     setMessage("");
@@ -153,6 +158,7 @@ export default function UsersPage() {
   }
 
   async function deactivateUser(id) {
+    if (!canDeactivateUser) return;
     var ok = await confirm({
       title: "Deactivate this user?",
       description: "They will lose access immediately. The account stays in the system for audit history.",
@@ -175,11 +181,16 @@ export default function UsersPage() {
   }
 
   // ── Roles ──
+  // M2-C1: Per-module permission editor was removed because the DB-level
+  // `hh_roles.perms` matrix was never consulted at runtime — the CRM is
+  // role-based. Editing a role here changes its NAME only; the actual
+  // capability list lives in `lib/permissions.js` (frontend) and
+  // `lib/api/crmRoles.ts` (server). New roles created here will fall
+  // back to STAFF-level capabilities until those code maps are updated.
   function editRole(row) {
     setRoleForm({
       id: row.id,
-      name: row.name || "",
-      perms: row.perms && typeof row.perms === "object" ? row.perms : {}
+      name: row.name || ""
     });
     setError("");
     setMessage("");
@@ -189,18 +200,9 @@ export default function UsersPage() {
     setRoleForm(emptyRoleForm());
   }
 
-  function togglePerm(module, action) {
-    setRoleForm(function (current) {
-      var perms = Object.assign({}, current.perms || {});
-      var modulePerms = Object.assign({}, perms[module] || {});
-      modulePerms[action] = !modulePerms[action];
-      perms[module] = modulePerms;
-      return { ...current, perms: perms };
-    });
-  }
-
   async function submitRole(event) {
     event.preventDefault();
+    if (!canManageRoles) return;
     setBusy(true);
     setError("");
     setMessage("");
@@ -209,7 +211,7 @@ export default function UsersPage() {
         roleForm.id ? "/roles/" + roleForm.id : "/roles",
         {
           method: roleForm.id ? "PATCH" : "POST",
-          body: { name: roleForm.name, perms: roleForm.perms }
+          body: { name: roleForm.name }
         },
         auth.session
       );
@@ -224,6 +226,7 @@ export default function UsersPage() {
   }
 
   async function deleteRole(id) {
+    if (!canManageRoles) return;
     var ok = await confirm({
       title: "Delete this role?",
       description: "The request will fail if any user is currently assigned to it.",
@@ -254,6 +257,16 @@ export default function UsersPage() {
               title={userForm.id ? "Edit user" : "Add user"}
               description="Provision CRM access. Email must match Supabase Auth identity."
             >
+              {!canCreateUser && !userForm.id ? (
+                <div className="helper-box" style={{ marginBottom: 12 }}>
+                  Only Admin can create or update users. Managers can view the directory.
+                </div>
+              ) : null}
+              <fieldset
+                className="stack"
+                disabled={userForm.id ? !canUpdateUser : !canCreateUser}
+                style={{ border: 0, margin: 0, padding: 0 }}
+              >
               <form className="stack" onSubmit={submitUser}>
                 <div className="grid-2">
                   <div className="field">
@@ -289,16 +302,17 @@ export default function UsersPage() {
                       onChange={function (event) { updateUserField("role", event.target.value); }}
                     >
                       <option value="">No role</option>
-                      <option value="Admin">Admin</option>
-                      <option value="Manager">Manager</option>
-                      <option value="Staff">Staff</option>
-                      <option value="Accountant">Accountant</option>
-                      <option value="Nurse">Nurse</option>
-                      <option value="Attendant">Attendant</option>
-                      <option value="Executive">Executive</option>
-                      {roles.map(function (r) {
-                        return <option key={r.id} value={r.name}>{r.name}</option>;
+                      {/* M2-C2: Canonical labels always render even if the
+                          /roles fetch is in-flight; custom rows appended below. */}
+                      {CANONICAL_ROLES.map(function (label) {
+                        return <option key={label} value={label}>{label}</option>;
                       })}
+                      {roles
+                        .filter(function (r) { return CANONICAL_ROLES.indexOf(r.name) < 0; })
+                        .map(function (r) {
+                          return <option key={r.id} value={r.name}>{r.name} (custom)</option>;
+                        })
+                      }
                     </select>
                   </div>
                   <div className="field">
@@ -323,6 +337,7 @@ export default function UsersPage() {
                   </button>
                 </div>
               </form>
+              </fieldset>
             </ModuleShell>
 
             <ModuleShell title="Users" description="Filter by name, email, phone.">
@@ -368,10 +383,12 @@ export default function UsersPage() {
                             </td>
                             <td>
                               <div className="button-row">
-                                <button className="button secondary" type="button" onClick={function () { editUser(u); }}>
-                                  Edit
-                                </button>
-                                {u.is_active !== false ? (
+                                {canUpdateUser ? (
+                                  <button className="button secondary" type="button" onClick={function () { editUser(u); }}>
+                                    Edit
+                                  </button>
+                                ) : null}
+                                {canDeactivateUser && u.is_active !== false ? (
                                   <button className="button danger" type="button" onClick={function () { deactivateUser(u.id); }}>
                                     Deactivate
                                   </button>
@@ -391,8 +408,12 @@ export default function UsersPage() {
           <div className="page-grid">
             <ModuleShell
               title={roleForm.id ? "Edit role" : "Add role"}
-              description="Permissions per module. Used by the React shell to gate routes."
+              description="Role labels populate the user role dropdown. Capability mapping lives in code (lib/permissions.js + lib/api/crmRoles.ts) — adding a role here does NOT grant new access until those code maps are updated."
             >
+              {!canManageRoles ? (
+                <div className="helper-box">Only Admin can manage the role catalogue.</div>
+              ) : null}
+              <fieldset className="stack" disabled={!canManageRoles} style={{ border: 0, margin: 0, padding: 0 }}>
               <form className="stack" onSubmit={submitRole}>
                 <div className="field">
                   <label htmlFor="users-role-name-8">Role name</label>
@@ -401,40 +422,6 @@ export default function UsersPage() {
                     onChange={function (event) { setRoleForm({ ...roleForm, name: event.target.value }); }}
                     required
                   />
-                </div>
-                <div className="table-wrap">
-                  <strong>Permissions</strong>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Module</th>
-                        {PERMISSION_ACTIONS.map(function (a) {
-                          return <th key={a}>{a}</th>;
-                        })}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {PERMISSION_MODULES.map(function (mod) {
-                        return (
-                          <tr key={mod}>
-                            <td>{mod}</td>
-                            {PERMISSION_ACTIONS.map(function (action) {
-                              var checked = !!(roleForm.perms && roleForm.perms[mod] && roleForm.perms[mod][action]);
-                              return (
-                                <td key={action}>
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={function () { togglePerm(mod, action); }}
-                                  />
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
                 </div>
                 <div className="button-row">
                   <button className="button primary" type="submit" disabled={busy}>
@@ -445,35 +432,37 @@ export default function UsersPage() {
                   </button>
                 </div>
               </form>
+              </fieldset>
             </ModuleShell>
 
-            <ModuleShell title="Roles" description="Existing role catalogue.">
+            <ModuleShell title="Roles" description="Catalogue used to populate the user role dropdown.">
               {!roles.length ? (
                 <EmptyState title="No roles" description="Add a role on the left." />
               ) : (
                 <div className="record-list">
                   {roles.map(function (r) {
-                    var perms = r.perms || {};
-                    var summary = Object.keys(perms)
-                      .filter(function (k) {
-                        return perms[k] && Object.keys(perms[k]).some(function (a) { return perms[k][a]; });
-                      })
-                      .join(", ");
+                    var isCanonical = CANONICAL_ROLES.indexOf(r.name) >= 0;
                     return (
                       <div className="record-card" key={r.id}>
                         <div className="button-row" style={{ justifyContent: "space-between" }}>
                           <div>
-                            <h3>{r.name}</h3>
-                            <div className="mini-muted">{summary || "no permissions"}</div>
+                            <h3>{r.name}{isCanonical ? "" : " (custom)"}</h3>
+                            <div className="mini-muted">
+                              {isCanonical
+                                ? "Capabilities defined in lib/permissions.js + lib/api/crmRoles.ts"
+                                : "Users assigned this role fall back to Staff-level access until code maps are updated."}
+                            </div>
                           </div>
-                          <div className="button-row">
-                            <button className="button secondary" type="button" onClick={function () { editRole(r); }}>
-                              Edit
-                            </button>
-                            <button className="button danger" type="button" onClick={function () { deleteRole(r.id); }}>
-                              Delete
-                            </button>
-                          </div>
+                          {canManageRoles ? (
+                            <div className="button-row">
+                              <button className="button secondary" type="button" onClick={function () { editRole(r); }}>
+                                Edit
+                              </button>
+                              <button className="button danger" type="button" onClick={function () { deleteRole(r.id); }}>
+                                Delete
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     );

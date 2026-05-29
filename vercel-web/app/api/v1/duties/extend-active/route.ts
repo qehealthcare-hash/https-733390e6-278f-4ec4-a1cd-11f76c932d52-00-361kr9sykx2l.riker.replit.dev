@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { DUTY_EXTEND_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { dutyService } from "@/services/dutyService";
 import { respond } from "@/lib/api/apiResultBridge";
@@ -15,7 +16,11 @@ export const dynamic = "force-dynamic";
  * patient still has an Active bill, materialize per-day charges + payouts
  * up to today. Open-ended duties accrue one new day each time this runs.
  *
- * Auth: Admin/Manager only. Staff was removed (P1-16) — an honest mistake
+ * **Operational quarantine (M7-G):** invoked by cron or Admin/Manager manual
+ * catch-up — not used by the modern Next.js calendar for normal edits.
+ *
+ * Auth: `DUTY_EXTEND_ROLES` (Admin/Manager only). Staff was removed (P1-16) —
+ * an honest mistake
  * by an over-eager nurse triple-tapping "Sync today" was generating 3x
  * duplicate payout rows before the underlying RPC's advisory lock landed.
  *
@@ -24,7 +29,7 @@ export const dynamic = "force-dynamic";
  * for an hour; cron retries within an hour return the cached envelope.
  */
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager"]);
+  requireRole(actor, DUTY_EXTEND_ROLES);
   return withIdempotency(
     req,
     actor,

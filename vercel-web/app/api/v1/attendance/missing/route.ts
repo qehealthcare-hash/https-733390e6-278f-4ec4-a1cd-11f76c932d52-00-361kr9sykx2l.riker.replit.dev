@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { ATTENDANCE_READ_ROLES } from "@/business/rbac";
 import { attendanceService } from "@/services/attendanceService";
 import { respond } from "@/lib/api/apiResultBridge";
 import { ErrorCodes, type ApiResult } from "@/types/common";
@@ -15,7 +16,7 @@ export const dynamic = "force-dynamic";
  * "missing attendance" widget. Frontend should call this on every refresh.
  */
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff", "Nurse", "Supervisor"]);
+  requireRole(actor, [...ATTENDANCE_READ_ROLES]);
   const url = new URL(req.url);
   const employeeId = url.searchParams.get("employee_id") || "";
   const from = url.searchParams.get("from") || "";

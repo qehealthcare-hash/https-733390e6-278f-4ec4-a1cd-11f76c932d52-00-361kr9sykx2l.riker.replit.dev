@@ -268,4 +268,136 @@ describe("inquiry lifecycle", () => {
     expect((removed.data as { mode: string }).mode).toBe("soft");
     expect(inquiries[0].status).toBe("Closed");
   });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // M4 Pass A: previously-untested service methods.
+  // ──────────────────────────────────────────────────────────────────────
+
+  it("getById hydrates the API shape and returns not_found for missing rows", async () => {
+    const created = await inquiryService.create(
+      { name: "Read Me", phone: "9876500011", status: "New" },
+      { actor: ACTOR }
+    );
+    const id = (created.data as { id: string }).id;
+
+    const hit = await inquiryService.getById(id, { actor: ACTOR });
+    expect(hit.success).toBe(true);
+    const data = hit.data as unknown as {
+      id: string;
+      patient_name: string;
+      mobile: string;
+      status: string;
+    };
+    expect(data.id).toBe(id);
+    // inquiryToApi exposes both patient_name and mobile for legacy SPA consumers.
+    expect(data.patient_name).toBe("Read Me");
+    expect(data.mobile).toBe("9876500011");
+    expect(data.status).toBe("New");
+
+    const miss = await inquiryService.getById("INQ_DOES_NOT_EXIST", { actor: ACTOR });
+    expect(miss.success).toBe(false);
+    expect(miss.code).toBe("not_found");
+  });
+
+  it("list returns the API-shape rows and respects an empty result", async () => {
+    await inquiryService.create(
+      { name: "L1", phone: "9876500021", status: "New" },
+      { actor: ACTOR }
+    );
+    await inquiryService.create(
+      { name: "L2", phone: "9876500022", status: "Contacted" },
+      { actor: ACTOR }
+    );
+
+    const result = await inquiryService.list({}, { actor: ACTOR });
+    expect(result.success).toBe(true);
+    const payload = result.data as unknown as {
+      rows: Array<{ patient_name: string; mobile: string; status: string }>;
+      total: number;
+    };
+    expect(payload.total).toBe(2);
+    expect(payload.rows).toHaveLength(2);
+    // inquiryToApi exposes legacy aliases — confirm both directions.
+    expect(payload.rows[0]).toMatchObject({
+      patient_name: expect.any(String),
+      mobile: expect.any(String)
+    });
+
+    inquiries = [];
+    const empty = await inquiryService.list({}, { actor: ACTOR });
+    expect(empty.success).toBe(true);
+    expect((empty.data as { rows: unknown[]; total: number }).total).toBe(0);
+  });
+
+  it("list rejects an unknown status filter with validation_error", async () => {
+    const bad = await inquiryService.list(
+      { status: "TotallyMadeUp" },
+      { actor: ACTOR }
+    );
+    expect(bad.success).toBe(false);
+    expect(bad.code).toBe("validation_error");
+  });
+
+  it("syncLegacy inserts a new inquiry, dedupes on active phone, and updates existing rows", async () => {
+    const inserted = await inquiryService.syncLegacy(
+      {
+        id: "INQ_LEGACY_NEW",
+        name: "Legacy Lead",
+        phone: "9876500031",
+        source: "Facebook",
+        status: "New"
+      },
+      { actor: ACTOR }
+    );
+    expect(inserted.success).toBe(true);
+    expect(inquiries).toHaveLength(1);
+    expect(inquiries[0].id).toBe("INQ_LEGACY_NEW");
+    // P1-23: server stamps created/created_by; the input has no created field
+    // so the row must still receive one.
+    expect(typeof inquiries[0].created).toBe("string");
+    expect(inquiries[0].created_by).toBe(ACTOR.email);
+
+    // Duplicate phone while the first is still open → rejected as duplicate.
+    const dup = await inquiryService.syncLegacy(
+      { name: "Dup", phone: "9876500031", status: "New" },
+      { actor: ACTOR }
+    );
+    expect(dup.success).toBe(false);
+    expect(dup.code).toBe("duplicate");
+
+    // Updating by id is allowed — same phone but the id matches.
+    const updated = await inquiryService.syncLegacy(
+      {
+        id: "INQ_LEGACY_NEW",
+        name: "Legacy Lead (Updated)",
+        phone: "9876500031",
+        status: "Contacted"
+      },
+      { actor: ACTOR }
+    );
+    expect(updated.success).toBe(true);
+    expect(inquiries[0].name).toBe("Legacy Lead (Updated)");
+    expect(inquiries[0].status).toBe("Contacted");
+  });
+
+  it("syncLegacy refuses to edit a Converted inquiry", async () => {
+    const created = await inquiryService.create(
+      {
+        name: "Convert And Then Sync",
+        phone: "9876500041",
+        status: "New"
+      },
+      { actor: ACTOR }
+    );
+    const id = (created.data as { id: string }).id;
+    const converted = await inquiryService.convertToPatient(id, {}, { actor: ACTOR });
+    expect(converted.success).toBe(true);
+
+    const blocked = await inquiryService.syncLegacy(
+      { id, name: "Should Not Apply", phone: "9876500041", status: "New" },
+      { actor: ACTOR }
+    );
+    expect(blocked.success).toBe(false);
+    expect(blocked.code).toBe("business_rule_violation");
+  });
 });

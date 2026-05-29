@@ -370,6 +370,10 @@ export default function BillingsPage() {
           method: "POST",
           body: {
             billing_id: selectedId,
+            patient_id:
+              (bundle && bundle.billing && bundle.billing.patient_id) ||
+              (bundle && bundle.patient && bundle.patient.id) ||
+              "",
             invoice_id: receiptForm.invoice_id || null,
             type: receiptForm.type,
             method: receiptForm.method,
@@ -421,9 +425,17 @@ export default function BillingsPage() {
     if (!reason) return;
     var force = false;
     var outstanding = totalsFromBundle(bundle).outstanding;
+    var secDep = Number(totalsFromBundle(bundle).sec_dep || 0);
+    var closeIntro =
+      "Close this bill?\n\n" +
+      "A FINAL closing invoice will be raised first (unbilled services + security deposit applied as a receipt)." +
+      (secDep > 0 ? "\nDeposit on file: " + formatCurrency(secDep) + "." : "");
+    if (!window.confirm(closeIntro)) return;
     if (outstanding > 0) {
       force = window.confirm(
-        "Outstanding balance is " + formatCurrency(outstanding) + ". Close anyway? (force)"
+        "After the FINAL invoice, outstanding may still be " +
+          formatCurrency(outstanding) +
+          " (or less if the deposit covers it). Close anyway? (force)"
       );
       if (!force) return;
     }
@@ -746,6 +758,55 @@ export default function BillingsPage() {
       await openBilling(selectedId);
     } catch (err) {
       setError(err.message || "Could not regenerate invoice");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleGenerateFinalInvoice() {
+    if (!selectedId) return;
+    var totals = totalsFromBundle(bundle);
+    var secDep = Number(totals.sec_dep || 0);
+    var confirmMsg =
+      "Generate FINAL closing invoice for this bill?\n\n" +
+      "• All unbilled service entries will be added to a new invoice (full gross).\n" +
+      (secDep > 0
+        ? "• Security deposit (" +
+          formatCurrency(secDep) +
+          ") will be recorded as a Security receipt against that invoice.\n"
+        : "") +
+      (secDep > 0
+        ? "• If the deposit exceeds the bill, a Refund receipt will be created for the excess.\n"
+        : "") +
+      "\nClosing the bill later will reuse this FINAL invoice if it already exists.";
+    if (!window.confirm(confirmMsg)) return;
+    setBusy(true);
+    setError("");
+    try {
+      var data = await requestWithOfflineFallback(
+        "/billings/" + selectedId + "/invoices/final",
+        { method: "POST", body: {} },
+        auth.session
+      );
+      if (data && data.duplicate) {
+        setMessage("FINAL invoice already exists — opened existing");
+      } else {
+        var parts = ["FINAL invoice generated"];
+        if (data && Number(data.sec_dep_applied || 0) > 0) {
+          parts.push(
+            "deposit " + formatCurrency(data.sec_dep_applied) + " applied as Security receipt"
+          );
+        }
+        if (data && Number(data.refund_amount || 0) > 0) {
+          parts.push("refund " + formatCurrency(data.refund_amount) + " owed to patient");
+        }
+        setMessage(parts.join(" · "));
+      }
+      await openBilling(selectedId);
+      await reloadList();
+      if (data && data.invoice && data.invoice.id) printInvoiceById(data.invoice.id);
+    } catch (err) {
+      setError(err.message || "Could not generate FINAL invoice");
     } finally {
       setBusy(false);
     }
@@ -1158,6 +1219,45 @@ export default function BillingsPage() {
                     <div className="mini-muted">
                       Snapshots all services dated in the chosen month into a new invoice with its own number. The new invoice opens as UNPAID — record receipts below to move it to PARTIAL/PAID.
                     </div>
+                    {(function () {
+                      var status = String((bundle.billing && bundle.billing.status) || "");
+                      var isCancelled = status === "Cancelled";
+                      var hasFinal = (bundle.invoices || []).some(function (row) {
+                        var inv = row && row.invoice;
+                        var st = String((inv && inv.status) || "").toUpperCase();
+                        return inv && inv.kind === "FINAL" && st !== "CANCELLED";
+                      });
+                      var hasUnbilled =
+                        Number((bundle.totals && bundle.totals.services) || 0) >
+                          (bundle.invoices || []).reduce(function (s, row) {
+                            var inv = row && row.invoice;
+                            var st = String((inv && inv.status) || "").toUpperCase();
+                            return s + (inv && st !== "CANCELLED" ? Number(inv.amount || 0) : 0);
+                          }, 0);
+                      var canRaiseFinal =
+                        !isCancelled && !hasFinal && (hasUnbilled || Number(totals.sec_dep || 0) > 0);
+                      if (!canRaiseFinal) return null;
+                      return (
+                      <div className="stack" style={{ marginTop: 12 }}>
+                        <button
+                          className="button primary"
+                          type="button"
+                          onClick={handleGenerateFinalInvoice}
+                          disabled={busy}
+                          title={isClosed
+                            ? "This bill is Closed but never got a FINAL invoice — recover unbilled service days and apply the security deposit"
+                            : "Snapshot remaining services + apply security deposit + auto-refund any excess"}
+                        >
+                          {isClosed ? "Generate FINAL invoice (recover closed bill)" : "Generate FINAL invoice (apply deposit)"}
+                        </button>
+                        <div className="mini-muted">
+                          {isClosed
+                            ? "This bill was closed before the FINAL flow shipped. Generating the FINAL invoice now will snapshot unbilled service days and apply the security deposit (" + formatCurrency(totals.sec_dep) + ") as a Security receipt."
+                            : "Final settlement: snapshots unbilled services at full gross, records the security deposit (" + formatCurrency(totals.sec_dep) + ") as a Security receipt on that invoice, and auto-refunds any excess. Also runs automatically when you close the bill or close the patient. One FINAL invoice per bill."}
+                        </div>
+                      </div>
+                      );
+                    })()}
                     {!isClosed ? (
                       <div className="stack" style={{ marginTop: 12 }}>
                         <button

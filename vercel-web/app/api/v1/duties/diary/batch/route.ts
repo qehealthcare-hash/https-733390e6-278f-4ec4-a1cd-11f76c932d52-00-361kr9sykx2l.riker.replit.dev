@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { DUTY_DIARY_BATCH_ROLES } from "@/business/rbac";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
 import { respond } from "@/lib/api/apiResultBridge";
 import { parseInput } from "@/validation/parseValidation";
@@ -18,7 +19,7 @@ export const dynamic = "force-dynamic";
  * this endpoint folds those into a single round-trip.
  */
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff", "Nurse"]);
+  requireRole(actor, DUTY_DIARY_BATCH_ROLES);
   let raw: unknown = {};
   try {
     raw = await req.json();
