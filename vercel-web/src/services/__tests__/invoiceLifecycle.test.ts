@@ -100,8 +100,11 @@ describe("billingService — invoice summary view", () => {
     expect(final?.amount).toBe(0);
     expect(final?.received).toBe(0);
     expect(final?.outstanding).toBe(0);
-    expect(final?.status).toBe("UNPAID");
+    // FINAL is the closing/settlement document — once its deposit credit has
+    // been redistributed to the MONTHLY, FINAL is settled (PAID), not UNPAID.
+    expect(final?.status).toBe("PAID");
     expect(result.data.totals.outstanding).toBe(1050);
+    expect(result.data.totals.billed).toBe(6050);
   });
 });
 

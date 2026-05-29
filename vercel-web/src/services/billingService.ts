@@ -411,14 +411,38 @@ function buildInvoiceSummaries(
     const amount = Number(inv.amount || 0);
     const received = Number(receiptsByInvoice.get(id) || 0);
     const outstanding = invoiceOutstanding(amount, received);
-    let status: InvoiceSummary["status"];
     const persisted = String(inv.status || "").toUpperCase();
-    if (persisted === "CANCELLED") status = "CANCELLED";
-    else if (amount <= 0 || received <= 0) status = "UNPAID";
-    else if (received >= amount) status = "PAID";
-    else status = "PARTIAL";
+    const status = derivePerInvoiceStatus(persisted, amount, received, outstanding);
     return { invoice: inv, amount, received, outstanding, status };
   });
+}
+
+/**
+ * Per-invoice paid status. Was previously `amount <= 0 || received <= 0
+ * => UNPAID`, which incorrectly flagged settled FINAL invoices as unpaid:
+ *  - FINAL invoices with `amount = 0` carry the Security deposit receipt
+ *    (after the overflow redistribution above moves it onto the MONTHLY).
+ *    Such a FINAL has nothing left to collect and should display as PAID.
+ *  - A FINAL with no work and no deposit is also a closing no-op — PAID.
+ *
+ * Rules:
+ *  - persisted CANCELLED                → CANCELLED
+ *  - amount == 0                        → PAID  (closing / no-op doc)
+ *  - amount  > 0, received >= amount    → PAID
+ *  - amount  > 0, 0 < received < amount → PARTIAL
+ *  - amount  > 0, received <= 0         → UNPAID
+ */
+function derivePerInvoiceStatus(
+  persisted: string,
+  amount: number,
+  received: number,
+  _outstanding: number
+): InvoiceSummary["status"] {
+  if (persisted === "CANCELLED") return "CANCELLED";
+  if (amount <= 0) return "PAID";
+  if (received >= amount) return "PAID";
+  if (received > 0) return "PARTIAL";
+  return "UNPAID";
 }
 
 /** Refuse svc mutations for months that already have a MONTHLY invoice. */
@@ -492,30 +516,28 @@ async function recomputeInvoiceStatus(
 ): Promise<LoadResult<BillingPaidStatus | "CANCELLED">> {
   const access = dbAccess(ctx);
   const invoice = await billingRepository.findInvoiceById(invoiceId, access);
-  if (!invoice || !invoice.success || !invoice.data) {
+  if (!invoice.success || !invoice.data) {
     return { success: false, error: "Invoice not found", code: ErrorCodes.notFound };
   }
   if (String(invoice.data.status || "").toUpperCase() === "CANCELLED") {
     return { success: true, data: "CANCELLED" };
   }
   const receipts = await billingRepository.listReceiptsByInvoice(invoiceId, access);
-  if (!receipts || !receipts.success) {
-    return {
-      success: false,
-      error: receipts?.error || "Could not load receipts for invoice",
-      code: receipts?.code
-    };
+  if (!receipts.success) {
+    return { success: false, error: receipts.error, code: receipts.code };
   }
   const amount = Number(invoice.data.amount || 0);
   const received = (receipts.data || []).reduce(
     (sum, r) => sum + Number(r.amount || 0),
     0
   );
+  // Mirrors `derivePerInvoiceStatus` (view layer). A ₹0 closing invoice is
+  // settled by definition; otherwise classify by received vs amount.
   let next: BillingPaidStatus;
-  if (amount <= 0) next = "UNPAID";
-  else if (received <= 0) next = "UNPAID";
+  if (amount <= 0) next = "PAID";
   else if (received >= amount) next = "PAID";
-  else next = "PARTIAL";
+  else if (received > 0) next = "PARTIAL";
+  else next = "UNPAID";
 
   const current = String(invoice.data.status || "");
   if (current !== next) {
@@ -2172,23 +2194,6 @@ export const billingService = {
 
     if (rpc.data.duplicate) {
       return success(payload);
-    }
-
-    // The Postgres RPC inserts the Security / Refund receipts directly
-    // (bypassing `hominal_save_receipt_v2`), so the bill's persisted
-    // `paid_status` and the FINAL invoice's `status` were never refreshed
-    // after generation. Without this the billing header keeps showing the
-    // stale pre-deposit badge (e.g. UNPAID) even though a Security receipt
-    // is now on file. Best-effort — failures are logged, not fatal.
-    try {
-      await recomputeInvoiceStatus(invoiceId, ctx);
-    } catch (err) {
-      console.error("[generateFinalInvoice] recomputeInvoiceStatus failed", err);
-    }
-    try {
-      await recomputePaidStatus(input.billing_id, ctx);
-    } catch (err) {
-      console.error("[generateFinalInvoice] recomputePaidStatus failed", err);
     }
 
     return finalizeWithAudit(
