@@ -102,8 +102,15 @@ function totalsFromBundle(bundle) {
   if (!bundle?.totals) {
     return { billed: 0, receipts: 0, outstanding: 0, sec_dep: 0 };
   }
+  // Server's BillingTotals exposes `services` for the billed amount; the older
+  // legacy alias `billed` was never sent, which made the header card show
+  // "Billed: ₹0" on every bill. Read `services` and fall back to `billed`
+  // for forwards compatibility if the field is ever renamed back.
+  var billed = Number(
+    (bundle.totals.services != null ? bundle.totals.services : bundle.totals.billed) || 0
+  );
   return {
-    billed: Number(bundle.totals.billed || 0),
+    billed: billed,
     receipts: Number(bundle.totals.receipts || 0),
     outstanding: Number(bundle.totals.outstanding || 0),
     sec_dep: Number(bundle.totals.sec_dep || 0)

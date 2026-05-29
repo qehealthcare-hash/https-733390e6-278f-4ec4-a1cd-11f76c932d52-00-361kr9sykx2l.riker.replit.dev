@@ -352,21 +352,73 @@ function buildInvoiceSummaries(
       Number(receiptsByInvoice.get(invId) || 0) + Number(r.amount || 0)
     );
   }
-  return invoiceRows
-    .filter((inv) => String(inv.status || "").toUpperCase() !== "CANCELLED")
-    .map((inv) => {
-      const id = String(inv.id);
-      const amount = Number(inv.amount || 0);
-      const received = Number(receiptsByInvoice.get(id) || 0);
-      const outstanding = invoiceOutstanding(amount, received);
-      let status: InvoiceSummary["status"];
-      const persisted = String(inv.status || "").toUpperCase();
-      if (persisted === "CANCELLED") status = "CANCELLED";
-      else if (amount <= 0 || received <= 0) status = "UNPAID";
-      else if (received >= amount) status = "PAID";
-      else status = "PARTIAL";
-      return { invoice: inv, amount, received, outstanding, status };
+
+  const activeInvoices = invoiceRows.filter(
+    (inv) => String(inv.status || "").toUpperCase() !== "CANCELLED"
+  );
+
+  // FINAL invoices with `amount = 0` can carry deposit / refund receipts
+  // (see `hominal_generate_final_invoice` v3 — when all svc_entries were
+  // already snapshotted into a MONTHLY invoice, the FINAL is opened at
+  // gross 0 but the Security deposit receipt is still attached to it).
+  // For display we redistribute that overpayment to the oldest unpaid
+  // sibling invoice on the same bill, so:
+  //   * MONTHLY shows the deposit credit instead of a phantom outstanding
+  //   * FINAL no longer shows "received > amount"
+  //   * Σ(per-invoice outstanding) matches the bill-level outstanding.
+  // DB rows are untouched — this is purely the view layer for the table.
+  const overflow = new Map<string, number>();
+  for (const inv of activeInvoices) {
+    const id = String(inv.id);
+    const amount = Number(inv.amount || 0);
+    const rawReceived = Number(receiptsByInvoice.get(id) || 0);
+    const over = rawReceived - Math.max(0, amount);
+    if (over > 0) {
+      overflow.set(id, over);
+    }
+  }
+
+  if (overflow.size > 0) {
+    // Oldest non-overflow invoice first (FIFO settles older balances first).
+    const sortKey = (inv: JsonRow): string =>
+      String(inv.created_at || inv.from_date || inv.period || inv.id || "");
+    const unpaidTargets = activeInvoices
+      .filter((inv) => !overflow.has(String(inv.id)))
+      .slice()
+      .sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
+
+    overflow.forEach((overAmount, sourceId) => {
+      let remaining = overAmount;
+      for (const target of unpaidTargets) {
+        if (remaining <= 0) break;
+        const tid = String(target.id);
+        const tAmount = Number(target.amount || 0);
+        if (tAmount <= 0) continue;
+        const tReceived = Number(receiptsByInvoice.get(tid) || 0);
+        const room = tAmount - tReceived;
+        if (room <= 0) continue;
+        const apply = Math.min(room, remaining);
+        receiptsByInvoice.set(tid, tReceived + apply);
+        remaining -= apply;
+      }
+      const sourceReceived = Number(receiptsByInvoice.get(sourceId) || 0);
+      receiptsByInvoice.set(sourceId, sourceReceived - (overAmount - remaining));
     });
+  }
+
+  return activeInvoices.map((inv) => {
+    const id = String(inv.id);
+    const amount = Number(inv.amount || 0);
+    const received = Number(receiptsByInvoice.get(id) || 0);
+    const outstanding = invoiceOutstanding(amount, received);
+    let status: InvoiceSummary["status"];
+    const persisted = String(inv.status || "").toUpperCase();
+    if (persisted === "CANCELLED") status = "CANCELLED";
+    else if (amount <= 0 || received <= 0) status = "UNPAID";
+    else if (received >= amount) status = "PAID";
+    else status = "PARTIAL";
+    return { invoice: inv, amount, received, outstanding, status };
+  });
 }
 
 /** Refuse svc mutations for months that already have a MONTHLY invoice. */
@@ -440,15 +492,19 @@ async function recomputeInvoiceStatus(
 ): Promise<LoadResult<BillingPaidStatus | "CANCELLED">> {
   const access = dbAccess(ctx);
   const invoice = await billingRepository.findInvoiceById(invoiceId, access);
-  if (!invoice.success || !invoice.data) {
+  if (!invoice || !invoice.success || !invoice.data) {
     return { success: false, error: "Invoice not found", code: ErrorCodes.notFound };
   }
   if (String(invoice.data.status || "").toUpperCase() === "CANCELLED") {
     return { success: true, data: "CANCELLED" };
   }
   const receipts = await billingRepository.listReceiptsByInvoice(invoiceId, access);
-  if (!receipts.success) {
-    return { success: false, error: receipts.error, code: receipts.code };
+  if (!receipts || !receipts.success) {
+    return {
+      success: false,
+      error: receipts?.error || "Could not load receipts for invoice",
+      code: receipts?.code
+    };
   }
   const amount = Number(invoice.data.amount || 0);
   const received = (receipts.data || []).reduce(
@@ -2116,6 +2172,23 @@ export const billingService = {
 
     if (rpc.data.duplicate) {
       return success(payload);
+    }
+
+    // The Postgres RPC inserts the Security / Refund receipts directly
+    // (bypassing `hominal_save_receipt_v2`), so the bill's persisted
+    // `paid_status` and the FINAL invoice's `status` were never refreshed
+    // after generation. Without this the billing header keeps showing the
+    // stale pre-deposit badge (e.g. UNPAID) even though a Security receipt
+    // is now on file. Best-effort — failures are logged, not fatal.
+    try {
+      await recomputeInvoiceStatus(invoiceId, ctx);
+    } catch (err) {
+      console.error("[generateFinalInvoice] recomputeInvoiceStatus failed", err);
+    }
+    try {
+      await recomputePaidStatus(input.billing_id, ctx);
+    } catch (err) {
+      console.error("[generateFinalInvoice] recomputePaidStatus failed", err);
     }
 
     return finalizeWithAudit(

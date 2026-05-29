@@ -32,6 +32,79 @@ describe("billingRules — invoice helpers", () => {
   });
 });
 
+describe("billingService — invoice summary view", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("redistributes deposit overflow off a zero-amount FINAL onto the oldest unpaid MONTHLY", async () => {
+    // Reproduces the kundanben shah case: MONTHLY ₹6,050 + FINAL ₹0 carrying
+    // a ₹5,000 Security receipt. Bill outstanding = ₹1,050. Expect the
+    // MONTHLY row to show the deposit credit and the FINAL row to net to 0.
+    vi.mocked(billingRepository.loadBillingBundle).mockResolvedValue({
+      success: true,
+      data: {
+        billing: { id: "BILL1", status: "Closed", patient_id: "PAT1", sec_dep: 0 },
+        services: Array.from({ length: 11 }, (_, i) => ({
+          date: `2026-05-${String(i + 1).padStart(2, "0")}`,
+          total: 550
+        })),
+        receipts: [
+          {
+            id: "R_SEC",
+            amount: 5000,
+            type: "Security",
+            invoice_id: "IV_FINAL"
+          }
+        ]
+      }
+    });
+    vi.mocked(patientRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "PAT1", name: "Test", phone: "", address: "", area: "", city: "", pincode: "" }
+    });
+    vi.mocked(billingRepository.listInvoicesByBilling).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          id: "IV_MONTHLY",
+          invoice_no: "INV2026000001",
+          kind: "MONTHLY",
+          period: "2026-05",
+          amount: 6050,
+          status: "UNPAID",
+          created_at: "2026-05-28T10:00:00Z"
+        },
+        {
+          id: "IV_FINAL",
+          invoice_no: "INV2026000023",
+          kind: "FINAL",
+          amount: 0,
+          status: "UNPAID",
+          created_at: "2026-05-29T10:00:00Z"
+        }
+      ]
+    });
+
+    const result = await billingService.getById("BILL1", ctx as Parameters<typeof billingService.getById>[1]);
+    expect(result.success).toBe(true);
+    if (!result.success || !result.data) throw new Error("expected bundle");
+    const monthly = result.data.invoices.find((s) => s.invoice.id === "IV_MONTHLY");
+    const final = result.data.invoices.find((s) => s.invoice.id === "IV_FINAL");
+    expect(monthly).toBeDefined();
+    expect(final).toBeDefined();
+    expect(monthly?.amount).toBe(6050);
+    expect(monthly?.received).toBe(5000);
+    expect(monthly?.outstanding).toBe(1050);
+    expect(monthly?.status).toBe("PARTIAL");
+    expect(final?.amount).toBe(0);
+    expect(final?.received).toBe(0);
+    expect(final?.outstanding).toBe(0);
+    expect(final?.status).toBe("UNPAID");
+    expect(result.data.totals.outstanding).toBe(1050);
+  });
+});
+
 describe("billingService — invoices", () => {
   beforeEach(() => {
     vi.clearAllMocks();
