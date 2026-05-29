@@ -12,6 +12,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 
 const PAYOUTS = "hh_payouts";
 const PAID_TX = "hh_paid_transactions";
@@ -77,12 +78,14 @@ export const payoutRepository = {
         if (filters.employeeId) query = query.eq("employee_id", filters.employeeId);
         if (filters.status) query = query.eq("status", filters.status);
         if (filters.q) {
-          const term = filters.q.replace(/%/g, "");
-          query = query.or(
-            ["id", "employee_id", "period_month", "status", "remarks"]
-              .map((c) => `${c}.ilike.%${term}%`)
-              .join(",")
-          );
+          const term = sanitizeSearchTerm(filters.q);
+          if (term) {
+            query = query.or(
+              ["id", "employee_id", "period_month", "status", "remarks"]
+                .map((c) => `${c}.ilike.%${term}%`)
+                .join(",")
+            );
+          }
         }
         return query;
       },

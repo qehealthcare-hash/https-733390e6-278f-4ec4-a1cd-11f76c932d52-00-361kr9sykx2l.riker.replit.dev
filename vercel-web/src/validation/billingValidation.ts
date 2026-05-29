@@ -258,3 +258,16 @@ export const generateInvoiceSchema = z
 
 export type GenerateInvoiceInput = z.infer<typeof generateInvoiceSchema>;
 export type ShiftRatesInput = z.infer<typeof shiftRatesSchema>;
+
+/**
+ * Generate a FINAL invoice for a billing — snapshots all unbilled svc entries,
+ * appends a Security Deposit Adjustment credit line, auto-creates a Refund
+ * receipt for any deposit excess, and zeroes hh_billings.sec_dep. Idempotent
+ * per billing (one non-cancelled FINAL invoice at a time).
+ */
+export const finalInvoiceSchema = z.object({
+  billing_id: idSchema,
+  notes: z.string().max(500).optional().default("")
+});
+
+export type FinalInvoiceInput = z.infer<typeof finalInvoiceSchema>;

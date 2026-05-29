@@ -1,7 +1,11 @@
 import { appConfig } from "./config";
 
-export function openPrintWindow(title, bodyHtml) {
-  var printWindow = window.open("", "_blank", "width=1024,height=820");
+export function openPrintWindow(title, bodyHtml, preOpened) {
+  // P1-32: callers that fetch signed URLs before printing MUST hand us a
+  // window opened synchronously inside the click handler (see openEmployeePdf /
+  // openPatientPdf). Without that, the popup blocker eats the window because
+  // window.open() runs after an await and is no longer a user-gesture.
+  var printWindow = preOpened || window.open("", "_blank", "width=1024,height=820");
   if (!printWindow) return;
   var logoHtml = appConfig.companyLogo
     ? "<img src='" + appConfig.companyLogo + "' alt='" + appConfig.companyName + " logo' class='logo-img'/>"

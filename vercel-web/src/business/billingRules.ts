@@ -31,6 +31,11 @@ export interface BillingLine {
 
 export interface BillingTotals {
   services: number;
+  /**
+   * Alias for `services` — what the UI prints as "Billed". Kept in lockstep
+   * with `services` so legacy callers reading either key get the same value.
+   */
+  billed: number;
   receipts: number;
   sec_dep: number;
   discount: number;
@@ -82,6 +87,7 @@ export function computeBillingTotals(
   const outstanding = Math.max(0, servicesTotal - receiptsTotal - discount - advance);
   return {
     services: servicesTotal,
+    billed: servicesTotal,
     receipts: receiptsTotal,
     sec_dep: sec,
     discount,

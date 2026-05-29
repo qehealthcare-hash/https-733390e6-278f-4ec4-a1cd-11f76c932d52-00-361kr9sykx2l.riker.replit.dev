@@ -1,7 +1,11 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
-import { SETTINGS_READ_ROLES } from "@/lib/api/crmRoles";
+import {
+  SETTINGS_DELETE_ROLES,
+  SETTINGS_READ_ROLES,
+  SETTINGS_WRITE_ROLES
+} from "@/lib/api/crmRoles";
 import { toServiceContext } from "@/lib/api/serviceContext";
 import { respond } from "@/lib/api/apiResultBridge";
 import { settingsService } from "@/services/settingsService";
@@ -20,7 +24,7 @@ export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor })
 });
 
 export const PUT = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager"]);
+  requireRole(actor, [...SETTINGS_WRITE_ROLES]);
   const body = await parseJsonBody(req);
   const value =
     body && Object.prototype.hasOwnProperty.call(body, "value")
@@ -31,7 +35,7 @@ export const PUT = withAuth<Params>(async (req: NextRequest, { params, actor }) 
 });
 
 export const DELETE = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin"]);
+  requireRole(actor, [...SETTINGS_DELETE_ROLES]);
   const result = await settingsService.deleteKey(params.key, toServiceContext(actor));
   return respond(result);
 });

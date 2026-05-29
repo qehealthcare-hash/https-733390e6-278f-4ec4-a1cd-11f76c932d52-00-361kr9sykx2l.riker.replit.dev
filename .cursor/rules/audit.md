@@ -1,0 +1,8 @@
+- This is a LIVE production healthcare CRM (Supabase + Next.js). Treat P0 security findings as fix-today.
+- Never generate a new ad-hoc audit. Single source of truth = HOMINAL_CRM_ENTERPRISE_QA_AUDIT_2026-05-28.md + audit-rubric.md. Do not invent findings or re-score.
+- Score = (automated checks passing / total) from tests/audit_checks.mjs — never LLM judgment.
+- Every fix ships with a regression check that FAILS before and PASSES after. One commit per finding; finding ID in the message.
+- Do not start the next finding until the current one's check passes.
+- DB: never CREATE OR REPLACE a function blind — preserve the body, insert only the required line. Apply migrations on a Supabase branch first, never directly to production.
+- If a fix has a client-side dependency, change both sides in the same commit (e.g. hh_lookup_login → boolean breaks login if the consumer isn't updated).
+- New findings from audit/red-team prompts are APPENDED to audit-rubric.md; the rubric never shrinks.

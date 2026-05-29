@@ -207,28 +207,17 @@ describe("billingService.recordPayment (Phase 16 RPC ledger)", () => {
       success: true,
       data: []
     });
-    vi.mocked(billingRepository.nextReceiptNoRpc).mockResolvedValue({
-      success: true,
-      data: "RCT2026000001"
-    });
-    vi.mocked(billingRepository.saveReceiptRpc).mockResolvedValue({
+    vi.mocked(billingRepository.saveReceiptV2Rpc).mockResolvedValue({
       success: true,
       data: {
         id: "RCPT_NEW",
         billing_id: "BILL1",
         patient_id: "PAT1",
+        receipt_no: "RCT2026000001",
         amount: 1500,
         date: "2026-05-25",
         paid_dates: ["2026-05-01", "2026-05-02"]
       }
-    });
-    vi.mocked(billingRepository.updateReceipt).mockResolvedValue({
-      success: true,
-      data: { id: "RCPT_NEW", receipt_no: "RCT2026000001" }
-    });
-    vi.mocked(billingRepository.updateBilling).mockResolvedValue({
-      success: true,
-      data: { id: "BILL1", paid_status: "PARTIAL" }
     });
     const result = await billingService.recordPayment(
       {
@@ -242,7 +231,7 @@ describe("billingService.recordPayment (Phase 16 RPC ledger)", () => {
     );
 
     expect(result.success).toBe(true);
-    expect(billingRepository.saveReceiptRpc).toHaveBeenCalled();
+    expect(billingRepository.saveReceiptV2Rpc).toHaveBeenCalled();
     expect(dutyDayRepository.markPaidToPatient).not.toHaveBeenCalled();
   });
 
@@ -267,28 +256,17 @@ describe("billingService.recordPayment (Phase 16 RPC ledger)", () => {
       success: true,
       data: []
     });
-    vi.mocked(billingRepository.nextReceiptNoRpc).mockResolvedValue({
-      success: true,
-      data: "RCT2026000002"
-    });
-    vi.mocked(billingRepository.saveReceiptRpc).mockResolvedValue({
+    vi.mocked(billingRepository.saveReceiptV2Rpc).mockResolvedValue({
       success: true,
       data: {
         id: "RCPT2",
         billing_id: "BILL1",
         patient_id: "PAT1",
+        receipt_no: "RCT2026000002",
         amount: 1000,
         date: "2026-05-25",
         paid_dates: ["2026-05-05"]
       }
-    });
-    vi.mocked(billingRepository.updateReceipt).mockResolvedValue({
-      success: true,
-      data: { id: "RCPT2", receipt_no: "RCT2026000002" }
-    });
-    vi.mocked(billingRepository.updateBilling).mockResolvedValue({
-      success: true,
-      data: { id: "BILL1", paid_status: "PARTIAL" }
     });
     const result = await billingService.recordPayment(
       {

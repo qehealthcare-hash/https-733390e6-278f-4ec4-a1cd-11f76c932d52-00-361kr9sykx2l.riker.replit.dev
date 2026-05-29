@@ -547,6 +547,11 @@ th {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* P1-30: clip + scroll long modals (e.g. patient form on 720p laptops)
+     so the action footer is always reachable. 48px of viewport breathing
+     room top-and-bottom matches .modal-backdrop's 24px padding × 2. */
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
 }
 
 .modal-wide {

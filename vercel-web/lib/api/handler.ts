@@ -60,7 +60,17 @@ export async function parseJsonBody<T extends Record<string, unknown> = Record<s
   if (text.length > MAX_JSON_BODY_BYTES) {
     throw badRequest(`Request body too large (max ${MAX_JSON_BODY_BYTES} bytes)`);
   }
-  if (!text) return {} as T;
+  // P1-34: an empty body used to be silently coerced to an empty object,
+  // which then sailed through Zod schemas where every field was optional
+  // and produced phantom no-op writes (audit log noise, stale updated_at).
+  // The cited routes (duties diary PATCH, inquiry convert) ALL require a
+  // body — and so do most POST/PATCH/PUT endpoints. Throw a real
+  // badRequest("Body required") so callers see the failure. GET-with-body
+  // is not a thing in this app; the few legitimate empty-POST routes pass
+  // an explicit minimal payload from the client.
+  if (!text) {
+    throw badRequest("Body required");
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);

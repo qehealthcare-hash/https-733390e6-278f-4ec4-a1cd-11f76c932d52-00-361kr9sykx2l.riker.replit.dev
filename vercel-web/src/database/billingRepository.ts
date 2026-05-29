@@ -11,6 +11,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 
 const BILLINGS = "hh_billings";
 const RECEIPTS = "hh_receipts";
@@ -66,12 +67,14 @@ export const billingRepository = {
         if (filters.patient_id) query = query.eq("patient_id", filters.patient_id);
         if (filters.status) query = query.eq("status", filters.status);
         if (filters.q) {
-          const term = filters.q.replace(/%/g, "");
-          query = query.or(
-            ["id", "patient_id", "status"]
-              .map((c) => `${c}.ilike.%${term}%`)
-              .join(",")
-          );
+          const term = sanitizeSearchTerm(filters.q);
+          if (term) {
+            query = query.or(
+              ["id", "patient_id", "status"]
+                .map((c) => `${c}.ilike.%${term}%`)
+                .join(",")
+            );
+          }
         }
         return query;
       },
@@ -181,6 +184,47 @@ export const billingRepository = {
   /** Legacy RPC — persists receipt + ledger side effects atomically in Postgres. */
   saveReceiptRpc(receipt: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     return callRpc<JsonRow>("hominal_save_receipt", { p_receipt: receipt }, SCOPE, opts);
+  },
+
+  /**
+   * P1-18: single atomic receipt save. Wraps `hominal_save_receipt` plus a
+   * paid_status recompute inside the same Postgres transaction so two
+   * concurrent receipts can't leave the bill in PARTIAL when it's actually
+   * PAID. Returns the receipt row augmented with the just-computed
+   * `paid_status`.
+   */
+  saveReceiptV2Rpc(receipt: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
+    return callRpc<JsonRow>(
+      "hominal_save_receipt_v2",
+      { p_receipt: receipt },
+      `${SCOPE}.saveReceiptV2Rpc`,
+      opts
+    );
+  },
+
+  /**
+   * P1-19: insert all svc rows + flip duty.billing_id in one Postgres
+   * transaction. Stops the half-billed state the JS for-loop could leave
+   * behind if any single insert raised mid-loop.
+   */
+  generateFromDutyRangeRpc(
+    billingId: string,
+    dutyIds: string[],
+    svcRows: JsonRow[],
+    actorEmail: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<{ billing_id: string; inserted: number; duties_linked: number } | null>> {
+    return callRpc<{ billing_id: string; inserted: number; duties_linked: number }>(
+      "hominal_generate_from_duty_range",
+      {
+        p_billing_id: billingId,
+        p_duty_ids: dutyIds,
+        p_svc_rows: svcRows,
+        p_actor: actorEmail
+      },
+      `${SCOPE}.generateFromDutyRangeRpc`,
+      opts
+    );
   },
 
   /**
@@ -532,6 +576,63 @@ export const billingRepository = {
   /** Hard delete — cascades to hh_invoice_lines via FK. */
   deleteInvoice(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
     return deleteRow(INVOICES, id, `${SCOPE}.deleteInvoice`, opts);
+  },
+
+  /**
+   * Atomic FINAL invoice generation: snapshots unbilled svc lines at gross,
+   * creates a Security-type receipt for min(sec_dep, gross) against the new
+   * invoice, auto-creates a Refund receipt for any deposit excess, and zeroes
+   * hh_billings.sec_dep. Idempotent per billing (duplicate=true).
+   */
+  generateFinalInvoiceRpc(
+    billingId: string,
+    actor: string,
+    notes: string,
+    opts?: DbAccess
+  ): Promise<
+    ApiResult<{
+      invoice_id: string;
+      invoice_no?: string;
+      duplicate: boolean;
+      security_receipt_id: string | null;
+      refund_id: string | null;
+      refund_amount: number;
+      sec_dep_applied: number;
+      gross: number;
+      net: number;
+      line_count?: number;
+    } | null>
+  > {
+    return callRpc(
+      "hominal_generate_final_invoice",
+      { p_billing_id: billingId, p_actor: actor, p_notes: notes },
+      `${SCOPE}.generateFinalInvoiceRpc`,
+      opts
+    );
+  },
+
+  /**
+   * Cross-duty per-billing diary cleanup. Called after every materializeDuty
+   * pass to drop phantom (out-of-IST-window) and per-day duplicate rows.
+   * Safe to invoke repeatedly.
+   */
+  dedupBillingDiaryRpc(
+    billingId: string,
+    opts?: DbAccess
+  ): Promise<
+    ApiResult<{
+      svc_phantoms_deleted: number;
+      payout_phantoms_deleted: number;
+      svc_duplicates_deleted: number;
+      payout_duplicates_deleted: number;
+    } | null>
+  > {
+    return callRpc(
+      "hominal_dedup_billing_diary",
+      { p_billing_id: billingId },
+      `${SCOPE}.dedupBillingDiaryRpc`,
+      opts
+    );
   },
 
   /** Atomic delete + receipt detach + sequence compact (Postgres RPC). */

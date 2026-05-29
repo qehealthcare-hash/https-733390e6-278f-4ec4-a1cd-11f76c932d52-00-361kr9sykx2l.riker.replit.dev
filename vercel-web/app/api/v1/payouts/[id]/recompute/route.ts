@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { PAYOUT_WRITE_ROLES } from "@/lib/api/payoutRoles";
 import { payoutService } from "@/services/payoutService";
 import { respond } from "@/lib/api/apiResultBridge";
 
@@ -15,7 +16,7 @@ export const dynamic = "force-dynamic";
  * correction made outside the service layer.
  */
 export const POST = withAuth<{ id: string }>(async (_req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Accountant"]);
+  requireRole(actor, [...PAYOUT_WRITE_ROLES]);
   const detail = await payoutService.getById(params.id, { actor });
   if (!detail.success) return respond(detail);
   const payout = detail.data!.payout;

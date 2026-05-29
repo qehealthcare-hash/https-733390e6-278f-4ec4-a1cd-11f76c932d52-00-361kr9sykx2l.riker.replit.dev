@@ -204,6 +204,7 @@ export function buildSupabaseMock(): {
     let emailFilter: string | null = null;
     const chain: Record<string, unknown> = {
       select: () => chain,
+      limit: () => chain,
       eq: (column: string, value: unknown) => {
         if (column === "is_active") activeFilter = !!value;
         return chain;
@@ -236,14 +237,44 @@ export function buildSupabaseMock(): {
     return chain;
   }
 
-  function idempotencyChain() {
-    let pendingKey: string | null = null;
-    let pendingActor: string | null = null;
+  function hhRolesChain() {
     const chain: Record<string, unknown> = {
       select: () => chain,
+      ilike: () => chain,
+      maybeSingle: async () => ({
+        data: { perms: ["patients.read", "patients.write", "billing.read"] },
+        error: null
+      })
+    };
+    return chain;
+  }
+
+  function idempotencyChain() {
+    // Reflects the two-phase reserve/complete flow that lib/api/idempotency.ts
+    // now drives (P0-3): a "pending" row is reserved with status = 0 BEFORE
+    // the handler runs and is later UPDATEd with the final response/status.
+    // The chain tracks filter state across .select/.eq/.gt so findCached,
+    // tryReservePending and completePending all share one mock.
+    let mode: "select" | "update" | null = null;
+    let pendingKey: string | null = null;
+    let pendingActor: string | null = null;
+    let statusEq: number | null = null;
+    let statusGt: number | null = null;
+    let updateValues: Record<string, unknown> = {};
+
+    const chain: Record<string, unknown> = {
+      select: () => {
+        mode = "select";
+        return chain;
+      },
       eq: (column: string, value: unknown) => {
         if (column === "key") pendingKey = String(value);
-        if (column === "actor") pendingActor = String(value);
+        else if (column === "actor") pendingActor = String(value);
+        else if (column === "status") statusEq = Number(value);
+        return chain;
+      },
+      gt: (column: string, value: unknown) => {
+        if (column === "status") statusGt = Number(value);
         return chain;
       },
       gte: () => chain,
@@ -251,26 +282,63 @@ export function buildSupabaseMock(): {
         if (!pendingKey || !pendingActor) return { data: null, error: null };
         const hit = idempotencyStore.get(`${pendingKey}|${pendingActor}`);
         if (!hit) return { data: null, error: null };
+        if (statusGt !== null && hit.status <= statusGt) return { data: null, error: null };
         return {
-          data: {
-            response: hit.response,
-            status: hit.status,
-            created_at: hit.createdAt
-          },
+          data: { response: hit.response, status: hit.status, created_at: hit.createdAt },
           error: null
         };
       },
-      upsert: async (row: Record<string, unknown>) => {
+      upsert: (
+        row: Record<string, unknown>,
+        opts?: { onConflict?: string; ignoreDuplicates?: boolean }
+      ) => {
         const key = String(row.key ?? "");
         const actor = String(row.actor ?? "");
+        const ignoreDuplicates = opts?.ignoreDuplicates === true;
+        let inserted: string | null = null;
         if (key && actor) {
-          idempotencyStore.set(`${key}|${actor}`, {
-            response: (row.response as Record<string, unknown> | null) ?? null,
-            status: (row.status as number) ?? 200,
-            createdAt: new Date().toISOString()
-          });
+          const existing = idempotencyStore.get(`${key}|${actor}`);
+          if (existing && ignoreDuplicates) {
+            inserted = null; // conflict → ON CONFLICT DO NOTHING
+          } else {
+            idempotencyStore.set(`${key}|${actor}`, {
+              response: (row.response as Record<string, unknown> | null) ?? null,
+              status: (row.status as number) ?? 200,
+              createdAt: existing?.createdAt ?? new Date().toISOString()
+            });
+            inserted = key;
+          }
         }
-        return { data: null, error: null };
+        const result = inserted !== null ? [{ key: inserted }] : [];
+        const upsertChain: Record<string, unknown> = {
+          select: () => upsertChain,
+          then: (resolve: (v: unknown) => unknown) => resolve({ data: result, error: null })
+        };
+        return upsertChain;
+      },
+      update: (row: Record<string, unknown>) => {
+        mode = "update";
+        updateValues = row;
+        return chain;
+      },
+      then: (resolve: (v: unknown) => unknown) => {
+        // Awaiting the chain after .update().eq().eq().eq() applies the update
+        // if the (key, actor, status?) filter matches the stored entry.
+        if (mode === "update" && pendingKey && pendingActor) {
+          const existing = idempotencyStore.get(`${pendingKey}|${pendingActor}`);
+          if (existing && (statusEq === null || existing.status === statusEq)) {
+            idempotencyStore.set(`${pendingKey}|${pendingActor}`, {
+              response:
+                "response" in updateValues
+                  ? ((updateValues.response as Record<string, unknown> | null) ?? null)
+                  : existing.response,
+              status:
+                "status" in updateValues ? Number(updateValues.status) : existing.status,
+              createdAt: existing.createdAt
+            });
+          }
+        }
+        return resolve({ data: null, error: null });
       },
       insert: async () => ({ data: null, error: null })
     };
@@ -298,6 +366,7 @@ export function buildSupabaseMock(): {
       order: () => chain,
       range: () => chain,
       limit: () => chain,
+      head: async () => ({ data: null, error: null, count: 0 }),
       maybeSingle: async () => ({ data: null, error: null }),
       single: async () => ({ data: null, error: null }),
       then: (resolve: (v: unknown) => unknown) => resolve({ data: [], error: null })
@@ -332,10 +401,16 @@ export function buildSupabaseMock(): {
       },
       from: (table: string) => {
         if (table === "hh_users") return hhUsersChain();
+        if (table === "hh_roles") return hhRolesChain();
         if (table === "hh_idempotency") return idempotencyChain();
         return noopChain();
       },
-      rpc: async () => ({ data: null, error: null }),
+      rpc: async (fn: string) => {
+        if (fn === "hominal_health_ping") {
+          return { data: { ok: true, ts: new Date().toISOString() }, error: null };
+        }
+        return { data: null, error: null };
+      },
       storage: {
         from: () => ({
           createSignedUploadUrl: async (path: string) => ({
@@ -464,10 +539,23 @@ export const ACTORS = {
     role: "Nurse",
     is_active: true
   } as HarnessActor,
+  /**
+   * "Unknown role" fixture (legacy name `viewer` preserved so existing
+   * RBAC matrix tests keep compiling). The role string "Viewer" is NOT
+   * in CANONICAL_ROLES — production has never had this role — but the
+   * fixture is intentionally kept to drive the route-level 403 path
+   * for any unrecognised role. The `role` field is cast through
+   * `unknown` because `HarnessActor.role` is typed as `Role` now;
+   * the cast is the explicit "yes, this is invalid on purpose" signal.
+   *
+   * If you find yourself using this fixture in a test that expects a
+   * 200, you're using the wrong fixture — pick `staff` / `nurse` /
+   * etc. instead.
+   */
   viewer: {
-    userId: "USER_VIEWER",
-    email: "viewer@hominal.test",
-    username: "viewer",
+    userId: "USER_UNKNOWN_ROLE",
+    email: "unknown-role@hominal.test",
+    username: "unknown_role",
     role: "Viewer",
     is_active: true
   } as HarnessActor

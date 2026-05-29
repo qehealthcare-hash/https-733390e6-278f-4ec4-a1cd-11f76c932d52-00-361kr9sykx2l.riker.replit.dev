@@ -30,35 +30,57 @@ export const dynamic = "force-dynamic";
 export const GET = withoutAuth(async (req: NextRequest) => {
   const ranAt = new Date().toISOString();
   const secret = process.env.CRON_SECRET || process.env.DUTY_CRON_SECRET || "";
-  const isProd =
-    process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
 
+  // Refuse to run unauthenticated in EVERY environment. Previously, when the
+  // secret was missing outside production the route ran anonymously with a
+  // synthetic Admin actor (RLS-bypassing service-role client) — anyone able
+  // to hit a preview deployment URL could trigger payout / duty-day writes
+  // against the shared Supabase project. Fail-closed everywhere.
   if (!secret) {
-    if (isProd) {
-      return respond(
-        failure(
-          "CRON_SECRET (or DUTY_CRON_SECRET) is not set in production — refusing to run unauthenticated",
-          ErrorCodes.internal,
-          { ranAt }
-        )
-      );
-    }
-  } else {
-    const header = req.headers.get("authorization") || "";
-    const legacy = req.headers.get("x-cron-secret") || "";
-    const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
-    const ok =
-      (bearer && timingSafeEqualString(bearer, secret)) ||
-      (legacy && timingSafeEqualString(legacy, secret));
-    if (!ok) {
-      return respond(failure("Cron token missing or invalid", ErrorCodes.forbidden));
-    }
+    return respond(
+      failure(
+        "CRON_SECRET (or DUTY_CRON_SECRET) is not set — refusing to run unauthenticated",
+        ErrorCodes.internal,
+        { ranAt }
+      )
+    );
   }
 
+  // Only accept the Vercel-standard Authorization: Bearer header. The legacy
+  // x-cron-secret header has been removed: it doubled the attack surface and
+  // is easier to leak in proxy logs.
+  const header = req.headers.get("authorization") || "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (!bearer || !timingSafeEqualString(bearer, secret)) {
+    return respond(failure("Cron token missing or invalid", ErrorCodes.forbidden));
+  }
+
+  // P1-9: bind the cron actor to a real service-account JWT. The previous
+  // empty accessToken made resolveClient() silently fall back to the service-
+  // role client — an *implicit* bypass that was impossible to audit. We now
+  // explicitly load SUPABASE_SERVICE_ROLE_KEY (which is itself a signed JWT
+  // issued by Supabase Auth for the service_role); resolveClient() pipes that
+  // straight through to userClient(token), so PostgREST sees a real Bearer
+  // service-role JWT, log lines show `role=service_role`, and every RPC
+  // _hh_require_role() gate runs against an attributable principal instead
+  // of "no header at all". If the JWT is missing we fail-closed.
+  const serviceJwt =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    "";
+  if (!serviceJwt) {
+    return respond(
+      failure(
+        "SUPABASE_SERVICE_ROLE_KEY is not set — cron cannot mint a service-account JWT",
+        ErrorCodes.internal,
+        { ranAt }
+      )
+    );
+  }
   const actor = {
     email: "cron@hominal.system",
     role: "Admin",
-    accessToken: ""
+    accessToken: serviceJwt
   };
   const result = await dutyService.extendActive({ actor });
   if (!result.success) {

@@ -21,11 +21,13 @@ import { ErrorCodes } from "@/types/common";
 import {
   dutySchema,
   dutyCancelSchema,
+  dutyCheckAtSchema,
   dutyListQuerySchema,
   dutyMaterializeSchema,
   dutyPartnersSchema,
   type DutyInput,
   type DutyCancelInput,
+  type DutyCheckAtInput,
   type DutyListQuery,
   type DutyMaterializeInput,
   type DutyPartnersInput,
@@ -473,27 +475,45 @@ export const dutyService = {
       const bills = await billingRepository.listBillingsByPatient(patientId, access);
       if (!bills.success) return passFailure(bills);
       const billRows = bills.data || [];
+      // P1-25: batched fetch — two round-trips instead of 2N. For a
+      // long-running patient with 80+ bills the per-bill loop spent ~6 s
+      // round-tripping at 30 ms each; the in-clause fetch lands in ~120 ms.
+      const billingIds = billRows.map((b) => String(b.id));
       let billed = 0;
       let received = 0;
       let outstanding = 0;
       let secDep = 0;
-      for (const b of billRows) {
-        const bid = String(b.id);
-        const [svc, rcpt] = await Promise.all([
-          billingRepository.listSvcByBilling(bid, access),
-          billingRepository.listActiveReceiptsByBilling(bid, access)
+      if (billingIds.length > 0) {
+        const [svcAll, rcptAll] = await Promise.all([
+          billingRepository.listSvcByBillingIds(billingIds, access),
+          billingRepository.listActiveReceiptsByBillingIds(billingIds, access)
         ]);
-        if (!svc.success) return passFailure(svc);
-        if (!rcpt.success) return passFailure(rcpt);
-        const t = computeBillingTotals({
-          services: svc.data || [],
-          receipts: rcpt.data || [],
-          secDep: Number(b.sec_dep || 0)
-        });
-        billed += t.services;
-        received += t.receipts;
-        outstanding += t.outstanding;
-        secDep += t.sec_dep;
+        if (!svcAll.success) return passFailure(svcAll);
+        if (!rcptAll.success) return passFailure(rcptAll);
+        const svcByBilling = new Map<string, JsonRow[]>();
+        for (const row of svcAll.data || []) {
+          const key = String(row.billing_id || "");
+          if (!svcByBilling.has(key)) svcByBilling.set(key, []);
+          svcByBilling.get(key)!.push(row);
+        }
+        const rcptByBilling = new Map<string, JsonRow[]>();
+        for (const row of rcptAll.data || []) {
+          const key = String(row.billing_id || "");
+          if (!rcptByBilling.has(key)) rcptByBilling.set(key, []);
+          rcptByBilling.get(key)!.push(row);
+        }
+        for (const b of billRows) {
+          const bid = String(b.id);
+          const t = computeBillingTotals({
+            services: svcByBilling.get(bid) || [],
+            receipts: rcptByBilling.get(bid) || [],
+            secDep: Number(b.sec_dep || 0)
+          });
+          billed += t.services;
+          received += t.receipts;
+          outstanding += t.outstanding;
+          secDep += t.sec_dep;
+        }
       }
       patientSummary = {
         patient_id: patientId,
@@ -885,9 +905,13 @@ export const dutyService = {
 
   async checkIn(
     id: string,
-    at: string | undefined,
+    rawInput: unknown,
     ctx: DutyServiceContext
   ): Promise<ApiResult<DutyApiRow>> {
+    const parsed = parseInput(dutyCheckAtSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const at = (parsed.data as DutyCheckAtInput).at;
+
     const existing = await loadDuty(id, ctx);
     if (!existing.success) return passFailure(existing);
     const access = dbAccess(ctx);
@@ -926,9 +950,13 @@ export const dutyService = {
 
   async checkOut(
     id: string,
-    at: string | undefined,
+    rawInput: unknown,
     ctx: DutyServiceContext
   ): Promise<ApiResult<DutyApiRow>> {
+    const parsed = parseInput(dutyCheckAtSchema, rawInput);
+    if (!parsed.success) return passFailure(parsed);
+    const at = (parsed.data as DutyCheckAtInput).at;
+
     const existing = await loadDuty(id, ctx);
     if (!existing.success) return passFailure(existing);
     const access = dbAccess(ctx);

@@ -16,11 +16,14 @@ export default function LoginPage() {
 
   useEffect(
     function () {
-      if (!auth.loading && auth.session) {
+      if (auth.loading) return;
+      if (!auth.session) return;
+      if (auth.profileLoading) return;
+      if (auth.profile) {
         router.replace("/dashboard");
       }
     },
-    [auth.loading, auth.session, router]
+    [auth.loading, auth.session, auth.profile, auth.profileLoading, router]
   );
 
   async function handleSubmit(event) {
@@ -29,7 +32,6 @@ export default function LoginPage() {
     setError("");
     try {
       await auth.signIn(email.trim(), password);
-      router.replace("/dashboard");
     } catch (signInError) {
       setError(signInError.message || "Sign-in failed");
     } finally {
@@ -37,7 +39,7 @@ export default function LoginPage() {
     }
   }
 
-  if (auth.loading) {
+  if (auth.loading || (auth.session && auth.profileLoading)) {
     return (
       <div className="login-wrap">
         <div className="panel login-card">Loading…</div>
@@ -55,8 +57,8 @@ export default function LoginPage() {
         </div>
         <form className="stack" onSubmit={handleSubmit}>
           <div className="field">
-            <label>Email</label>
-            <input
+            <label htmlFor="login-email-1">Email</label>
+            <input id="login-email-1"
               type="email"
               autoComplete="username"
               value={email}
@@ -67,8 +69,8 @@ export default function LoginPage() {
             />
           </div>
           <div className="field">
-            <label>Password</label>
-            <input
+            <label htmlFor="login-password-2">Password</label>
+            <input id="login-password-2"
               type="password"
               autoComplete="current-password"
               value={password}
@@ -79,6 +81,9 @@ export default function LoginPage() {
             />
           </div>
           {error ? <div className="error-text">{error}</div> : null}
+          {!error && auth.session && auth.profileError ? (
+            <div className="error-text">{auth.profileError}</div>
+          ) : null}
           <button className="button primary" type="submit" disabled={busy}>
             {busy ? "Signing in…" : "Sign in"}
           </button>

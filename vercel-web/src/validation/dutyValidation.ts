@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { idSchema, isoDate, positiveInt, shiftTypeSchema } from "@/validation/commonValidation";
+import { idSchema, isoDateTime, positiveInt, shiftTypeSchema } from "@/validation/commonValidation";
 
 /** Lifecycle states a duty can hold. */
 export const DUTY_STATUSES = [
@@ -35,14 +35,14 @@ export const dutySchema = z
     service_type: z.string().optional().default(""),
     service_name: z.string().trim().max(120).optional().default(""),
     shift_type: shiftTypeSchema.default("DAY"),
-    start_at: isoDate,
+    start_at: isoDateTime,
     /**
      * Optional. Omit (or pass blank/null) to mark the duty as open-ended —
      * the diary materializer will keep adding per-day charges and payouts
      * to the patient's Active bill until the bill is closed. When given,
      * the duty stops on this date even if the bill remains open.
      */
-    end_at: isoDate.optional(),
+    end_at: isoDateTime.optional(),
     status: z.enum(DUTY_STATUSES).default("SCHEDULED"),
     cancel_reason: z.string().optional().default(""),
     notes: z.string().optional().default(""),
@@ -86,7 +86,7 @@ export const dutySchema = z
 
 /** PATCH /duties/[id]/check-in or /check-out body. */
 export const dutyCheckAtSchema = z.object({
-  at: isoDate.optional()
+  at: isoDateTime.optional()
 });
 
 /** DELETE /duties/[id] body (or query) — explicit reason. */

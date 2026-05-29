@@ -4,7 +4,12 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    setupFiles: ["src/test/vitest.setup.ts"],
+    // M3-H3: include `lib/` so the period helper test (and any future
+    // co-located lib-level test) gets picked up. Tests under `src/` stay
+    // the dominant convention; `lib/` is opt-in by living next to the
+    // file it exercises (e.g. `lib/__tests__/period.test.ts`).
+    include: ["src/**/*.test.ts", "lib/**/*.test.ts"],
     env: {
       API_AUDIT_DISABLED: "true",
       SUPABASE_URL: "https://example.supabase.co",

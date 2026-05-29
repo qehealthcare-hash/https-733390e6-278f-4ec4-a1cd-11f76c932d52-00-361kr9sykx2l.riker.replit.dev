@@ -706,6 +706,8 @@
     return parts.length ? "?" + parts.join("&") : "";
   }
 
+  // M10-G: read-only report helpers — no sync routes. Dashboard uses
+  // DASHBOARD_READ_ROLES; financial totals use REPORT_READ_ROLES.
   var reports = {
     /** GET /reports/dashboard — KPI bundle for period / custom range. */
     dashboard: function (params) {

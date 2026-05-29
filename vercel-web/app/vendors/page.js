@@ -173,37 +173,37 @@ export default function VendorsPage() {
             <form className="stack" onSubmit={handleSubmit}>
               <div className="grid-2">
                 <div className="field">
-                  <label>Vendor name</label>
-                  <input value={form.name} onChange={function (event) { updateField("name", event.target.value); }} required />
+                  <label htmlFor="vendors-vendor-name-1">Vendor name</label>
+                  <input id="vendors-vendor-name-1" value={form.name} onChange={function (event) { updateField("name", event.target.value); }} required />
                 </div>
                 <div className="field">
-                  <label>Contact person</label>
-                  <input value={form.contact} onChange={function (event) { updateField("contact", event.target.value); }} />
+                  <label htmlFor="vendors-contact-person-2">Contact person</label>
+                  <input id="vendors-contact-person-2" value={form.contact} onChange={function (event) { updateField("contact", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Phone</label>
-                  <input value={form.phone} onChange={function (event) { updateField("phone", event.target.value); }} />
+                  <label htmlFor="vendors-phone-3">Phone</label>
+                  <input id="vendors-phone-3" value={form.phone} onChange={function (event) { updateField("phone", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>Email</label>
-                  <input type="email" value={form.email} onChange={function (event) { updateField("email", event.target.value); }} />
+                  <label htmlFor="vendors-email-4">Email</label>
+                  <input id="vendors-email-4" type="email" value={form.email} onChange={function (event) { updateField("email", event.target.value); }} />
                 </div>
                 <div className="field">
-                  <label>GST number</label>
-                  <input value={form.gst} onChange={function (event) { updateField("gst", event.target.value.toUpperCase()); }} />
+                  <label htmlFor="vendors-gst-number-5">GST number</label>
+                  <input id="vendors-gst-number-5" value={form.gst} onChange={function (event) { updateField("gst", event.target.value.toUpperCase()); }} />
                 </div>
                 <div className="field">
-                  <label>PAN</label>
-                  <input value={form.pan} onChange={function (event) { updateField("pan", event.target.value.toUpperCase()); }} />
+                  <label htmlFor="vendors-pan-6">PAN</label>
+                  <input id="vendors-pan-6" value={form.pan} onChange={function (event) { updateField("pan", event.target.value.toUpperCase()); }} />
                 </div>
               </div>
               <div className="field">
-                <label>Address</label>
-                <textarea rows="2" value={form.addr} onChange={function (event) { updateField("addr", event.target.value); }} />
+                <label htmlFor="vendors-address-7">Address</label>
+                <textarea id="vendors-address-7" rows="2" value={form.addr} onChange={function (event) { updateField("addr", event.target.value); }} />
               </div>
               <div className="field">
-                <label>City</label>
-                <input value={form.city} onChange={function (event) { updateField("city", event.target.value); }} />
+                <label htmlFor="vendors-city-8">City</label>
+                <input id="vendors-city-8" value={form.city} onChange={function (event) { updateField("city", event.target.value); }} />
               </div>
               {error ? <div className="error-text">{error}</div> : null}
               {message ? <div className="success-text">{message}</div> : null}
@@ -221,23 +221,23 @@ export default function VendorsPage() {
           <ModuleShell title="Vendor directory" description="Search by name, contact, phone or GST.">
             <div className="toolbar">
               <div className="field">
-                <label>Search</label>
-                <input
+                <label htmlFor="vendors-search-9">Search</label>
+                <input id="vendors-search-9"
                   value={search}
                   onChange={function (event) { setSearch(event.target.value); }}
                   placeholder="Name, contact, phone, GST"
                 />
               </div>
               <div className="field">
-                <label>City</label>
-                <input
+                <label htmlFor="vendors-city-10">City</label>
+                <input id="vendors-city-10"
                   value={city}
                   onChange={function (event) { setCity(event.target.value); }}
                   placeholder="Filter by city"
                 />
               </div>
               <div className="field">
-                <label>&nbsp;</label>
+                <span aria-hidden="true">&nbsp;</span>
                 <button className="button secondary" type="button" onClick={reload}>
                   Refresh
                 </button>

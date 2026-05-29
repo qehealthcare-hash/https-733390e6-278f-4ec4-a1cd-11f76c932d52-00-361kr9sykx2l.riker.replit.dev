@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
-import { REGISTRY_READ_ROLES } from "@/lib/api/crmRoles";
+import { PATIENT_READ_ROLES, PATIENT_WRITE_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { patientService } from "@/services/patientService";
 import { respond } from "@/lib/api/apiResultBridge";
@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, [...REGISTRY_READ_ROLES]);
+  requireRole(actor, PATIENT_READ_ROLES);
   const url = new URL(req.url);
   const query = {
     limit: url.searchParams.get("limit") ?? undefined,
@@ -30,7 +30,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff", "Executive"]);
+  requireRole(actor, PATIENT_WRITE_ROLES);
   return withIdempotency(req, actor, { route: "POST /patients" }, async () => {
     const body = await parseJsonBody(req);
     const result = await patientService.create(body, { actor });

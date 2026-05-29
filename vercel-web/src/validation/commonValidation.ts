@@ -27,9 +27,67 @@ export const optionalEmail = z
   )
   .transform((v) => (v ? String(v).toLowerCase() : ""));
 
-export const idSchema = z.string().trim().min(1).max(64);
+/**
+ * Strict identifier shape. Restricted to URL-safe alphanumerics + `_` / `-`.
+ *
+ * Why so strict: every CRM identifier ultimately flows into a PostgREST
+ * `.or(\`col.eq.${id},...\`)` filter or path param. PostgREST treats `,`
+ * `(` `)` `:` `.` as syntax. An id allowed to contain those characters
+ * could inject extra `or` / `and` predicates and bypass filters at the DB
+ * layer (RLS still applies, but row-level filters do not). Every existing
+ * id in the live DB (patients, employees, billings, receipts, invoices,
+ * duties, payouts, inquiries, doctors, vendors, users — 299 rows audited
+ * 28 May 2026) already matches this regex.
+ */
+export const idSchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9_-]{1,64}$/, "Invalid id format");
 
-export const isoDate = z.string().trim().min(1).refine((v) => !Number.isNaN(Date.parse(v)), "Invalid date");
+// P1-26: previous isoDate was `refine(Date.parse)` — that accepts almost
+// anything: "12 jan", "2026/01/02", trailing junk after a valid prefix.
+// Some downstream queries were doing string compares (`<= today_str`) on
+// these values and silently returning the wrong window. Lock it down to a
+// strict YYYY-MM-DD shape with a sanity-check on the calendar parts, and
+// re-verify the trip through Date so leap-day garbage like 2026-02-31
+// can't land in the DB.
+export const isoDate = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "isoDate must be YYYY-MM-DD")
+  .refine((v) => {
+    const [y, m, d] = v.split("-").map((n) => Number.parseInt(n, 10));
+    if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return (
+      dt.getUTCFullYear() === y &&
+      dt.getUTCMonth() === m - 1 &&
+      dt.getUTCDate() === d
+    );
+  }, "Invalid calendar date");
+
+/**
+ * ISO-8601 instant for duty windows, attendance clock-in/out, etc.
+ * Accepts `YYYY-MM-DD` or a strict `YYYY-MM-DDThh:mm…` form (with optional
+ * seconds / timezone). Rejects loose `Date.parse` junk like "12 jan".
+ */
+export const isoDateTime = z
+  .string()
+  .trim()
+  .refine((v) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      const [y, m, d] = v.split("-").map((n) => Number.parseInt(n, 10));
+      if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      return (
+        dt.getUTCFullYear() === y &&
+        dt.getUTCMonth() === m - 1 &&
+        dt.getUTCDate() === d
+      );
+    }
+    if (!/^\d{4}-\d{2}-\d{2}T/.test(v)) return false;
+    return !Number.isNaN(Date.parse(v));
+  }, "isoDateTime must be YYYY-MM-DD or ISO-8601 datetime");
 
 /**
  * Map of three-letter English month abbreviations → 1-12. Used by the legacy

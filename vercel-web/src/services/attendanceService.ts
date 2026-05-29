@@ -1516,7 +1516,7 @@ async function syncScheduledDutyCheckIn(
   if (!duty.success || !duty.data) return;
   const dutyStatus = String(duty.data.status || "").toUpperCase();
   if (dutyStatus !== "SCHEDULED") return;
-  await dutyService.checkIn(dutyId, checkInAt, ctx as { actor: ActorLike }).catch((err) => {
+  await dutyService.checkIn(dutyId, { at: checkInAt }, ctx as { actor: ActorLike }).catch((err) => {
     console.error("[attendanceService] duty check-in sync failed", err);
   });
 }

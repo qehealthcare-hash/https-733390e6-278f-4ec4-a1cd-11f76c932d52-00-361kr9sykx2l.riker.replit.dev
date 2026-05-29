@@ -11,9 +11,13 @@ export function crmTodayIso(now: Date = new Date()): string {
   }).format(now);
 }
 
-/** End-of CRM calendar day as an ISO string used by materialize clipping. */
+/** End-of CRM calendar day as an ISO string (IST offset) used by materialize
+ * clipping. Returns a real IST end-of-day timestamp so that downstream
+ * conversions to local calendar dates land on TODAY (IST), not tomorrow.
+ * The previous `...T23:59:59.999Z` form was UTC midnight-minus-1ms which
+ * is already 05:29 IST on the NEXT day. */
 export function crmTodayEndIso(now: Date = new Date()): string {
-  return `${crmTodayIso(now)}T23:59:59.999Z`;
+  return `${crmTodayIso(now)}T23:59:59.999+05:30`;
 }
 
 /** Start of a CRM calendar day as ISO (IST offset). */

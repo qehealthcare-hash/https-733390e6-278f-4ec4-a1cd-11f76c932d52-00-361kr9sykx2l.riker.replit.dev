@@ -14,6 +14,9 @@ export const dynamic = "force-dynamic";
  *
  * Atomically replaces the entire `hh_payout_charges` slice for one
  * `svc_key`. Audited. Body shape: `{ svc_key, rows: [...] }`.
+ *
+ * M9-G: consumed by `public/lib/legacy-api.js` (`payoutCharges.replace`).
+ * There is no `POST /payouts/sync` — ledger rows use ensure/adjust/pay flows.
  */
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, [...PAYOUT_WRITE_ROLES]);

@@ -1,0 +1,140 @@
+{
+  "slug": "ibps-quant-mock",
+  "title": "IBPS Quant — 10-Question Mock",
+  "description": "Mix of simplification, percentage, ratio, and number series — the bread and butter of IBPS Clerk/PO prelims.",
+  "category": "banking",
+  "tags": ["ibps", "prelims", "quant"],
+  "estimatedMinutes": 15,
+  "questions": [
+    {
+      "id": "q1",
+      "topic": "Simplification",
+      "prompt": "48% of 250 + 12% of 500 = ?",
+      "options": [
+        { "id": "a", "label": "180" },
+        { "id": "b", "label": "192" },
+        { "id": "c", "label": "200" },
+        { "id": "d", "label": "168" }
+      ],
+      "correctOptionId": "a",
+      "explanation": "48% of 250 = 120; 12% of 500 = 60; total = 180."
+    },
+    {
+      "id": "q2",
+      "topic": "Percentage",
+      "prompt": "A number is increased by 20% and then decreased by 20%. The net change is",
+      "options": [
+        { "id": "a", "label": "No change" },
+        { "id": "b", "label": "4% increase" },
+        { "id": "c", "label": "4% decrease" },
+        { "id": "d", "label": "2% decrease" }
+      ],
+      "correctOptionId": "c",
+      "explanation": "Multiplier: 1.2 × 0.8 = 0.96 → 4% decrease. Classic trap question."
+    },
+    {
+      "id": "q3",
+      "topic": "Ratio",
+      "prompt": "A : B = 3 : 5 and B : C = 2 : 3. Then A : C is",
+      "options": [
+        { "id": "a", "label": "2 : 5" },
+        { "id": "b", "label": "6 : 15" },
+        { "id": "c", "label": "2 : 3" },
+        { "id": "d", "label": "9 : 10" }
+      ],
+      "correctOptionId": "a",
+      "explanation": "A:B:C = 6:10:15 → A:C = 6:15 = 2:5."
+    },
+    {
+      "id": "q4",
+      "topic": "Number series",
+      "prompt": "Find the next term: 2, 6, 12, 20, 30, ?",
+      "options": [
+        { "id": "a", "label": "40" },
+        { "id": "b", "label": "42" },
+        { "id": "c", "label": "44" },
+        { "id": "d", "label": "38" }
+      ],
+      "correctOptionId": "b",
+      "explanation": "Differences: +4, +6, +8, +10 → next +12 → 30 + 12 = 42."
+    },
+    {
+      "id": "q5",
+      "topic": "Profit & loss",
+      "prompt": "CP = ₹400, profit 25%. SP is",
+      "options": [
+        { "id": "a", "label": "₹450" },
+        { "id": "b", "label": "₹500" },
+        { "id": "c", "label": "₹525" },
+        { "id": "d", "label": "₹480" }
+      ],
+      "correctOptionId": "b",
+      "explanation": "SP = 400 × 1.25 = ₹500."
+    },
+    {
+      "id": "q6",
+      "topic": "Time & work",
+      "prompt": "A can finish a work in 12 days, B in 18 days. Together they take",
+      "options": [
+        { "id": "a", "label": "7.2 days" },
+        { "id": "b", "label": "6 days" },
+        { "id": "c", "label": "8 days" },
+        { "id": "d", "label": "15 days" }
+      ],
+      "correctOptionId": "a",
+      "explanation": "Combined rate 1/12 + 1/18 = 5/36 → time = 36/5 = 7.2 days."
+    },
+    {
+      "id": "q7",
+      "topic": "Percentage",
+      "prompt": "If 16⅔% of a number is 90, the number is",
+      "options": [
+        { "id": "a", "label": "540" },
+        { "id": "b", "label": "450" },
+        { "id": "c", "label": "5400" },
+        { "id": "d", "label": "15" }
+      ],
+      "correctOptionId": "a",
+      "explanation": "16⅔% = 1/6 → number = 90 × 6 = 540. Or use x% of y = y% of x: 90 of 16⅔% = 15."
+    },
+    {
+      "id": "q8",
+      "topic": "Simplification",
+      "prompt": "√(0.16) + √(0.09) = ?",
+      "options": [
+        { "id": "a", "label": "0.7" },
+        { "id": "b", "label": "0.5" },
+        { "id": "c", "label": "0.25" },
+        { "id": "d", "label": "1.3" }
+      ],
+      "correctOptionId": "a",
+      "explanation": "0.4 + 0.3 = 0.7."
+    },
+    {
+      "id": "q9",
+      "topic": "Average",
+      "prompt": "Average of 5 numbers is 24. If one number 30 is replaced by 18, the new average is",
+      "options": [
+        { "id": "a", "label": "22.4" },
+        { "id": "b", "label": "21.6" },
+        { "id": "c", "label": "23.2" },
+        { "id": "d", "label": "22" }
+      ],
+      "correctOptionId": "b",
+      "explanation": "Sum drops by 12 → new sum 108 → average 108/5 = 21.6."
+    },
+    {
+      "id": "q10",
+      "topic": "Speed trick",
+      "prompt": "34 × 11 = ? (use the split-and-add trick)",
+      "options": [
+        { "id": "a", "label": "374" },
+        { "id": "b", "label": "364" },
+        { "id": "c", "label": "384" },
+        { "id": "d", "label": "354" }
+      ],
+      "correctOptionId": "a",
+      "explanation": "3 | (3+4) | 4 → 374. See our blog post on multiplying by 11."
+    }
+  ]
+}

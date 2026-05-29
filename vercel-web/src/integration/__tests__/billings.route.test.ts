@@ -82,8 +82,12 @@ describe("GET /api/v1/billings", () => {
     expect(m.list).not.toHaveBeenCalled();
   });
 
-  it("permits Viewer (read-only role)", async () => {
-    setActor(ACTORS.viewer);
+  // M2-H1: previously asserted Viewer (a non-existent role) could read
+  // billings. After H1 removed the dead "Viewer" string, this test now
+  // exercises the most read-only legitimate role — Accountant — which
+  // is the actual production read-only persona in BILLING_READ_ROLES.
+  it("permits Accountant (read-only billing role)", async () => {
+    setActor(ACTORS.accountant);
     m.list.mockResolvedValue({ success: true, data: { rows: [], total: 0 } });
     const req = makeRequest("GET", "/api/v1/billings?limit=5&q=anita");
     const res = await BillingsGet(req, ctx({}));
@@ -92,6 +96,14 @@ describe("GET /api/v1/billings", () => {
     const [query] = m.list.mock.calls[0];
     expect(query.q).toBe("anita");
     expect(query.limit).toBe("5");
+  });
+
+  it("denies an unknown role (M2-H1 regression test)", async () => {
+    setActor(ACTORS.viewer);
+    const req = makeRequest("GET", "/api/v1/billings");
+    const res = await BillingsGet(req, ctx({}));
+    await expectErrorEnvelope(res, 403, "forbidden");
+    expect(m.list).not.toHaveBeenCalled();
   });
 
   it("uses listByPatient when patient_id is present", async () => {
@@ -182,8 +194,10 @@ describe("Billing receipts endpoints", () => {
     vi.clearAllMocks();
   });
 
-  it("GET returns receipts envelope for Viewer", async () => {
-    setActor(ACTORS.viewer);
+  // M2-H1: was "for Viewer" (a role that never existed). Accountant is
+  // the canonical read-only billing persona.
+  it("GET returns receipts envelope for Accountant", async () => {
+    setActor(ACTORS.accountant);
     m.listReceiptsForBilling.mockResolvedValue({
       success: true,
       data: [{ id: "RCT1", amount: 100 }]
@@ -229,8 +243,11 @@ describe("Invoice endpoints", () => {
     vi.clearAllMocks();
   });
 
-  it("GET list returns invoice envelope for any reader", async () => {
-    setActor(ACTORS.viewer);
+  // M2-H1: was "for any reader" using Viewer fixture. Switched to Staff
+  // — the lowest-tier role in BILLING_READ_ROLES — to assert the same
+  // intent (read-only access works for the broad reader cohort).
+  it("GET list returns invoice envelope for Staff", async () => {
+    setActor(ACTORS.staff);
     m.listInvoices.mockResolvedValue({
       success: true,
       data: [
@@ -296,8 +313,10 @@ describe("Invoice endpoints", () => {
     expect(m.cancelInvoice).not.toHaveBeenCalled();
   });
 
+  // M2-H1: was using the Viewer fixture; switched to Staff so the test
+  // exercises a real role in BILLING_READ_ROLES.
   it("GET single invoice returns envelope", async () => {
-    setActor(ACTORS.viewer);
+    setActor(ACTORS.staff);
     m.getInvoice.mockResolvedValue({
       success: true,
       data: { id: "INV1", lines: [], receipts: [] }

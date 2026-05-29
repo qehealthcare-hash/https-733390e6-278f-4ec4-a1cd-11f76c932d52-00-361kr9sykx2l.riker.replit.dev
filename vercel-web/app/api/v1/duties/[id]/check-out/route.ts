@@ -1,10 +1,9 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { DUTY_CHECK_IN_ROLES } from "@/business/rbac";
 import { dutyService } from "@/services/dutyService";
 import { respond } from "@/lib/api/apiResultBridge";
-import { parseInput } from "@/validation/parseValidation";
-import { dutyCheckAtSchema } from "@/validation/dutyValidation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,10 +11,8 @@ export const dynamic = "force-dynamic";
 type Params = { id: string };
 
 export const POST = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff", "Nurse"]);
+  requireRole(actor, DUTY_CHECK_IN_ROLES);
   const body = await parseJsonBody(req);
-  const parsed = parseInput(dutyCheckAtSchema, body);
-  if (!parsed.success) return respond(parsed);
-  const result = await dutyService.checkOut(params.id, parsed.data?.at, { actor });
+  const result = await dutyService.checkOut(params.id, body, { actor });
   return respond(result);
 });

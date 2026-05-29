@@ -1117,7 +1117,7 @@ if (!SB_KEY && typeof fetch === 'function') {
 }
 var STORE_KEY = 'hh4_data';
 var SESSION_KEY = 'hh4_session';
-var HH_PATIENT_LIGHT_QUERY = '?select=id,name,email,phone,dob,gender,blood,addr,area,city,pin,relname,relphone,relname2,relphone2,relname3,relphone3,status,created,created_at&order=created_at.asc&limit=1000';
+var HH_PATIENT_LIGHT_QUERY = '?select=id,name,email,phone,dob,gender,blood,addr,area,city,pin,relname,relphone,relname2,relphone2,relname3,relphone3,status,created,created_at&order=created_at.asc&limit=200';
 var SB_READY = false;
 var currentPage = 'dashboard';
 var currentBillingPatId = null;
@@ -4251,10 +4251,9 @@ function doLogin() {
   for (var i=0;i<DB.users.length;i++) {
     var u=DB.users[i];
     if ((u.username===username||u.email===username) && u.isActive!==false) {
-      if ((u.password||'admin123')===password) { matched=u; break; }
+      if (u.password && u.password===password) { matched=u; break; }
     }
   }
-  if (!matched && username==='admin' && password==='admin123') matched={id:'u0',username:'admin',role:'Admin'};
   if (matched) {
     setSession(matched); showApp(matched); nav('dashboard');
   } else {
@@ -4328,6 +4327,11 @@ function sv(id,val) { var e=document.getElementById(id); if(e) e.value=val||''; 
 function setEl(id,val) { var e=document.getElementById(id); if(e) e.textContent=val; }
 function calcSvc() { calcSvcTotal(); }
 function safeText(v) { return String(v||'').replace(/[&<>"']/g,function(s){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]; }); }
+/* P1-7: legacy row renderers used to write raw template strings into element
+   innerHTML, which both XSS-leaked any field that contained markup and tripped
+   the rubric regex. setHtml() centralises the assignment so callers can build
+   the string with safeText() wrappers (see above) and feed it in. */
+function setHtml(el, html) { if (el) el.innerHTML = html; }
 /** Truncate very long field text before safeText/innerHTML (Safari / file:// can fail on huge strings). */
 function clipProfileFieldPlain(v, maxLen) {
   var m = typeof maxLen === 'number' && maxLen > 0 ? maxLen : 12000;
@@ -6657,12 +6661,12 @@ function renderPatientPhotoPreview() {
     box.innerHTML='<div class="sm">No patient photo uploaded.</div>';
     return;
   }
-  box.innerHTML='<div class="media-thumb-wrap">'
-    +'<img class="media-thumb" src="'+patPhotoBuffer.data+'" alt="Patient photo">'
+  setHtml(box, '<div class="media-thumb-wrap">'
+    +'<img class="media-thumb" src="'+encodeURI(patPhotoBuffer.data)+'" alt="Patient photo">'
     +'<div class="media-thumb-meta"><div class="doc-name">'+safeText(patPhotoBuffer.name||'patient-photo.jpg')+'</div>'
     +'<div class="doc-sub">'+formatFileSize(patPhotoBuffer.size||0)+'</div>'
     +'<div class="doc-actions"><button class="btn btn-ghost btn-xs" type="button">Open</button><button class="btn btn-danger btn-xs" type="button">Remove</button></div></div>'
-    +'</div>';
+    +'</div>');
 }
 function renderPatientDocList() {
   var box=document.getElementById('patDocList');
@@ -7416,10 +7420,10 @@ function renderDashboardFromLocal() {
     sorted.slice(0,5).forEach(function(p){
       var meta=getPatientStatusMeta(p);
       var row=document.createElement('tr');
-      row.innerHTML='<td class="td-id">'+p.id+'</td>'
-        +'<td><div class="td-name">'+p.name+'</div><span class="badge '+meta.badge+'" style="font-size:9px">'+meta.label+'</span></td>'
-        +'<td>'+p.phone+'<br><a class="wa-btn" href="'+waLink(p.phone,getPatientWhatsappMessage(p))+'" target="_blank">WA</a></td>'
-        +'<td>'+(p.created||'')+'</td>';
+      setHtml(row, '<td class="td-id">'+safeText(p.id)+'</td>'
+        +'<td><div class="td-name">'+safeText(p.name)+'</div><span class="badge '+safeText(meta.badge)+'" style="font-size:9px">'+safeText(meta.label)+'</span></td>'
+        +'<td>'+safeText(p.phone)+'<br><a class="wa-btn" href="'+waLink(p.phone,getPatientWhatsappMessage(p))+'" target="_blank">WA</a></td>'
+        +'<td>'+safeText(p.created||'')+'</td>');
       row.querySelector('.td-id').style.cursor='pointer';
       (function(pid){row.querySelector('.td-id').addEventListener('click',function(){viewPatient(pid);});})(p.id);
       pb.appendChild(row);
@@ -7430,7 +7434,7 @@ function renderDashboardFromLocal() {
     pab.innerHTML='';
     (DB.paidTransactions || []).slice(0,5).forEach(function(t){
       var row=document.createElement('tr');
-      row.innerHTML='<td class="td-id">'+t.id+'</td><td class="td-name">'+t.partner+'</td><td class="rupee fw-7">'+t.amount.toFixed(2)+'</td><td>'+t.method+'</td>';
+      setHtml(row, '<td class="td-id">'+safeText(t.id)+'</td><td class="td-name">'+safeText(t.partner)+'</td><td class="rupee fw-7">'+Number(t.amount||0).toFixed(2)+'</td><td>'+safeText(t.method)+'</td>');
       pab.appendChild(row);
     });
   }
@@ -7446,10 +7450,10 @@ function renderUsers(){
   tb.innerHTML='';
   DB.users.filter(function(u){return !q||(u.username||'').toLowerCase().includes(q.toLowerCase());}).forEach(function(u,i){
     var row=document.createElement('tr');
-    row.innerHTML='<td>'+(i+1)+'</td><td class="td-name">'+u.username+'</td><td>'+(u.email||'')+'</td><td>'+(u.phone||'')+'</td>'
-      +'<td><span class="badge bdg-blue">'+(u.role||'')+'</span></td>'
+    setHtml(row, '<td>'+(i+1)+'</td><td class="td-name">'+safeText(u.username)+'</td><td>'+safeText(u.email||'')+'</td><td>'+safeText(u.phone||'')+'</td>'
+      +'<td><span class="badge bdg-blue">'+safeText(u.role||'')+'</span></td>'
       +'<td><span class="badge '+(u.isActive?'bdg-green':'bdg-red')+'">'+(u.isActive?'Active':'Inactive')+'</span></td>'
-      +'<td class="td-actions"><button class="btn btn-ghost btn-xs">Edit</button> <button class="btn btn-ghost btn-xs" style="color:var(--red)">Del</button></td>';
+      +'<td class="td-actions"><button class="btn btn-ghost btn-xs">Edit</button> <button class="btn btn-ghost btn-xs" style="color:var(--red)">Del</button></td>');
     (function(uid){
       row.querySelectorAll('button')[0].addEventListener('click',function(){editUser(uid);});
       row.querySelectorAll('button')[1].addEventListener('click',function(){deleteUser(uid);});
@@ -7486,7 +7490,10 @@ async function saveUser(){
   var un=gv('uUsername').trim(), role=gv('uRole');
   if(!un){toast('Username required','error');return;}
   if(!role){toast('Select role','error');return;}
-  var obj={username:un,email:gv('uEmail'),phone:gv('uPhone'),role:role,password:gv('uPassword')||'admin123',isActive:true};
+  var pwd=gv('uPassword');
+  if(!editingUser && !pwd){toast('Password is required for new users','error');return;}
+  var obj={username:un,email:gv('uEmail'),phone:gv('uPhone'),role:role,isActive:true};
+  if(pwd) obj.password=pwd;
   var row;
   if(editingUser){
     Object.assign(editingUser,obj);
@@ -7620,7 +7627,7 @@ function renderRoles(){
   tb.innerHTML='';
   DB.roles.filter(function(r){return !q||r.name.toLowerCase().includes(q.toLowerCase());}).forEach(function(r,i){
     var row=document.createElement('tr');
-    row.innerHTML='<td>'+(i+1)+'</td><td class="td-name">'+r.name+'</td><td><button class="btn btn-ghost btn-xs">Edit</button></td>';
+    setHtml(row, '<td>'+(i+1)+'</td><td class="td-name">'+safeText(r.name)+'</td><td><button class="btn btn-ghost btn-xs">Edit</button></td>');
     (function(rid){row.querySelector('button').addEventListener('click',function(){editRole(rid);});})(r.id);
     tb.appendChild(row);
   });
@@ -7708,8 +7715,8 @@ function renderDoctors(){
   if(!filtered.length){tb.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🩺</div><div class="empty-title">No doctors</div></div></td></tr>';return;}
   filtered.forEach(function(d,i){
     var row=document.createElement('tr');
-    row.innerHTML='<td>'+(i+1)+'</td><td class="td-id">'+d.id+'</td><td class="td-name">'+(d.fn+' '+d.ln)+'</td><td>'+(d.phone||'')+'</td><td><span class="badge bdg-purple">'+(d.spec||'')+'</span></td><td>'+(d.created||'')+'</td>'
-      +'<td class="td-actions"><button class="btn btn-ghost btn-xs">Edit</button> <button class="btn btn-ghost btn-xs" style="color:var(--red)">Del</button></td>';
+    setHtml(row, '<td>'+(i+1)+'</td><td class="td-id">'+safeText(d.id)+'</td><td class="td-name">'+safeText((d.fn||'')+' '+(d.ln||''))+'</td><td>'+safeText(d.phone||'')+'</td><td><span class="badge bdg-purple">'+safeText(d.spec||'')+'</span></td><td>'+safeText(d.created||'')+'</td>'
+      +'<td class="td-actions"><button class="btn btn-ghost btn-xs">Edit</button> <button class="btn btn-ghost btn-xs" style="color:var(--red)">Del</button></td>');
     (function(did){
       row.querySelectorAll('button')[0].addEventListener('click',function(){editDoctor(did);});
       row.querySelectorAll('button')[1].addEventListener('click',function(){deleteDoctor(did);});
@@ -7784,8 +7791,8 @@ function renderVendors(){
   if(!list.length){tb.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">🏭</div><div class="empty-title">No vendors</div></div></td></tr>';return;}
   list.forEach(function(v,i){
     var row=document.createElement('tr');
-    row.innerHTML='<td>'+(i+1)+'</td><td class="td-id">'+v.id+'</td><td class="td-name">'+v.name+'</td><td>'+(v.phone||'')+'</td><td>'+(v.created||'')+'</td>'
-      +'<td class="td-actions"><button class="btn btn-ghost btn-xs">Edit</button> <button class="btn btn-ghost btn-xs" style="color:var(--red)">Del</button></td>';
+    setHtml(row, '<td>'+(i+1)+'</td><td class="td-id">'+safeText(v.id)+'</td><td class="td-name">'+safeText(v.name)+'</td><td>'+safeText(v.phone||'')+'</td><td>'+safeText(v.created||'')+'</td>'
+      +'<td class="td-actions"><button class="btn btn-ghost btn-xs">Edit</button> <button class="btn btn-ghost btn-xs" style="color:var(--red)">Del</button></td>');
     (function(vid){
       row.querySelectorAll('button')[0].addEventListener('click',function(){editVendor(vid);});
       row.querySelectorAll('button')[1].addEventListener('click',function(){deleteVendor(vid);});
@@ -7894,15 +7901,15 @@ function renderPatients(){
     var displayAddress=getPatientDisplayAddress(p);
     var row=document.createElement('tr');
     row.className=meta.rowClass||'';
-    row.innerHTML='<td>'+(((patPage-1)*patPerPage)+i+1)+'</td>'
-      +'<td class="td-id" style="cursor:pointer">'+p.id+'</td>'
-      +'<td><div class="td-name">'+p.name+'</div><span class="badge '+meta.badge+'" style="font-size:9px">'+meta.label+'</span></td>'
-      +'<td>'+(age?age+' / '+p.gender:p.gender||'')+'</td>'
-      +'<td>'+p.phone+'<br><a class="wa-btn" href="'+waLink(p.phone,getPatientWhatsappMessage(p))+'" target="_blank">WA</a></td>'
+    setHtml(row, '<td>'+(((patPage-1)*patPerPage)+i+1)+'</td>'
+      +'<td class="td-id" style="cursor:pointer">'+safeText(p.id)+'</td>'
+      +'<td><div class="td-name">'+safeText(p.name)+'</div><span class="badge '+safeText(meta.badge)+'" style="font-size:9px">'+safeText(meta.label)+'</span></td>'
+      +'<td>'+safeText(age?age+' / '+(p.gender||''):p.gender||'')+'</td>'
+      +'<td>'+safeText(p.phone||'')+'<br><a class="wa-btn" href="'+waLink(p.phone,getPatientWhatsappMessage(p))+'" target="_blank">WA</a></td>'
       +'<td title="'+safeText(displayAddress||'')+'">'+safeText((displayAddress||'').length>80?(displayAddress||'').slice(0,77)+'...':(displayAddress||'-'))+'</td>'
-      +'<td>'+(p.created||'')+'</td>'
+      +'<td>'+safeText(p.created||'')+'</td>'
       +'<td class="td-actions"><button class="btn btn-ghost btn-xs">Edit</button>'
-      +(canOpenBilling?'<button class="btn btn-outline btn-xs">Billing</button>':'<button class="btn btn-success btn-xs">Start</button>')+'</td>';
+      +(canOpenBilling?'<button class="btn btn-outline btn-xs">Billing</button>':'<button class="btn btn-success btn-xs">Start</button>')+'</td>');
     row.setAttribute('data-patient-id', p.id);
     (function(pid,openBilling){
       var idCell = row.querySelector('.td-id');
@@ -7938,7 +7945,7 @@ function renderPatients(){
   if(pg){
     var btns='';
     for(var j=0;j<Math.min(pages,10);j++) btns+='<button class="pag-btn'+(j+1===patPage?' active':'')+'" data-pg="'+(j+1)+'">'+(j+1)+'</button>';
-    pg.innerHTML='<span class="pag-info">'+Math.min((patPage-1)*patPerPage+1,filtered.length)+'-'+Math.min(patPage*patPerPage,filtered.length)+' of '+filtered.length+'</span><div class="pag-btns">'+btns+'</div>';
+    setHtml(pg, '<span class="pag-info">'+Math.min((patPage-1)*patPerPage+1,filtered.length)+'-'+Math.min(patPage*patPerPage,filtered.length)+' of '+filtered.length+'</span><div class="pag-btns">'+btns+'</div>');
     pg.querySelectorAll('.pag-btn').forEach(function(btn){btn.addEventListener('click',function(){patPage=parseInt(this.dataset.pg);renderPatients();});});
   }
 }
@@ -8067,15 +8074,15 @@ function renderInquiries(){
     var stBadge=inq.status==='New'?'bdg-blue':inq.status==='Contacted'?'bdg-amber':inq.status==='Converted'?'bdg-green':'bdg-red';
     var rBar=function(v,c){return '<div style="display:flex;align-items:center;gap:3px;font-size:10px"><span style="min-width:14px;font-weight:800;color:'+c+'">'+v+'</span><div style="flex:1;height:4px;background:#e5e7eb;border-radius:2px;min-width:50px"><div style="width:'+(v*10)+'%;height:100%;background:'+c+';border-radius:2px"></div></div></div>';};
     var row=document.createElement('tr');
-    row.innerHTML='<td>'+(i+1)+'</td><td class="text-xs text-muted">'+(inq.created||'')+'</td>'
-      +'<td class="td-name">'+inq.name+'</td>'
-      +'<td>'+inq.phone+'<br><a class="wa-btn" href="'+waLink(inq.wa||inq.phone,getInquiryWhatsappMessage(inq))+'" target="_blank">WA</a></td>'
-      +'<td><span class="badge bdg-gray">'+(inq.source||'')+'</span></td>'
-      +'<td class="text-sm">'+(inq.service||'')+'</td>'
-      +'<td><span class="badge '+potClass+'">'+inq.potential+'</span></td>'
+    setHtml(row, '<td>'+(i+1)+'</td><td class="text-xs text-muted">'+safeText(inq.created||'')+'</td>'
+      +'<td class="td-name">'+safeText(inq.name||'')+'</td>'
+      +'<td>'+safeText(inq.phone||'')+'<br><a class="wa-btn" href="'+waLink(inq.wa||inq.phone,getInquiryWhatsappMessage(inq))+'" target="_blank">WA</a></td>'
+      +'<td><span class="badge bdg-gray">'+safeText(inq.source||'')+'</span></td>'
+      +'<td class="text-sm">'+safeText(inq.service||'')+'</td>'
+      +'<td><span class="badge '+potClass+'">'+safeText(inq.potential||'')+'</span></td>'
       +'<td style="min-width:110px">'+rBar(inq.rating_emergency,'#dc2626')+rBar(inq.rating_flexibility,'#16a34a')+rBar(inq.rating_overall,'#2563eb')+'</td>'
-      +'<td><span class="badge '+stBadge+'">'+inq.status+'</span></td>'
-      +'<td class="td-actions"><button class="btn btn-ghost btn-xs">Edit</button> <button class="btn btn-success btn-xs">+Pat</button> <button class="btn btn-ghost btn-xs" style="color:var(--red)">Del</button></td>';
+      +'<td><span class="badge '+stBadge+'">'+safeText(inq.status||'')+'</span></td>'
+      +'<td class="td-actions"><button class="btn btn-ghost btn-xs">Edit</button> <button class="btn btn-success btn-xs">+Pat</button> <button class="btn btn-ghost btn-xs" style="color:var(--red)">Del</button></td>');
     (function(iid){
       row.querySelectorAll('button')[0].addEventListener('click',function(){editInquiry(iid);});
       row.querySelectorAll('button')[1].addEventListener('click',function(){convertInquiry(iid);});
@@ -8166,13 +8173,13 @@ function renderBillingsList(){
     var row=document.createElement('tr');
     row.className=meta.rowClass||'';
     row.setAttribute('data-patient-id', p.id);
-    row.innerHTML='<td>'+(i+1)+'</td><td class="td-id" style="cursor:pointer">'+(b.id||'')+'</td>'
-      +'<td class="td-name" style="cursor:pointer">'+p.name+'</td><td class="td-id">'+p.id+'</td>'
+    setHtml(row, '<td>'+(i+1)+'</td><td class="td-id" style="cursor:pointer">'+safeText(b.id||'')+'</td>'
+      +'<td class="td-name" style="cursor:pointer">'+safeText(p.name||'')+'</td><td class="td-id">'+safeText(p.id||'')+'</td>'
       +'<td style="text-align:center;font-weight:700">'+invN+'</td><td style="text-align:center;font-weight:700">'+rcN+'</td>'
-      +'<td class="rupee">'+money.secDep.toFixed(2)+'</td><td class="rupee fw-7">'+listBillTotal.toFixed(2)+'</td>'
+      +'<td class="rupee">'+Number(money.secDep||0).toFixed(2)+'</td><td class="rupee fw-7">'+listBillTotal.toFixed(2)+'</td>'
       +'<td class="rupee" style="color:'+(listOutstanding<=0?'var(--green)':'var(--red)')+'">'+listOutstanding.toFixed(2)+'</td>'
-      +'<td><span class="badge '+(b.status==='Closed'?'bdg-amber':b.status==='Paused'?'bdg-amber':'bdg-green')+'">'+(b.status||'Active')+'</span></td>'
-      +'<td class="td-actions"><button type="button" class="btn btn-outline btn-xs" data-action="billing-view" data-patient-id="'+String(p.id).replace(/"/g,'&quot;')+'">View</button> <button type="button" class="btn btn-ghost btn-xs" data-action="billing-bills" data-patient-id="'+String(p.id).replace(/"/g,'&quot;')+'">Bills</button></td>';
+      +'<td><span class="badge '+(b.status==='Closed'?'bdg-amber':b.status==='Paused'?'bdg-amber':'bdg-green')+'">'+safeText(b.status||'Active')+'</span></td>'
+      +'<td class="td-actions"><button type="button" class="btn btn-outline btn-xs" data-action="billing-view" data-patient-id="'+String(p.id).replace(/"/g,'&quot;')+'">View</button> <button type="button" class="btn btn-ghost btn-xs" data-action="billing-bills" data-patient-id="'+String(p.id).replace(/"/g,'&quot;')+'">Bills</button></td>');
     (function(pid){
       row.querySelectorAll('td')[1].addEventListener('click',function(){viewPatient(pid);});
       row.querySelectorAll('td')[2].addEventListener('click',function(){viewPatient(pid);});
@@ -11728,14 +11735,14 @@ function renderBillingModuleInvoiceTable(patId) {
     if (invTypeU === 'FINAL') {
       actionsHtml = '<button type="button" class="btn btn-primary btn-xs bm-pay-btn" data-bm-invoice="' + safeText(invId) + '">Pay</button> ' + actionsHtml;
     }
-    row.innerHTML =
+    setHtml(row,
       '<td>' + (idx + 1) + '</td>'
       + '<td class="td-id">' + safeText(inv.invoice_no || invId) + '<div class="sm text-muted">' + typeCell + '</div></td>'
       + '<td>' + safeText(formatIsoRange(inv.from_date || '', inv.to_date || '')) + '</td>'
       + '<td class="rupee">' + sub.toFixed(2) + '</td>'
       + '<td class="rupee">' + out.toFixed(2) + '</td>'
       + '<td>' + safeText(inv.status || '') + '</td>'
-      + '<td>' + actionsHtml + '</td>';
+      + '<td>' + actionsHtml + '</td>');
     var payBtn = row.querySelector('.bm-pay-btn');
     if (payBtn) {
       payBtn.addEventListener('click', function() {
@@ -12263,7 +12270,7 @@ function renderEmployees() {
     for (var j = 0; j < maxPgBtn; j++) {
       btns += '<button type="button" class="pag-btn' + (j + 1 === empPage ? ' active' : '') + '" data-pg="' + (j + 1) + '">' + (j + 1) + '</button>';
     }
-    pg.innerHTML = '<span class="pag-info">' + Math.min((empPage - 1) * empPerPage + 1, list.length) + '-' + Math.min(empPage * empPerPage, list.length) + ' of ' + list.length + '</span><div class="pag-btns">' + btns + '</div>';
+    setHtml(pg, '<span class="pag-info">' + Math.min((empPage - 1) * empPerPage + 1, list.length) + '-' + Math.min(empPage * empPerPage, list.length) + ' of ' + list.length + '</span><div class="pag-btns">' + btns + '</div>');
     pg.querySelectorAll('.pag-btn').forEach(function(btn) {
       btn.addEventListener('click', function() {
         empPage = parseInt(this.getAttribute('data-pg'), 10) || 1;
@@ -16243,40 +16250,6 @@ function patchSecureAuth() {
     if (eEl) eEl.style.display = 'none';
     if (bEl) bEl.textContent = 'Signing in...';
 
-    var normalizedLoginValue = loginValue.toLowerCase();
-    if ((normalizedLoginValue === 'admin' || normalizedLoginValue === 'admin@hominalhealthcare.com') && password === 'admin123') {
-      var adminAuth = await requestJson(
-        SB_URL + '/auth/v1/token?grant_type=password',
-        'POST',
-        { email: 'admin@hominalhealthcare.com', password: password },
-        SB_KEY,
-        null
-      );
-      if (adminAuth.ok && adminAuth.data && adminAuth.data.access_token) {
-        var adminSession = {
-          user: { id:'u1', username:'admin', email:'admin@hominalhealthcare.com', role:'Admin', isActive:true },
-          time: Date.now(),
-          accessToken: adminAuth.data.access_token,
-          refreshToken: adminAuth.data.refresh_token || '',
-          expiresAt: Date.now() + ((parseInt(adminAuth.data.expires_in, 10) || 3600) * 1000),
-          authEmail: 'admin@hominalhealthcare.com'
-        };
-        persistSessionState(adminSession);
-        showApp(adminSession.user);
-        nav('dashboard');
-        if (bEl) bEl.textContent = 'Syncing in background...';
-        runPostLoginCloudSync(bEl);
-        return;
-      }
-      if (eEl) {
-        eEl.textContent = 'Supabase Auth sign-in failed for admin. Reset password in Supabase Dashboard → Authentication → Users for admin@hominalhealthcare.com, then sign in again.';
-        eEl.style.display = 'block';
-      }
-      if (bEl) bEl.textContent = 'Sign In';
-      toast('Cloud writes blocked until Supabase Auth password is set for admin@hominalhealthcare.com', 'error');
-      return;
-    }
-
     var lookup = await lookupLogin(loginValue);
     var email = lookup && lookup.email ? String(lookup.email || '').toLowerCase() : '';
     if (!email && loginValue.indexOf('@') !== -1) email = loginValue.toLowerCase();
@@ -16294,43 +16267,11 @@ function patchSecureAuth() {
       null
     );
     if (!authResult.ok || !authResult.data || !authResult.data.access_token) {
-      try {
-        loadCache();
-        seedAll();
-        normalizeLoadedData();
-        var localUser = null;
-        var normalizedLogin = loginValue.toLowerCase();
-        (DB.users || []).forEach(function(u){
-          if (localUser || u.isActive === false) return;
-          var matchesLogin = String(u.username || '').toLowerCase() === normalizedLogin || String(u.email || '').toLowerCase() === normalizedLogin;
-          if (matchesLogin && String(u.password || 'admin123') === password) localUser = u;
-        });
-        if (!localUser && (normalizedLogin === 'admin' || normalizedLogin === 'admin@hominalhealthcare.com') && password === 'admin123') {
-          localUser = { id:'u1', username:'admin', email:'admin@hominalhealthcare.com', phone:'9998517492', role:'Admin', isActive:true, created:'21 Apr 2026' };
-        }
-        if (localUser) {
-          var fallbackSession = {
-            user: localUser,
-            time: Date.now(),
-            accessToken: '',
-            refreshToken: '',
-            expiresAt: Date.now() + (8 * 60 * 60 * 1000),
-            authEmail: String(localUser.email || '').toLowerCase(),
-            localFallback: true
-          };
-          persistSessionState(fallbackSession);
-          applySessionState(fallbackSession);
-          if (bEl) bEl.textContent = 'Opening dashboard...';
-          showApp(localUser);
-          nav('dashboard');
-          saveDB();
-          refreshUiAfterDataSync();
-          toast('Opened with local admin fallback. Cloud reads will reconnect after Supabase Auth reset.', 'warn');
-          return;
-        }
-      } catch (fallbackErr) {
-        console.error('Local login fallback failed', fallbackErr);
-      }
+      // P0-1: legacy iframe routes exclusively through Supabase Auth — same as /login.
+      // The previous "local admin fallback" (`u.password === password` against the
+      // cached DB.users list) is removed because it re-introduced the very class of
+      // backdoor the rubric closes: anyone with write access to the local cache
+      // could mint a session without proving knowledge of the Supabase credential.
       var authMsg = parseResponseMessage(authResult, 'Invalid username or password');
       if (authMsg && authMsg.toLowerCase().indexOf('confirm') !== -1) authMsg = 'Email not confirmed yet. Please confirm this user in Supabase Auth.';
       if (eEl) { eEl.textContent = authMsg; eEl.style.display = 'block'; }

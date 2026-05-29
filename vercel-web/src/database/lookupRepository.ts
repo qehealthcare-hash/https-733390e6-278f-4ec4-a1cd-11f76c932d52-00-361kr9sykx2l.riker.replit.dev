@@ -10,14 +10,16 @@ import type { ApiResult } from "@/types/common";
 import type { DbAccess, JsonRow } from "@/database/types";
 import { resolveClient } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 
 export const lookupRepository = {
   /** Patient lookup view (id, name, phone, area, city, status). */
   async patients(q: string | undefined, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
     const db = resolveClient(opts);
+    const term = sanitizeSearchTerm(q);
     const primary = await runListQuery<JsonRow>(async () => {
       let query = db.from("hh_patient_lookup").select("*").order("name").limit(500);
-      if (q) query = query.ilike("name", `%${q}%`);
+      if (term) query = query.ilike("name", `%${term}%`);
       const { data, error } = await query;
       return { data, error };
     }, "lookup.patients");
@@ -29,7 +31,7 @@ export const lookupRepository = {
         .select("id, name, phone, area, city, status")
         .order("name")
         .limit(500);
-      if (q) query = query.ilike("name", `%${q}%`);
+      if (term) query = query.ilike("name", `%${term}%`);
       const { data, error } = await query;
       return { data, error };
     }, "lookup.patients.fallback");
@@ -38,9 +40,10 @@ export const lookupRepository = {
   /** Employee lookup view (id, full_name, phone, email, department, designation, default_shift). */
   async employees(q: string | undefined, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
     const db = resolveClient(opts);
+    const term = sanitizeSearchTerm(q);
     const primary = await runListQuery<JsonRow>(async () => {
       let query = db.from("hh_employee_lookup").select("*").order("full_name").limit(500);
-      if (q) query = query.ilike("full_name", `%${q}%`);
+      if (term) query = query.ilike("full_name", `%${term}%`);
       const { data, error } = await query;
       return { data, error };
     }, "lookup.employees");

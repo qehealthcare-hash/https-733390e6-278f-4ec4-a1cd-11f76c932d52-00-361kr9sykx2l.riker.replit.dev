@@ -5,17 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Hominal Print View</title>
   <style>
-    body { margin:0; font-family: Arial, sans-serif; background:#f8fafc; color:#0f172a; }
+    html, body { height:100%; }
+    body { margin:0; font-family: Arial, sans-serif; background:#f8fafc; color:#0f172a; display:flex; flex-direction:column; }
     .bar { display:flex; justify-content:space-between; align-items:center; padding:12px 18px; background:#0f172a; color:#fff; position:sticky; top:0; z-index:5; }
     .actions { display:flex; gap:10px; }
     .btn { border:0; border-radius:8px; padding:10px 14px; font-weight:700; cursor:pointer; }
     .btn-primary { background:#2563eb; color:#fff; }
     .btn-ghost { background:#e2e8f0; color:#0f172a; }
-    .content { min-height:calc(100vh - 56px); background:#fff; }
+    .content { flex:1; min-height:calc(100vh - 56px); background:#fff; }
+    .content iframe { width:100%; height:100%; border:0; display:block; }
     .empty { padding:48px 24px; text-align:center; color:#475569; }
     @media print {
       .bar { display:none; }
       body { background:#fff; }
+      .content iframe { height:auto; }
     }
   </style>
 </head>
@@ -30,29 +33,51 @@
   <div class="content" id="content"></div>
   <script>
     (function(){
+      // C3 hardening:
+      //   1. Restrict printKey format so a poisoned localStorage entry from
+      //      an unrelated key can't be loaded by guessing the URL.
+      //   2. Render the payload inside a sandboxed iframe with no script
+      //      privileges, so even if the payload was tampered with it cannot
+      //      execute JS in this origin or read cookies/localStorage.
       var payload = '';
-      var backUrl = '';
+      var backUrl = '/';
       var printKey = '';
       try {
         var params = new URLSearchParams(window.location.search || '');
-        printKey = params.get('printKey') || '';
-        payload = printKey ? (localStorage.getItem(printKey) || '') : '';
+        var rawKey = params.get('printKey') || '';
+        // Only allow CRM-generated keys (alphanumeric / dash / underscore / colon).
+        if (rawKey && /^[A-Za-z0-9_:-]{1,128}$/.test(rawKey)) {
+          printKey = rawKey;
+          payload = localStorage.getItem(printKey) || '';
+        }
         backUrl = localStorage.getItem('HOMINAL_PRINT_RETURN_URL') || '/';
         if (printKey) localStorage.removeItem(printKey);
       } catch (e) {}
+
       var content = document.getElementById('content');
       if (!payload) {
         content.innerHTML = '<div class="empty">Nothing to print. Go back to the CRM and generate the PDF again.</div>';
       } else {
-        document.open();
-        document.write(payload);
-        document.close();
-        return;
+        var iframe = document.createElement('iframe');
+        // No "allow-scripts" - the payload runs as inert HTML/CSS.
+        // No "allow-same-origin" - the iframe lives in an opaque origin,
+        // can't reach cookies, localStorage, or parent DOM.
+        iframe.setAttribute('sandbox', 'allow-modals allow-popups');
+        iframe.setAttribute('referrerpolicy', 'no-referrer');
+        iframe.srcdoc = payload;
+        content.appendChild(iframe);
       }
+
       var printBtn = document.getElementById('printBtn');
       var backBtn = document.getElementById('backBtn');
-      if (printBtn) printBtn.addEventListener('click', function(){ window.print(); });
-      if (backBtn) backBtn.addEventListener('click', function(){ window.location.href = backUrl || '/'; });
+      if (printBtn) printBtn.addEventListener('click', function(){
+        // Browsers print the whole page; @media print hides the chrome
+        // so the user gets the iframe content only.
+        window.print();
+      });
+      if (backBtn) backBtn.addEventListener('click', function(){
+        window.location.href = backUrl || '/';
+      });
     })();
   </script>
 </body>

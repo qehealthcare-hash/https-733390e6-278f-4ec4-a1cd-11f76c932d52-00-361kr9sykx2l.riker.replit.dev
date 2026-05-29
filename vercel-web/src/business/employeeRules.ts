@@ -3,6 +3,7 @@ import { EMPLOYEE_STATUSES } from "@/validation/employeeValidation";
 import { findPhoneDuplicate, phoneDigitsKey } from "@/business/phoneRules";
 import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
+import { crmTodayIso } from "@/utils/crmToday";
 
 export { EMPLOYEE_STATUSES };
 export type { EmployeeStatus };
@@ -38,7 +39,7 @@ export function isActiveEmployee(
 function leaveDateForStatus(status: EmployeeStatus, existing?: string | null): string {
   if (status === "Active") return "";
   if (existing) return existing;
-  return new Date().toISOString().slice(0, 10);
+  return crmTodayIso();
 }
 
 /** DB row shape — only columns that exist on production `hh_employees`. */
@@ -336,7 +337,7 @@ export function canEditEmployee(
 export function deactivatePatch(actorEmail: string, _reason = "") {
   return {
     status: "Inactive" as const,
-    leave_date: new Date().toISOString().slice(0, 10),
+    leave_date: crmTodayIso(),
     updated_by: actorEmail
   };
 }

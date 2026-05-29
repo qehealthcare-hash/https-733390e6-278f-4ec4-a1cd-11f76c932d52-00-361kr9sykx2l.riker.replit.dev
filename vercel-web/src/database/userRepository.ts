@@ -13,9 +13,18 @@ import {
   updateRow
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
+import { adminClient } from "@/database/clients";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 
 const USERS = "hh_users";
 const ROLES = "hh_roles";
+
+export interface ResolvedActorRow {
+  userId: string;
+  email: string;
+  username: string;
+  role: string;
+}
 
 export interface UserListQuery extends DbAccess {
   q?: string;
@@ -33,9 +42,12 @@ export const userRepository = {
       (q) => {
         let chain = q;
         if (opts.q) {
-          chain = chain.or(
-            `username.ilike.%${opts.q}%,email.ilike.%${opts.q}%,phone.ilike.%${opts.q}%`
-          );
+          const term = sanitizeSearchTerm(opts.q);
+          if (term) {
+            chain = chain.or(
+              `username.ilike.%${term}%,email.ilike.%${term}%,phone.ilike.%${term}%`
+            );
+          }
         }
         if (opts.role) chain = chain.eq("role", opts.role);
         if (opts.active === "true") chain = chain.eq("is_active", true);
@@ -69,8 +81,10 @@ export const userRepository = {
 
   async findByEmail(email: string, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     const db = resolveClient(opts);
+    // P1-37: normalize on read; emails are stored in lowercase form.
+    const normalized = String(email || "").toLowerCase();
     return runQuery(
-      () => db.from(USERS).select("id, email").ilike("email", email).maybeSingle(),
+      () => db.from(USERS).select("id, email").eq("email", normalized).maybeSingle(),
       "user.findByEmail"
     );
   },
@@ -93,6 +107,54 @@ export const userRepository = {
 
   remove(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
     return deleteRow(USERS, id, "user", opts);
+  },
+
+  /**
+   * Resolve a Supabase JWT to an active `hh_users` row (used by `requireActor`).
+   */
+  async resolveActorFromToken(accessToken: string): Promise<ApiResult<ResolvedActorRow | null>> {
+    const admin = adminClient();
+    const { data: userData, error: userErr } = await admin.auth.getUser(accessToken);
+    if (userErr || !userData?.user) {
+      return { success: false, error: userErr?.message || "Invalid session", code: "unauthorized" };
+    }
+
+    const email = (userData.user.email || "").toLowerCase();
+    if (!email) {
+      return { success: false, error: "Session has no email", code: "unauthorized" };
+    }
+
+    const appUser = await runQuery<JsonRow | null>(
+      () =>
+        admin
+          .from(USERS)
+          .select("id, username, email, role, is_active")
+          // P1-37: case-insensitive match by normalizing the input first.
+          // .ilike on email caused Supabase to fall back to a sequential
+          // scan and (worse) matched partial patterns when callers
+          // accidentally passed user-controlled strings — `.eq` with the
+          // already-lowercased value is exact + index-friendly.
+          .eq("email", email.toLowerCase())
+          .eq("is_active", true)
+          .maybeSingle(),
+      "user.resolveActorFromToken.hh_users"
+    );
+    if (!appUser.success) {
+      return { success: false, error: appUser.error, code: appUser.code, details: appUser.details };
+    }
+    if (!appUser.data) {
+      return { success: true, data: null };
+    }
+
+    return {
+      success: true,
+      data: {
+        userId: String(appUser.data.id),
+        email,
+        username: String(appUser.data.username || email),
+        role: String(appUser.data.role || "Staff")
+      }
+    };
   }
 };
 
@@ -153,4 +215,7 @@ export const roleRepository = {
   remove(id: string, opts?: DbAccess): Promise<ApiResult<null>> {
     return deleteRow(ROLES, id, "role", opts);
   }
+  // M2-C1: `listPermissionsForRoleName` was deleted with `parseRolePerms`.
+  // The CRM is role-based; the `hh_roles.perms` column is preserved on
+  // disk for audit / future use but never read at runtime.
 };

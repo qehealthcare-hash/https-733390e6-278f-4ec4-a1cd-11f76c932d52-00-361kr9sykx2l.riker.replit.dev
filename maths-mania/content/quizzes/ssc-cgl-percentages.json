@@ -1,0 +1,140 @@
+{
+  "slug": "ssc-cgl-percentages",
+  "title": "SSC CGL — Percentages Drill",
+  "description": "Ten percentage questions at Tier-1 difficulty: successive change, population, marks, and the x% of y = y% of x flip.",
+  "category": "ssc",
+  "tags": ["ssc-cgl", "tier-1", "percentage"],
+  "estimatedMinutes": 14,
+  "questions": [
+    {
+      "id": "q1",
+      "topic": "Basics",
+      "prompt": "What percent is 45 of 180?",
+      "options": [
+        { "id": "a", "label": "20%" },
+        { "id": "b", "label": "25%" },
+        { "id": "c", "label": "30%" },
+        { "id": "d", "label": "22.5%" }
+      ],
+      "correctOptionId": "b",
+      "explanation": "45/180 = 1/4 = 25%."
+    },
+    {
+      "id": "q2",
+      "topic": "Flip rule",
+      "prompt": "16⅔% of 90 equals",
+      "options": [
+        { "id": "a", "label": "15" },
+        { "id": "b", "label": "150" },
+        { "id": "c", "label": "90" },
+        { "id": "d", "label": "540" }
+      ],
+      "correctOptionId": "a",
+      "explanation": "x% of y = y% of x → 90 of 16⅔% = 15."
+    },
+    {
+      "id": "q3",
+      "topic": "Successive change",
+      "prompt": "Price first increased by 10%, then decreased by 10%. Net change?",
+      "options": [
+        { "id": "a", "label": "0%" },
+        { "id": "b", "label": "1% increase" },
+        { "id": "c", "label": "1% decrease" },
+        { "id": "d", "label": "2% decrease" }
+      ],
+      "correctOptionId": "c",
+      "explanation": "1.1 × 0.9 = 0.99 → 1% decrease."
+    },
+    {
+      "id": "q4",
+      "topic": "Population",
+      "prompt": "A town's population is 50,000. It grows 4% per year. After 2 years (compound), population ≈",
+      "options": [
+        { "id": "a", "label": "54,080" },
+        { "id": "b", "label": "54,000" },
+        { "id": "c", "label": "52,000" },
+        { "id": "d", "label": "56,000" }
+      ],
+      "correctOptionId": "a",
+      "explanation": "50000 × (1.04)² = 50000 × 1.0816 = 54,080."
+    },
+    {
+      "id": "q5",
+      "topic": "Marks",
+      "prompt": "A student scores 72 out of 90. Percentage marks?",
+      "options": [
+        { "id": "a", "label": "75%" },
+        { "id": "b", "label": "80%" },
+        { "id": "c", "label": "72%" },
+        { "id": "d", "label": "78%" }
+      ],
+      "correctOptionId": "b",
+      "explanation": "72/90 = 4/5 = 80%."
+    },
+    {
+      "id": "q6",
+      "topic": "Discount",
+      "prompt": "Marked price ₹800, discount 15%. SP is",
+      "options": [
+        { "id": "a", "label": "₹680" },
+        { "id": "b", "label": "₹720" },
+        { "id": "c", "label": "₹700" },
+        { "id": "d", "label": "₹640" }
+      ],
+      "correctOptionId": "a",
+      "explanation": "15% off → pay 85% → 800 × 0.85 = ₹680."
+    },
+    {
+      "id": "q7",
+      "topic": "Fraction to percent",
+      "prompt": "3/8 as a percent is",
+      "options": [
+        { "id": "a", "label": "37.5%" },
+        { "id": "b", "label": "38%" },
+        { "id": "c", "label": "35%" },
+        { "id": "d", "label": "62.5%" }
+      ],
+      "correctOptionId": "a",
+      "explanation": "3/8 = 0.375 = 37.5%."
+    },
+    {
+      "id": "q8",
+      "topic": "Comparison",
+      "prompt": "Which is greater?",
+      "options": [
+        { "id": "a", "label": "20% of 80" },
+        { "id": "b", "label": "25% of 60" },
+        { "id": "c", "label": "Both equal" },
+        { "id": "d", "label": "Cannot say" }
+      ],
+      "correctOptionId": "c",
+      "explanation": "Both equal 16."
+    },
+    {
+      "id": "q9",
+      "topic": "Salary",
+      "prompt": "Salary ₹25,000 increased by 12%. New salary?",
+      "options": [
+        { "id": "a", "label": "₹27,500" },
+        { "id": "b", "label": "₹28,000" },
+        { "id": "c", "label": "₹27,000" },
+        { "id": "d", "label": "₹28,500" }
+      ],
+      "correctOptionId": "b",
+      "explanation": "25000 × 1.12 = ₹28,000."
+    },
+    {
+      "id": "q10",
+      "topic": "Reverse percent",
+      "prompt": "After 20% discount, SP is ₹640. Marked price was",
+      "options": [
+        { "id": "a", "label": "₹768" },
+        { "id": "b", "label": "₹800" },
+        { "id": "c", "label": "₹760" },
+        { "id": "d", "label": "₹820" }
+      ],
+      "correctOptionId": "b",
+      "explanation": "640 = 80% of MP → MP = 640/0.8 = ₹800."
+    }
+  ]
+}

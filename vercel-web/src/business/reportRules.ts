@@ -91,6 +91,23 @@ export interface DashboardKpis {
 
   // Profit/Loss — collected minus payout-paid for the period.
   profit_loss: number;
+  /**
+   * M3-H4: conservative variant of `profit_loss` that ALSO subtracts
+   * payouts that are owed but not yet disbursed AND partner-diary
+   * charges. Mirrors `buildProfitLoss().net_profit_after_pending_payouts`
+   * so the dashboard widget and the P/L report agree to the rupee.
+   *
+   * Formula: collected − payouts (gross net amount, regardless of
+   * status) − partner-charge ledger.
+   *
+   * Why both numbers ship on the dashboard:
+   *   - `profit_loss` is the cash-basis snapshot operators see at end
+   *     of month for cash-on-hand decisions.
+   *   - `profit_loss_after_pending` is the accrual-basis figure owners
+   *     read for true operating profit. Surfacing both stops the
+   *     ambiguity that the old single-card layout invited.
+   */
+  profit_loss_after_pending: number;
 }
 
 /** Build the dashboard KPI bundle from raw counts. Pure function. */
@@ -122,6 +139,16 @@ export function buildDashboardKpis(
   // makes the dashboard inconsistent with finance reports.
   const profitLoss = round2(collected - payoutPaid);
 
+  // M3-H4: conservative companion to `profitLoss`. Mirrors the formula in
+  // `buildProfitLoss().net_profit_after_pending_payouts` exactly:
+  //   collected − payouts (net, regardless of status) − partner-charge ledger.
+  // Surfacing this alongside `profit_loss` ends the long-standing UX trap
+  // where owners read "Profit / Loss" as accrual profit when it was only
+  // cash-basis (paid payouts only).
+  const profitLossAfterPending = round2(
+    collected - payoutNet - partnerChargeLedger
+  );
+
   return {
     period,
     range,
@@ -145,7 +172,8 @@ export function buildDashboardKpis(
     payout_paid_amount: round2(payoutPaid),
     payout_pending_amount: round2(payoutPending),
     partner_charge_ledger: round2(partnerChargeLedger),
-    profit_loss: profitLoss
+    profit_loss: profitLoss,
+    profit_loss_after_pending: profitLossAfterPending
   };
 }
 

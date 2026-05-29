@@ -31,12 +31,16 @@ export const dynamic = "force-dynamic";
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, [...PAYOUT_WRITE_ROLES]);
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   return withIdempotency(
     req,
     actor,
     { route: "POST /payouts/set-rate" },
     async () => {
+      // Parse INSIDE the wrapper so withIdempotency can still clone the
+      // request to hash the body for the synthesized key. Reading the body
+      // before withIdempotency disturbs the stream and the synth key would
+      // collapse across distinct payloads.
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const result = await payoutService.setEmployeePeriodPayoutRate(body, { actor });
       return respond(result);
     }

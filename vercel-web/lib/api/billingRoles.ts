@@ -1,12 +1,10 @@
-/** Roles allowed to read billing data (lists, bundles, invoices, receipts). */
-export const BILLING_READ_ROLES = [
-  "Admin",
-  "Manager",
-  "Accountant",
-  "Staff",
-  "Supervisor",
-  "Viewer"
-] as const;
+/**
+ * Billing-specific RBAC role lists.
+ *
+ * M2-H1 (2026-05-29): values now live in `src/business/rbac.ts`. This
+ * file is a thin shim so existing route handlers continue importing
+ * from `@/lib/api/billingRoles` without churn. Prefer
+ * `@/business/rbac` in new code.
+ */
 
-/** Roles allowed to create/update bills, invoices, and receipts. */
-export const BILLING_WRITE_ROLES = ["Admin", "Manager", "Accountant", "Staff"] as const;
+export { BILLING_READ_ROLES, BILLING_WRITE_ROLES } from "@/business/rbac";

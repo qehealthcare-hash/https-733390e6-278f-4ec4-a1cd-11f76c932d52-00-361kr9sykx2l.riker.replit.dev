@@ -32,6 +32,82 @@ describe("billingRules — invoice helpers", () => {
   });
 });
 
+describe("billingService — invoice summary view", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("redistributes deposit overflow off a zero-amount FINAL onto the oldest unpaid MONTHLY", async () => {
+    // Reproduces the kundanben shah case: MONTHLY ₹6,050 + FINAL ₹0 carrying
+    // a ₹5,000 Security receipt. Bill outstanding = ₹1,050. Expect the
+    // MONTHLY row to show the deposit credit and the FINAL row to net to 0.
+    vi.mocked(billingRepository.loadBillingBundle).mockResolvedValue({
+      success: true,
+      data: {
+        billing: { id: "BILL1", status: "Closed", patient_id: "PAT1", sec_dep: 0 },
+        services: Array.from({ length: 11 }, (_, i) => ({
+          date: `2026-05-${String(i + 1).padStart(2, "0")}`,
+          total: 550
+        })),
+        receipts: [
+          {
+            id: "R_SEC",
+            amount: 5000,
+            type: "Security",
+            invoice_id: "IV_FINAL"
+          }
+        ]
+      }
+    });
+    vi.mocked(patientRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "PAT1", name: "Test", phone: "", address: "", area: "", city: "", pincode: "" }
+    });
+    vi.mocked(billingRepository.listInvoicesByBilling).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          id: "IV_MONTHLY",
+          invoice_no: "INV2026000001",
+          kind: "MONTHLY",
+          period: "2026-05",
+          amount: 6050,
+          status: "UNPAID",
+          created_at: "2026-05-28T10:00:00Z"
+        },
+        {
+          id: "IV_FINAL",
+          invoice_no: "INV2026000023",
+          kind: "FINAL",
+          amount: 0,
+          status: "UNPAID",
+          created_at: "2026-05-29T10:00:00Z"
+        }
+      ]
+    });
+
+    const result = await billingService.getById("BILL1", ctx as Parameters<typeof billingService.getById>[1]);
+    expect(result.success).toBe(true);
+    if (!result.success || !result.data) throw new Error("expected bundle");
+    const monthly = result.data.invoices.find((s) => s.invoice.id === "IV_MONTHLY");
+    const final = result.data.invoices.find((s) => s.invoice.id === "IV_FINAL");
+    expect(monthly).toBeDefined();
+    expect(final).toBeDefined();
+    expect(monthly?.amount).toBe(6050);
+    expect(monthly?.received).toBe(5000);
+    expect(monthly?.outstanding).toBe(1050);
+    expect(monthly?.status).toBe("PARTIAL");
+    expect(final?.amount).toBe(0);
+    expect(final?.received).toBe(0);
+    expect(final?.outstanding).toBe(0);
+    // FINAL is the closing/settlement document — once its deposit credit has
+    // been redistributed to the MONTHLY, FINAL is settled (PAID), not UNPAID.
+    expect(final?.status).toBe("PAID");
+    expect(result.data.totals.outstanding).toBe(1050);
+    expect(result.data.totals.billed).toBe(6050);
+  });
+});
+
 describe("billingService — invoices", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -86,6 +162,86 @@ describe("billingService — invoices", () => {
     );
     expect(result.success).toBe(false);
     expect(result.code).toBe(ErrorCodes.business);
+  });
+
+  it("recordPayment is allowed on a Closed bill with outstanding (recovery path)", async () => {
+    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Closed", patient_id: "PAT1" }
+    });
+    vi.mocked(billingRepository.loadBillingBundle).mockResolvedValue({
+      success: true,
+      data: {
+        billing: { id: "BILL1", status: "Closed", patient_id: "PAT1", sec_dep: 0 },
+        services: [{ total: 6050 }],
+        receipts: [{ amount: 5000, invoice_id: "IV_FINAL" }]
+      }
+    });
+    vi.mocked(patientRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "PAT1", name: "Test" }
+    });
+    vi.mocked(billingRepository.listInvoicesByBilling).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(billingRepository.findInvoiceById).mockResolvedValue({
+      success: true,
+      data: {
+        id: "IV_MONTHLY",
+        billing_id: "BILL1",
+        invoice_no: "INV2026000001",
+        amount: 6050,
+        status: "UNPAID"
+      }
+    });
+    vi.mocked(billingRepository.listReceiptsByInvoice).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(billingRepository.receiptExists).mockResolvedValue({
+      success: true,
+      data: false
+    });
+    vi.mocked(billingRepository.saveReceiptV2Rpc).mockResolvedValue({
+      success: true,
+      data: { id: "R1", receipt_no: "RCP-1", paid_status: "PARTIAL" }
+    });
+
+    const result = await billingService.recordPayment(
+      {
+        billing_id: "BILL1",
+        invoice_id: "IV_MONTHLY",
+        amount: 1050,
+        date: "2026-05-30",
+        type: "Cash",
+        method: "Cash"
+      },
+      ctx
+    );
+    expect(result.success).toBe(true);
+    expect(billingRepository.saveReceiptV2Rpc).toHaveBeenCalled();
+  });
+
+  it("recordPayment is blocked on a Cancelled bill", async () => {
+    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Cancelled", patient_id: "PAT1" }
+    });
+
+    const result = await billingService.recordPayment(
+      {
+        billing_id: "BILL1",
+        amount: 500,
+        date: "2026-05-30",
+        type: "Cash",
+        method: "Cash"
+      },
+      ctx
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe(ErrorCodes.business);
+    expect(billingRepository.saveReceiptV2Rpc).not.toHaveBeenCalled();
   });
 
   it("cancelInvoice uses RPC and refuses PAID from server", async () => {
@@ -192,6 +348,161 @@ describe("billingService — invoices", () => {
     expect(result.success).toBe(true);
     expect(result.data?.duplicate).toBe(true);
     expect(result.data?.invoice.id).toBe("IV_EXIST");
+  });
+
+  it("generateFinalInvoice applies deposit as Security receipt (invoice at gross)", async () => {
+    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Active", patient_id: "PAT1", sec_dep: 5000 }
+    });
+    vi.mocked(billingRepository.generateFinalInvoiceRpc).mockResolvedValue({
+      success: true,
+      data: {
+        invoice_id: "IV_FINAL_1",
+        invoice_no: "INV2026000010",
+        duplicate: false,
+        security_receipt_id: "RCP_SEC_1",
+        refund_id: null,
+        refund_amount: 0,
+        sec_dep_applied: 5000,
+        gross: 18750,
+        net: 13750,
+        line_count: 25
+      }
+    });
+    vi.mocked(billingRepository.findInvoiceById).mockResolvedValue({
+      success: true,
+      data: {
+        id: "IV_FINAL_1",
+        billing_id: "BILL1",
+        invoice_no: "INV2026000010",
+        kind: "FINAL",
+        amount: 18750,
+        status: "UNPAID"
+      }
+    });
+    vi.mocked(billingRepository.listInvoiceLines).mockResolvedValue({
+      success: true,
+      data: [{ date: "2026-05-01", service_name: "Care", total: 750 }]
+    });
+
+    const result = await billingService.generateFinalInvoice(
+      { billing_id: "BILL1" },
+      ctx
+    );
+    expect(result.success).toBe(true);
+    expect(result.data?.invoice.kind).toBe("FINAL");
+    expect(result.data?.invoice.amount).toBe(18750);
+    expect(result.data?.security_receipt_id).toBe("RCP_SEC_1");
+    expect(result.data?.net).toBe(13750);
+    expect(result.data?.sec_dep_applied).toBe(5000);
+    expect(result.data?.lines.every((l) => Number(l.total) >= 0)).toBe(true);
+  });
+
+  it("generateFinalInvoice surfaces refund when deposit exceeds gross", async () => {
+    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Active", patient_id: "PAT1", sec_dep: 25000 }
+    });
+    vi.mocked(billingRepository.generateFinalInvoiceRpc).mockResolvedValue({
+      success: true,
+      data: {
+        invoice_id: "IV_FINAL_2",
+        invoice_no: "INV2026000011",
+        duplicate: false,
+        security_receipt_id: "RCP_SEC_2",
+        refund_id: "RCP_REFUND_1",
+        refund_amount: 6250,
+        sec_dep_applied: 18750,
+        gross: 18750,
+        net: 0,
+        line_count: 25
+      }
+    });
+    vi.mocked(billingRepository.findInvoiceById).mockResolvedValue({
+      success: true,
+      data: {
+        id: "IV_FINAL_2",
+        billing_id: "BILL1",
+        invoice_no: "INV2026000011",
+        kind: "FINAL",
+        amount: 18750,
+        status: "UNPAID"
+      }
+    });
+    vi.mocked(billingRepository.listInvoiceLines).mockResolvedValue({
+      success: true,
+      data: []
+    });
+
+    const result = await billingService.generateFinalInvoice(
+      { billing_id: "BILL1" },
+      ctx
+    );
+    expect(result.success).toBe(true);
+    expect(result.data?.refund_id).toBe("RCP_REFUND_1");
+    expect(result.data?.refund_amount).toBe(6250);
+    expect(result.data?.net).toBe(0);
+  });
+
+  it("generateFinalInvoice refuses when bill is Cancelled", async () => {
+    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Cancelled", patient_id: "PAT1", sec_dep: 5000 }
+    });
+
+    const result = await billingService.generateFinalInvoice(
+      { billing_id: "BILL1" },
+      ctx
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe(ErrorCodes.business);
+    expect(billingRepository.generateFinalInvoiceRpc).not.toHaveBeenCalled();
+  });
+
+  it("generateFinalInvoice ALLOWS Closed bill (retroactive recovery path)", async () => {
+    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Closed", patient_id: "PAT1", sec_dep: 5000 }
+    });
+    vi.mocked(billingRepository.generateFinalInvoiceRpc).mockResolvedValue({
+      success: true,
+      data: {
+        invoice_id: "IV_FINAL_R1",
+        invoice_no: "INV2026000099",
+        duplicate: false,
+        security_receipt_id: "RCP_SEC_R1",
+        refund_id: null,
+        refund_amount: 0,
+        sec_dep_applied: 5000,
+        gross: 25300,
+        net: 20300,
+        line_count: 35
+      }
+    });
+    vi.mocked(billingRepository.findInvoiceById).mockResolvedValue({
+      success: true,
+      data: {
+        id: "IV_FINAL_R1",
+        billing_id: "BILL1",
+        invoice_no: "INV2026000099",
+        kind: "FINAL",
+        amount: 25300,
+        status: "UNPAID"
+      }
+    });
+    vi.mocked(billingRepository.listInvoiceLines).mockResolvedValue({
+      success: true,
+      data: []
+    });
+
+    const result = await billingService.generateFinalInvoice(
+      { billing_id: "BILL1" },
+      ctx
+    );
+    expect(result.success).toBe(true);
+    expect(result.data?.invoice.kind).toBe("FINAL");
+    expect(billingRepository.generateFinalInvoiceRpc).toHaveBeenCalled();
   });
 
   it("regenerateInvoice refuses when receipts exist", async () => {

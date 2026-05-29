@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { PATIENT_REOPEN_ROLES } from "@/business/rbac";
 import { patientService } from "@/services/patientService";
 import { respond } from "@/lib/api/apiResultBridge";
 
@@ -15,7 +16,7 @@ type Params = { id: string };
  * the same phone number.
  */
 export const POST = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager"]);
+  requireRole(actor, PATIENT_REOPEN_ROLES);
   let body: unknown = undefined;
   try {
     const raw = await req.text();

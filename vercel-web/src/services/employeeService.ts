@@ -43,6 +43,7 @@ import {
 import { assertNotStale } from "@/business/concurrencyRules";
 import { phoneDigitsKey, phoneSuffix } from "@/business/phoneRules";
 import { newId } from "@/business/idRules";
+import { crmTodayIso } from "@/utils/crmToday";
 import { employeeRepository } from "@/database/employeeRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
@@ -379,6 +380,41 @@ export const employeeService = {
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as EmployeeStatusInput;
 
+    // When transitioning to Active we must respect the same uniqueness rules
+    // that apply to create/update – Aadhar, mobile, and name. The DB enforces
+    // these with partial unique indexes (status='Active'), so without this
+    // preflight the user would see an opaque 500 / DB error instead of a
+    // friendly explanation of who already owns the value.
+    if (input.status === "Active") {
+      const row = existing.data as JsonRow;
+      const probe = {
+        fn: (row.fn as string | null) ?? "",
+        mn: (row.mn as string | null) ?? "",
+        ln: (row.ln as string | null) ?? "",
+        phone: (row.phone as string | null) ?? "",
+        aadhar: (row.aadhar as string | null) ?? ""
+      } as unknown as EmployeeInput;
+
+      if (probe.phone) {
+        const dups = await loadDuplicateCandidates(probe.phone, ctx);
+        if (!dups.success) return passFailure(dups);
+        const conflict = findActiveEmployeeDuplicate(dups.data || [], probe.phone, id);
+        if (conflict) {
+          return duplicateFailure(
+            "mobile",
+            probe.phone,
+            `Cannot activate — another active employee (id ${conflict.id}) already uses this mobile number. Deactivate or change theirs first.`
+          );
+        }
+      }
+
+      const aadharCheck = await ensureNoActiveAadharDuplicate(probe, id, ctx);
+      if (!aadharCheck.success) return passFailure(aadharCheck);
+
+      const nameCheck = await ensureNoActiveNameDuplicate(probe, id, ctx);
+      if (!nameCheck.success) return passFailure(nameCheck);
+    }
+
     const patch = statusPatch(input.status, ctx.actor.email, input.reason);
     const updated = await employeeRepository.updateStatus(id, patch, dbAccess(ctx));
     if (!updated.success) return passFailure(updated);
@@ -476,7 +512,7 @@ export const employeeService = {
       area: input.area || "",
       leave_date:
         (input.status || "Active") === "Inactive"
-          ? input.leave_date || new Date().toISOString().slice(0, 10)
+          ? input.leave_date || crmTodayIso()
           : input.leave_date || "",
       name_key: employeeNameKey({ fn: input.fn, mn: input.mn, ln: input.ln }),
       phone_digits: phoneDigitsKey(phone),
@@ -505,7 +541,7 @@ export const employeeService = {
         {
           ...baseRow,
           id: insertId,
-          created: input.created || new Date().toISOString(),
+          created: new Date().toISOString(),
           created_by: ctx.actor.email
         },
         access

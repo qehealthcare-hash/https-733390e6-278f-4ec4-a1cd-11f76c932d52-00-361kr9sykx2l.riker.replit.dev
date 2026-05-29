@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { DUTY_READ_ROLES } from "@/business/rbac";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
 import { respond } from "@/lib/api/apiResultBridge";
 
@@ -17,7 +18,7 @@ type Params = { id: string };
  * manually edited (so the next sync will leave it alone).
  */
 export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff", "Executive", "Nurse"]);
+  requireRole(actor, DUTY_READ_ROLES);
   const result = await dutyDiaryService.listDays(params.id, { actor });
   return respond(result);
 });

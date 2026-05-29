@@ -9,6 +9,7 @@
 
 export * from "@/database/types";
 export * from "@/database/supabaseClient";
+export { supabaseAdmin, supabaseAsUser, dbFor } from "@/database/clients";
 export * from "@/database/baseRepository";
 
 export { patientRepository } from "@/database/patientRepository";
@@ -32,3 +33,4 @@ export { aiRepository } from "@/database/aiRepository";
 export { whatsappRepository } from "@/database/whatsappRepository";
 export { storageRepository } from "@/database/storageRepository";
 export { healthRepository } from "@/database/healthRepository";
+export { idempotencyRepository } from "@/database/idempotencyRepository";

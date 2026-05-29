@@ -1,7 +1,11 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
-import { REGISTRY_READ_ROLES } from "@/lib/api/crmRoles";
+import {
+  EMPLOYEE_DELETE_ROLES,
+  EMPLOYEE_READ_ROLES,
+  EMPLOYEE_WRITE_ROLES
+} from "@/business/rbac";
 import { employeeService } from "@/services/employeeService";
 import { respond } from "@/lib/api/apiResultBridge";
 
@@ -11,13 +15,13 @@ export const dynamic = "force-dynamic";
 type Params = { id: string };
 
 export const GET = withAuth<Params>(async (_req, { params, actor }) => {
-  requireRole(actor, [...REGISTRY_READ_ROLES]);
+  requireRole(actor, EMPLOYEE_READ_ROLES);
   const result = await employeeService.getById(params.id, { actor });
   return respond(result);
 });
 
 export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager"]);
+  requireRole(actor, EMPLOYEE_WRITE_ROLES);
   const body = await parseJsonBody(req);
   const result = await employeeService.update(params.id, body, { actor });
   return respond(result);
@@ -33,7 +37,7 @@ export const PUT = PATCH;
  * pre-deletion snapshot) so the client can refetch and reconcile UI.
  */
 export const DELETE = withAuth<Params>(async (req, { params, actor }) => {
-  requireRole(actor, ["Admin"]);
+  requireRole(actor, EMPLOYEE_DELETE_ROLES);
 
   let body: unknown = undefined;
   try {

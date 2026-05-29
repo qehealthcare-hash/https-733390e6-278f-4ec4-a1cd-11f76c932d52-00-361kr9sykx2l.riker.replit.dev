@@ -366,29 +366,55 @@ export const patientService = {
       return failure(existing.error || "Patient not found", existing.code, existing.details);
     }
 
-    const patch = patientClosePatch(ctx.actor.email, reasonInput.reason, reasonInput.reason_other);
-    const updated = await patientRepository.update(id, patch, dbAccess(ctx));
-    if (!updated.success) return passFailure(updated);
-
-    const fresh = await loadFreshPatient(id, ctx, updated.data ?? null);
-    if (!fresh.success) {
-      return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
-    }
-
     const reasonLabel =
       reasonInput.reason === "Other" && reasonInput.reason_other
         ? `Other (${reasonInput.reason_other})`
         : reasonInput.reason || "";
+
+    // Cascading close: closes Active billings, cancels future SCHEDULED
+    // duties, truncates IN_PROGRESS duty windows so the duty-extend cron
+    // stops materialising new days, and writes its own audit row inside
+    // the transaction. See migration 20260528103500_hominal_close_patient.
+    const cascade = await patientRepository.closeCascadeRpc(
+      id,
+      ctx.actor.email || "",
+      reasonLabel,
+      dbAccess(ctx)
+    );
+    if (!cascade.success) return passFailure(cascade);
+    const cascadeRow = (cascade.data ?? {}) as Record<string, unknown>;
+    if (cascadeRow.ok === false) {
+      const msg = typeof cascadeRow.message === "string" ? cascadeRow.message : "Close cascade failed";
+      const code = typeof cascadeRow.code === "string" ? cascadeRow.code : undefined;
+      return failure(msg, code);
+    }
+
+    // Re-stamp `last_close_reason` so the patient detail still surfaces the
+    // dropdown answer in the UI (the RPC only writes status + updated_*).
+    if (reasonLabel) {
+      const patch = patientClosePatch(ctx.actor.email, reasonInput.reason, reasonInput.reason_other);
+      await patientRepository.update(id, patch, dbAccess(ctx));
+    }
+
+    const fresh = await loadFreshPatient(id, ctx, null);
+    if (!fresh.success) {
+      return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
+    }
+
+    const cascadeSuffix =
+      ` (billings=${Number(cascadeRow.billings_closed) || 0}` +
+      `, duties_cancelled=${Number(cascadeRow.duties_cancelled) || 0}` +
+      `, duties_truncated=${Number(cascadeRow.duties_truncated) || 0})`;
     const stamp = reasonLabel
-      ? `Deactivated patient ${id} — Reason: ${reasonLabel}`
-      : `Deactivated patient ${id}`;
+      ? `Deactivated patient ${id} — Reason: ${reasonLabel}${cascadeSuffix}`
+      : `Deactivated patient ${id}${cascadeSuffix}`;
 
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
         action: "deactivate",
         before: existing.data,
-        after: { ...fresh.data, close_reason: reasonLabel || null },
+        after: { ...fresh.data, close_reason: reasonLabel || null, close_cascade: cascadeRow },
         stamp
       }),
       patientToApi(fresh.data)
@@ -594,7 +620,7 @@ export const patientService = {
         {
           ...baseRow,
           id: insertId,
-          created: input.created || new Date().toISOString(),
+          created: new Date().toISOString(),
           created_by: ctx.actor.email
         },
         access

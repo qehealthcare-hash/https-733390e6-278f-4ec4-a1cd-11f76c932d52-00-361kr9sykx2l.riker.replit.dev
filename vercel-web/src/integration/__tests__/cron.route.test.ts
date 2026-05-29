@@ -57,6 +57,16 @@ describe("GET /api/v1/cron/duties-extend", () => {
     expect(m.extendActive).not.toHaveBeenCalled();
   });
 
+  it("refuses with 500 in preview / dev when CRON_SECRET is unset (fail-closed)", async () => {
+    delete process.env.CRON_SECRET;
+    delete process.env.DUTY_CRON_SECRET;
+    delete process.env.VERCEL_ENV;
+    const req = makeRequest("GET", "/api/v1/cron/duties-extend", { noAuth: true });
+    const res = await CronGet(req, ctx({}));
+    await expectErrorEnvelope(res, 500, "internal_error");
+    expect(m.extendActive).not.toHaveBeenCalled();
+  });
+
   it("403 when secret set but wrong bearer", async () => {
     process.env.CRON_SECRET = "topsecret";
     delete process.env.VERCEL_ENV;
@@ -69,24 +79,15 @@ describe("GET /api/v1/cron/duties-extend", () => {
     expect(m.extendActive).not.toHaveBeenCalled();
   });
 
-  it("accepts legacy x-cron-secret header", async () => {
+  it("rejects the legacy x-cron-secret header (Bearer is the only accepted form)", async () => {
     process.env.CRON_SECRET = "topsecret";
-    m.extendActive.mockResolvedValue({
-      success: true,
-      data: { duties: 3, created_svc: 9, created_payout: 9, errors: [] }
-    });
     const req = makeRequest("GET", "/api/v1/cron/duties-extend", {
       noAuth: true,
       headers: { "x-cron-secret": "topsecret" }
     });
     const res = await CronGet(req, ctx({}));
-    const data = await expectOkEnvelope<{
-      ok: boolean;
-      summary: { duties: number };
-    }>(res);
-    expect(data.ok).toBe(true);
-    expect(data.summary.duties).toBe(3);
-    expect(m.extendActive).toHaveBeenCalledTimes(1);
+    await expectErrorEnvelope(res, 403, "forbidden");
+    expect(m.extendActive).not.toHaveBeenCalled();
   });
 
   it("accepts Bearer secret header", async () => {

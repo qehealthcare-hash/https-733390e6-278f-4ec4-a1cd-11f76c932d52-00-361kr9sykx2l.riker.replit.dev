@@ -119,3 +119,16 @@ describe("billingRules — invoice period helpers", () => {
     expect(invoiceOutstanding(100, 40)).toBe(60);
   });
 });
+
+describe("billingRules — totals shape", () => {
+  it("computeBillingTotals exposes `billed` alias for `services` (UI header)", () => {
+    const totals = computeBillingTotals({
+      services: [{ total: 6050 }, { total: 0 }],
+      receipts: [{ amount: 5000 }]
+    });
+    expect(totals.services).toBe(6050);
+    expect(totals.billed).toBe(6050);
+    expect(totals.receipts).toBe(5000);
+    expect(totals.outstanding).toBe(1050);
+  });
+});

@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { DUTY_CANCEL_ROLES } from "@/business/rbac";
 import { dutyService } from "@/services/dutyService";
 import { respond } from "@/lib/api/apiResultBridge";
 
@@ -18,7 +19,7 @@ type Params = { id: string };
  * Body: `{ reason?: string }`
  */
 export const POST = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager"]);
+  requireRole(actor, DUTY_CANCEL_ROLES);
   const body = await parseJsonBody(req);
   const result = await dutyService.cancel(params.id, body, { actor });
   return respond(result);

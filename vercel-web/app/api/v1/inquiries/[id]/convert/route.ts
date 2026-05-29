@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { INQUIRY_WRITE_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { inquiryService } from "@/services/inquiryService";
 import { respond } from "@/lib/api/apiResultBridge";
@@ -17,9 +18,10 @@ type Params = { id: string };
  * RPC. Idempotent — re-running returns the same `{ patient_id, inquiry_id }`.
  */
 export const POST = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff", "Executive"]);
+  requireRole(actor, INQUIRY_WRITE_ROLES);
   return withIdempotency(req, actor, { route: "POST /inquiries/[id]/convert" }, async () => {
-    const body = await parseJsonBody(req).catch(() => ({}));
+    // P1-33: surface parse errors instead of treating them as an empty body.
+    const body = await parseJsonBody(req);
     const result = await inquiryService.convertToPatient(params.id, body, { actor });
     return respond(result, 201);
   });

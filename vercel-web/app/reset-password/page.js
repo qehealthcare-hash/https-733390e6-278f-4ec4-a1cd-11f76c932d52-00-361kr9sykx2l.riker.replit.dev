@@ -67,9 +67,9 @@ export default function ResetPasswordPage() {
         <h1>Set a new password</h1>
         <p className="mini-muted">Choose a strong password for your CRM account.</p>
         <form onSubmit={handleSubmit}>
-          <label>
+          <label htmlFor="reset-password-new-password-1">
             New password
-            <input
+            <input id="reset-password-new-password-1"
               type="password"
               autoComplete="new-password"
               value={password}
@@ -80,9 +80,9 @@ export default function ResetPasswordPage() {
               minLength={8}
             />
           </label>
-          <label>
+          <label htmlFor="reset-password-confirm-password-2">
             Confirm password
-            <input
+            <input id="reset-password-confirm-password-2"
               type="password"
               autoComplete="new-password"
               value={confirm}

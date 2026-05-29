@@ -113,8 +113,8 @@ begin
 end;
 $$;
 
-revoke all on function public.hh_duty_days_link_receipt(text, text, text, text, jsonb) from public, anon;
-revoke all on function public.hh_duty_days_unlink_receipt(text) from public, anon;
+revoke all on function public.hh_duty_days_link_receipt(text, text, text, text, jsonb) from public, anon, authenticated;
+revoke all on function public.hh_duty_days_unlink_receipt(text) from public, anon, authenticated;
 
 -- ── 2. Receipt RPCs — atomic ledger (replace Phase 11 parallel sync) ───────
 

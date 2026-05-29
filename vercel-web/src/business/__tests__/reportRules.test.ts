@@ -43,6 +43,55 @@ describe("reportRules — test matrix", () => {
     expect(kpis.payout_pending_amount).toBe(350);
     expect(kpis.partner_charge_ledger).toBe(150);
     expect(kpis.profit_loss).toBe(400);
+    // M3-H4: conservative profit (collected − net payouts − partner charges)
+    //   = 1200 − 1000 − 150 = 50
+    // and must match `buildProfitLoss().net_profit_after_pending_payouts`
+    // for the same inputs.
+    expect(kpis.profit_loss_after_pending).toBe(50);
+  });
+
+  it("dashboard `profit_loss_after_pending` matches buildProfitLoss for identical inputs (M3-H4 parity)", () => {
+    const receipts = [{ amount: 5000 }, { amount: 250 }];
+    const payouts = [
+      { net_amount: 1800, gross_amount: 2000, status: "PAID" },
+      { net_amount: 1200, gross_amount: 1300, status: "OPEN" },
+      { net_amount: 400, gross_amount: 450, status: "OPEN" }
+    ];
+    const payoutCharges = [{ amount: 120 }];
+
+    const kpis = buildDashboardKpis(
+      "2026-05",
+      { from: "2026-05-01T00:00:00.000Z", to: "2026-05-31T23:59:59.999Z" },
+      {
+        patients_total: 0,
+        patients_active: 0,
+        employees_total: 0,
+        employees_active: 0,
+        inquiries_this_month: 0,
+        duties_active: 0,
+        duties_scheduled: 0,
+        duties_completed: 0,
+        duties_cancelled: 0,
+        billings_total: 0,
+        billings_open: 0,
+        billings_closed: 0,
+        service_rows: [],
+        receipt_rows: receipts,
+        payout_rows: payouts,
+        payout_charge_rows: payoutCharges
+      }
+    );
+
+    const pl = buildProfitLoss(
+      "2026-05",
+      { from: "2026-05-01T00:00:00.000Z", to: "2026-05-31T23:59:59.999Z" },
+      { receipts, payouts, payout_charges: payoutCharges }
+    );
+
+    // Cash-basis profit must agree:
+    expect(kpis.profit_loss).toBe(pl.net_profit);
+    // Accrual variant must agree:
+    expect(kpis.profit_loss_after_pending).toBe(pl.net_profit_after_pending_payouts);
   });
 
   it("buildProfitLoss aligns with dashboard profit definition", () => {

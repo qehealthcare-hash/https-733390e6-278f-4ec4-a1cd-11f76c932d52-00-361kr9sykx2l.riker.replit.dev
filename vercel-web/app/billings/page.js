@@ -102,8 +102,15 @@ function totalsFromBundle(bundle) {
   if (!bundle?.totals) {
     return { billed: 0, receipts: 0, outstanding: 0, sec_dep: 0 };
   }
+  // Server's BillingTotals exposes `services` for the billed amount; the older
+  // legacy alias `billed` was never sent, which made the header card show
+  // "Billed: ₹0" on every bill. Read `services` and fall back to `billed`
+  // for forwards compatibility if the field is ever renamed back.
+  var billed = Number(
+    (bundle.totals.services != null ? bundle.totals.services : bundle.totals.billed) || 0
+  );
   return {
-    billed: Number(bundle.totals.billed || 0),
+    billed: billed,
     receipts: Number(bundle.totals.receipts || 0),
     outstanding: Number(bundle.totals.outstanding || 0),
     sec_dep: Number(bundle.totals.sec_dep || 0)
@@ -113,6 +120,12 @@ function totalsFromBundle(bundle) {
 export default function BillingsPage() {
   var auth = useAuth();
   var [billings, setBillings] = useState([]);
+  // P1-28: track the API limit + the server's total so we can surface a
+  // "Showing first N of M — refine filters" banner when the list is capped.
+  // Previously a clinic with > 100 active bills only ever saw the first 100
+  // and there was zero indication of truncation.
+  var LIST_LIMIT = 100;
+  var [billingsTotal, setBillingsTotal] = useState(0);
   var [loading, setLoading] = useState(true);
   var [error, setError] = useState("");
   var [message, setMessage] = useState("");
@@ -134,15 +147,18 @@ export default function BillingsPage() {
     setLoading(true);
     try {
       var qs = new URLSearchParams();
-      qs.set("limit", "100");
+      qs.set("limit", String(LIST_LIMIT));
       if (statusFilter) qs.set("status", statusFilter);
       if (search.trim()) qs.set("q", search.trim());
       var data = await request("/billings?" + qs.toString(), null, auth.session);
-      setBillings(Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : []);
+      var rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
+      setBillings(rows);
+      setBillingsTotal(Number(data?.total ?? rows.length) || rows.length);
       setError("");
     } catch (err) {
       setError(err.message || "Failed to load bills");
       setBillings([]);
+      setBillingsTotal(0);
     } finally {
       setLoading(false);
     }
@@ -361,6 +377,10 @@ export default function BillingsPage() {
           method: "POST",
           body: {
             billing_id: selectedId,
+            patient_id:
+              (bundle && bundle.billing && bundle.billing.patient_id) ||
+              (bundle && bundle.patient && bundle.patient.id) ||
+              "",
             invoice_id: receiptForm.invoice_id || null,
             type: receiptForm.type,
             method: receiptForm.method,
@@ -412,9 +432,17 @@ export default function BillingsPage() {
     if (!reason) return;
     var force = false;
     var outstanding = totalsFromBundle(bundle).outstanding;
+    var secDep = Number(totalsFromBundle(bundle).sec_dep || 0);
+    var closeIntro =
+      "Close this bill?\n\n" +
+      "A FINAL closing invoice will be raised first (unbilled services + security deposit applied as a receipt)." +
+      (secDep > 0 ? "\nDeposit on file: " + formatCurrency(secDep) + "." : "");
+    if (!window.confirm(closeIntro)) return;
     if (outstanding > 0) {
       force = window.confirm(
-        "Outstanding balance is " + formatCurrency(outstanding) + ". Close anyway? (force)"
+        "After the FINAL invoice, outstanding may still be " +
+          formatCurrency(outstanding) +
+          " (or less if the deposit covers it). Close anyway? (force)"
       );
       if (!force) return;
     }
@@ -742,6 +770,55 @@ export default function BillingsPage() {
     }
   }
 
+  async function handleGenerateFinalInvoice() {
+    if (!selectedId) return;
+    var totals = totalsFromBundle(bundle);
+    var secDep = Number(totals.sec_dep || 0);
+    var confirmMsg =
+      "Generate FINAL closing invoice for this bill?\n\n" +
+      "• All unbilled service entries will be added to a new invoice (full gross).\n" +
+      (secDep > 0
+        ? "• Security deposit (" +
+          formatCurrency(secDep) +
+          ") will be recorded as a Security receipt against that invoice.\n"
+        : "") +
+      (secDep > 0
+        ? "• If the deposit exceeds the bill, a Refund receipt will be created for the excess.\n"
+        : "") +
+      "\nClosing the bill later will reuse this FINAL invoice if it already exists.";
+    if (!window.confirm(confirmMsg)) return;
+    setBusy(true);
+    setError("");
+    try {
+      var data = await requestWithOfflineFallback(
+        "/billings/" + selectedId + "/invoices/final",
+        { method: "POST", body: {} },
+        auth.session
+      );
+      if (data && data.duplicate) {
+        setMessage("FINAL invoice already exists — opened existing");
+      } else {
+        var parts = ["FINAL invoice generated"];
+        if (data && Number(data.sec_dep_applied || 0) > 0) {
+          parts.push(
+            "deposit " + formatCurrency(data.sec_dep_applied) + " applied as Security receipt"
+          );
+        }
+        if (data && Number(data.refund_amount || 0) > 0) {
+          parts.push("refund " + formatCurrency(data.refund_amount) + " owed to patient");
+        }
+        setMessage(parts.join(" · "));
+      }
+      await openBilling(selectedId);
+      await reloadList();
+      if (data && data.invoice && data.invoice.id) printInvoiceById(data.invoice.id);
+    } catch (err) {
+      setError(err.message || "Could not generate FINAL invoice");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleGenerateManualInvoice(lines) {
     if (!selectedId || !lines.length) return;
     setBusy(true);
@@ -843,6 +920,12 @@ export default function BillingsPage() {
   var status = String(bundle?.billing?.status || "Active");
   var paidStatus = String(bundle?.billing?.paid_status || "UNPAID");
   var isClosed = status === "Closed" || status === "Cancelled";
+  // Receipts are allowed on Closed bills (to settle outstanding); only
+  // Cancelled bills hard-block new receipts. All OTHER write actions
+  // (service edits, status changes, manual invoice, etc.) continue to use
+  // `isClosed` so a closed bill can't accept fresh service days.
+  var isCancelledForReceipts = status === "Cancelled";
+  var canRecordReceipts = !isCancelledForReceipts && Number(totals.outstanding || 0) > 0;
   var monthOpts = useMemo(function () { return monthOptions(12); }, []);
   var [invoicePeriod, setInvoicePeriod] = useState(monthOpts[0]?.value || "");
   var [showManualInvoice, setShowManualInvoice] = useState(false);
@@ -890,8 +973,8 @@ export default function BillingsPage() {
               <form className="stack" onSubmit={handleCreate}>
                 <div className="grid-2">
                   <div className="field">
-                    <label>Patient</label>
-                    <select
+                    <label htmlFor="billings-patient-1">Patient</label>
+                    <select id="billings-patient-1"
                       value={createPatientId}
                       onChange={function (event) {
                         setCreatePatientId(event.target.value);
@@ -909,8 +992,8 @@ export default function BillingsPage() {
                     </select>
                   </div>
                   <div className="field">
-                    <label>Security deposit</label>
-                    <input
+                    <label htmlFor="billings-security-deposit-2">Security deposit</label>
+                    <input id="billings-security-deposit-2"
                       type="number"
                       min="0"
                       value={createSecDep}
@@ -931,8 +1014,8 @@ export default function BillingsPage() {
             <ModuleShell title="Patient bills" description="Live ledger from hh_billings. Click a row for full detail.">
               <div className="toolbar">
                 <div className="field">
-                  <label>Status</label>
-                  <select
+                  <label htmlFor="billings-status-3">Status</label>
+                  <select id="billings-status-3"
                     value={statusFilter}
                     onChange={function (event) {
                       setStatusFilter(event.target.value);
@@ -949,8 +1032,8 @@ export default function BillingsPage() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Search</label>
-                  <input
+                  <label htmlFor="billings-search-4">Search</label>
+                  <input id="billings-search-4"
                     placeholder="patient name / invoice no / phone"
                     value={search}
                     onChange={function (event) {
@@ -959,7 +1042,7 @@ export default function BillingsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>&nbsp;</label>
+                  <span aria-hidden="true">&nbsp;</span>
                   <button className="button secondary" type="button" onClick={reloadList}>
                     Refresh
                   </button>
@@ -967,6 +1050,11 @@ export default function BillingsPage() {
               </div>
               {error ? <div className="error-text">{error}</div> : null}
               {message ? <div className="success-text">{message}</div> : null}
+              {billings.length >= LIST_LIMIT && billingsTotal > billings.length ? (
+                <div className="info-text" role="status" style={{ background: "#fff7e6", border: "1px solid #ffd28d", padding: "8px 12px", borderRadius: 8, fontSize: 13 }}>
+                  Showing first {billings.length} of {billingsTotal} bills — refine filters to narrow the list.
+                </div>
+              ) : null}
               {!filtered.length ? (
                 <EmptyState
                   title={loading ? "Loading bills…" : "No bills"}
@@ -1106,8 +1194,8 @@ export default function BillingsPage() {
                     <strong>Generate invoice</strong>
                     <div className="grid-2">
                       <div className="field">
-                        <label>Billing month</label>
-                        <select
+                        <label htmlFor="billings-billing-month-6">Billing month</label>
+                        <select id="billings-billing-month-6"
                           value={invoicePeriod}
                           onChange={function (event) {
                             setInvoicePeriod(event.target.value);
@@ -1127,7 +1215,7 @@ export default function BillingsPage() {
                         </select>
                       </div>
                       <div className="field">
-                        <label>&nbsp;</label>
+                        <span aria-hidden="true">&nbsp;</span>
                         <button
                           className="button primary"
                           type="button"
@@ -1144,6 +1232,45 @@ export default function BillingsPage() {
                     <div className="mini-muted">
                       Snapshots all services dated in the chosen month into a new invoice with its own number. The new invoice opens as UNPAID — record receipts below to move it to PARTIAL/PAID.
                     </div>
+                    {(function () {
+                      var status = String((bundle.billing && bundle.billing.status) || "");
+                      var isCancelled = status === "Cancelled";
+                      var hasFinal = (bundle.invoices || []).some(function (row) {
+                        var inv = row && row.invoice;
+                        var st = String((inv && inv.status) || "").toUpperCase();
+                        return inv && inv.kind === "FINAL" && st !== "CANCELLED";
+                      });
+                      var hasUnbilled =
+                        Number((bundle.totals && bundle.totals.services) || 0) >
+                          (bundle.invoices || []).reduce(function (s, row) {
+                            var inv = row && row.invoice;
+                            var st = String((inv && inv.status) || "").toUpperCase();
+                            return s + (inv && st !== "CANCELLED" ? Number(inv.amount || 0) : 0);
+                          }, 0);
+                      var canRaiseFinal =
+                        !isCancelled && !hasFinal && (hasUnbilled || Number(totals.sec_dep || 0) > 0);
+                      if (!canRaiseFinal) return null;
+                      return (
+                      <div className="stack" style={{ marginTop: 12 }}>
+                        <button
+                          className="button primary"
+                          type="button"
+                          onClick={handleGenerateFinalInvoice}
+                          disabled={busy}
+                          title={isClosed
+                            ? "This bill is Closed but never got a FINAL invoice — recover unbilled service days and apply the security deposit"
+                            : "Snapshot remaining services + apply security deposit + auto-refund any excess"}
+                        >
+                          {isClosed ? "Generate FINAL invoice (recover closed bill)" : "Generate FINAL invoice (apply deposit)"}
+                        </button>
+                        <div className="mini-muted">
+                          {isClosed
+                            ? "This bill was closed before the FINAL flow shipped. Generating the FINAL invoice now will snapshot unbilled service days and apply the security deposit (" + formatCurrency(totals.sec_dep) + ") as a Security receipt."
+                            : "Final settlement: snapshots unbilled services at full gross, records the security deposit (" + formatCurrency(totals.sec_dep) + ") as a Security receipt on that invoice, and auto-refunds any excess. Also runs automatically when you close the bill or close the patient. One FINAL invoice per bill."}
+                        </div>
+                      </div>
+                      );
+                    })()}
                     {!isClosed ? (
                       <div className="stack" style={{ marginTop: 12 }}>
                         <button
@@ -1159,8 +1286,8 @@ export default function BillingsPage() {
                               return (
                                 <div className="grid-2" key={"ml-" + idx}>
                                   <div className="field">
-                                    <label>Date</label>
-                                    <input
+                                    <label htmlFor="billings-date-8">Date</label>
+                                    <input id="billings-date-8"
                                       type="date"
                                       value={line.date}
                                       onChange={function (e) {
@@ -1171,8 +1298,8 @@ export default function BillingsPage() {
                                     />
                                   </div>
                                   <div className="field">
-                                    <label>Service</label>
-                                    <input
+                                    <label htmlFor="billings-service-9">Service</label>
+                                    <input id="billings-service-9"
                                       value={line.service_name}
                                       onChange={function (e) {
                                         var next = manualLines.slice();
@@ -1182,8 +1309,8 @@ export default function BillingsPage() {
                                     />
                                   </div>
                                   <div className="field">
-                                    <label>Partner id (optional)</label>
-                                    <input
+                                    <label htmlFor="billings-partner-id-optional-10">Partner id (optional)</label>
+                                    <input id="billings-partner-id-optional-10"
                                       value={line.partner}
                                       onChange={function (e) {
                                         var next = manualLines.slice();
@@ -1193,8 +1320,8 @@ export default function BillingsPage() {
                                     />
                                   </div>
                                   <div className="field">
-                                    <label>Per-day charge</label>
-                                    <input
+                                    <label htmlFor="billings-per-day-charge-11">Per-day charge</label>
+                                    <input id="billings-per-day-charge-11"
                                       type="number"
                                       min="0"
                                       value={line.amt}
@@ -1211,8 +1338,8 @@ export default function BillingsPage() {
                                     />
                                   </div>
                                   <div className="field">
-                                    <label>Days</label>
-                                    <input
+                                    <label htmlFor="billings-days-12">Days</label>
+                                    <input id="billings-days-12"
                                       type="number"
                                       min="1"
                                       value={line.count}
@@ -1229,8 +1356,8 @@ export default function BillingsPage() {
                                     />
                                   </div>
                                   <div className="field">
-                                    <label>Total</label>
-                                    <input type="number" min="0" value={line.total} readOnly />
+                                    <label htmlFor="billings-total-13">Total</label>
+                                    <input id="billings-total-13" type="number" min="0" value={line.total} readOnly />
                                   </div>
                                 </div>
                               );
@@ -1360,8 +1487,8 @@ export default function BillingsPage() {
                     <strong>Security deposit</strong>
                     <div className="grid-2">
                       <div className="field">
-                        <label>Amount</label>
-                        <input
+                        <label htmlFor="billings-amount-14">Amount</label>
+                        <input id="billings-amount-14"
                           type="number"
                           min="0"
                           value={secDepForm.sec_dep}
@@ -1372,7 +1499,7 @@ export default function BillingsPage() {
                         />
                       </div>
                       <div className="field">
-                        <label>&nbsp;</label>
+                        <span aria-hidden="true">&nbsp;</span>
                         <button className="button primary" type="submit" disabled={busy || isClosed}>
                           Update deposit
                         </button>
@@ -1420,6 +1547,15 @@ export default function BillingsPage() {
 
                   <form className="stack" onSubmit={handleReceiptSubmit}>
                     <strong>Add receipt</strong>
+                    {isCancelledForReceipts ? (
+                      <div className="helper-box" style={{ background: "#fee2e2", color: "#991b1b" }}>
+                        Bill is Cancelled — receipts cannot be recorded against a voided bill.
+                      </div>
+                    ) : status === "Closed" ? (
+                      <div className="helper-box" style={{ background: "#fef3c7", color: "#92400e" }}>
+                        Bill is Closed. You can still record receipts to settle outstanding invoices on it without reopening the bill.
+                      </div>
+                    ) : null}
                     {selectedInvoiceOutstanding != null ? (
                       <div className="mini-muted">
                         Invoice outstanding: <strong>{formatCurrency(selectedInvoiceOutstanding)}</strong>
@@ -1432,13 +1568,13 @@ export default function BillingsPage() {
                     ) : null}
                     <div className="grid-2">
                       <div className="field">
-                        <label>Apply to invoice</label>
-                        <select
+                        <label htmlFor="billings-apply-to-invoice-16">Apply to invoice</label>
+                        <select id="billings-apply-to-invoice-16"
                           value={receiptForm.invoice_id}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, invoice_id: event.target.value });
                           }}
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         >
                           <option value="">No invoice (on-account / advance)</option>
                           {(bundle.invoices || [])
@@ -1459,13 +1595,13 @@ export default function BillingsPage() {
                         </select>
                       </div>
                       <div className="field">
-                        <label>Type</label>
-                        <select
+                        <label htmlFor="billings-type-17">Type</label>
+                        <select id="billings-type-17"
                           value={receiptForm.type}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, type: event.target.value });
                           }}
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         >
                           {receiptTypeOptions.map(function (o) {
                             return (
@@ -1477,13 +1613,13 @@ export default function BillingsPage() {
                         </select>
                       </div>
                       <div className="field">
-                        <label>Method</label>
-                        <select
+                        <label htmlFor="billings-method-18">Method</label>
+                        <select id="billings-method-18"
                           value={receiptForm.method}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, method: event.target.value });
                           }}
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         >
                           {paymentMethodOptions.map(function (o) {
                             return (
@@ -1495,8 +1631,8 @@ export default function BillingsPage() {
                         </select>
                       </div>
                       <div className="field">
-                        <label>Amount</label>
-                        <input
+                        <label htmlFor="billings-amount-19">Amount</label>
+                        <input id="billings-amount-19"
                           type="number"
                           min="0"
                           value={receiptForm.amount}
@@ -1504,40 +1640,40 @@ export default function BillingsPage() {
                             setReceiptForm({ ...receiptForm, amount: event.target.value });
                           }}
                           required
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         />
                       </div>
                       <div className="field">
-                        <label>Date</label>
-                        <input
+                        <label htmlFor="billings-date-20">Date</label>
+                        <input id="billings-date-20"
                           type="date"
                           value={receiptForm.date}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, date: event.target.value });
                           }}
                           required
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         />
                       </div>
                       <div className="field">
-                        <label>Reference</label>
-                        <input
+                        <label htmlFor="billings-reference-21">Reference</label>
+                        <input id="billings-reference-21"
                           value={receiptForm.ref}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, ref: event.target.value });
                           }}
                           placeholder="UPI ref / cheque no"
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         />
                       </div>
                       <div className="field">
-                        <label>Remarks</label>
-                        <input
+                        <label htmlFor="billings-remarks-22">Remarks</label>
+                        <input id="billings-remarks-22"
                           value={receiptForm.remarks}
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, remarks: event.target.value });
                           }}
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         />
                       </div>
                     </div>
@@ -1547,10 +1683,17 @@ export default function BillingsPage() {
                         type="submit"
                         disabled={
                           busy ||
-                          isClosed ||
+                          !canRecordReceipts ||
                           (selectedInvoiceOutstanding != null &&
                             Number(receiptForm.amount || 0) >
                               selectedInvoiceOutstanding + 0.005)
+                        }
+                        title={
+                          isCancelledForReceipts
+                            ? "Bill is Cancelled"
+                            : !canRecordReceipts
+                              ? "Bill is fully settled — nothing to receive"
+                              : undefined
                         }
                       >
                         Record receipt

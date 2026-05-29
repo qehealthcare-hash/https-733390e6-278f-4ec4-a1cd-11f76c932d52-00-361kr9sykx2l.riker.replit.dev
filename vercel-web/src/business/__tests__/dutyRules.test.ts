@@ -11,6 +11,7 @@ import {
   isOverlapExcludedStatus,
   OPEN_ENDED_END_AT,
   openEndedSentinelFor,
+  payoutPeriodForDuty,
   selectOverlappingDuty,
   selectPatientOverlappingDuty,
   shouldCheckDutyOverlap
@@ -178,5 +179,55 @@ describe("dutyRules — open-ended duty (no end_at)", () => {
     const today = "2026-05-10T23:59:59.999Z";
     const result = effectiveMaterializeEndAt({ end_at: "2026-05-05T20:00:00Z" }, null, today);
     expect(result).toBe("2026-05-05T20:00:00Z");
+  });
+
+  it("effectiveMaterializeEndAt compares timestamps not strings (mixed Z / +05:30)", () => {
+    // today = IST end-of-day on May 29 (= 18:29 UTC).
+    // duty.end_at = May 29 20:00 UTC (= 01:30 IST May 30) — actually
+    // AFTER today. Lexically `T20...Z` < `T23:59...+05:30`, so the
+    // string-comparison version mistakenly picks duty.end_at and
+    // materializes 1.5h past today, seeding phantom diary rows for
+    // May 30 that billing then has to dedup.
+    const today = "2026-05-29T23:59:59.999+05:30";
+    const result = effectiveMaterializeEndAt(
+      { end_at: "2026-05-29T20:00:00Z" },
+      null,
+      today
+    );
+    expect(result).toBe(today);
+  });
+
+  it("effectiveMaterializeEndAt picks the bill close when truly earlier (timestamp-safe)", () => {
+    // billClosedAt is in `Z`, today is in `+05:30`; the timestamps
+    // resolve to today > billClosedAt and the function must pick
+    // billClosedAt despite the lexical `+05:30` > `Z` ordering.
+    const today = "2026-05-29T23:59:59.999+05:30";
+    const billClosedAt = "2026-05-25T18:30:00Z";
+    const result = effectiveMaterializeEndAt(
+      { end_at: OPEN_ENDED_END_AT },
+      billClosedAt,
+      today
+    );
+    expect(result).toBe(billClosedAt);
+  });
+});
+
+describe("dutyRules — payoutPeriodForDuty (IST)", () => {
+  it("returns YYYY-MM in IST for a same-month UTC start", () => {
+    expect(payoutPeriodForDuty("2026-05-15T10:00:00Z", "")).toBe("2026-05");
+  });
+
+  it("rolls a 18:30 UTC Apr 30 start into the IST May payout period", () => {
+    // 18:30 UTC Apr 30 = 00:00 IST May 1. Diary materialize bills May,
+    // so payout recompute must also target May.
+    expect(payoutPeriodForDuty("2026-04-30T18:30:00Z", "")).toBe("2026-05");
+  });
+
+  it("falls back to the fallback timestamp when start_at is empty", () => {
+    expect(payoutPeriodForDuty("", "2026-05-31T22:00:00Z")).toBe("2026-06");
+  });
+
+  it("returns empty string when both inputs are empty", () => {
+    expect(payoutPeriodForDuty("", "")).toBe("");
   });
 });

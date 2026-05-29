@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getBrowserSupabase } from "@/lib/supabase/browser";
 import { flushOfflineQueue, request } from "@/lib/api-client";
 
@@ -13,24 +13,40 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState("");
   const [syncLabel, setSyncLabel] = useState("Connecting...");
+  // Latest session for the offline-queue listeners (closures need the
+  // newest token, not the one in scope when the listener registered).
+  const sessionRef = useRef(null);
+  useEffect(function () {
+    sessionRef.current = session;
+  }, [session]);
 
   useEffect(function () {
     let mounted = true;
 
     async function loadProfile(nextSession) {
       if (!nextSession?.access_token) return;
+      if (mounted) {
+        setProfileLoading(true);
+        setProfileError("");
+      }
       try {
         const me = await request("/auth/me", null, nextSession);
         if (mounted) {
           setProfile(me);
+          setProfileError("");
           setSyncLabel("Connected");
         }
       } catch (error) {
         if (mounted) {
           setProfile(null);
+          setProfileError(error?.message || "Profile lookup failed");
           setSyncLabel("Connected with warnings");
         }
+      } finally {
+        if (mounted) setProfileLoading(false);
       }
     }
 
@@ -87,8 +103,32 @@ export function AuthProvider({ children }) {
       }
     });
 
+    // P1-3: replay the offline queue when the tab comes back online or
+    // visibility flips to "visible". Holding queued writes until the next
+    // explicit auth event (login / token refresh) meant a user who simply
+    // alt-tabbed away during a Wi-Fi blip waited until the next login to
+    // get their saves through. These listeners reuse the same session-aware
+    // flush path so an expired/refreshed session is handled centrally.
+    function handleOnline() {
+      var current = sessionRef.current;
+      if (current?.access_token) runBackgroundSync(current);
+    }
+    function handleVisibility() {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        handleOnline();
+      }
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", handleOnline);
+      window.addEventListener("visibilitychange", handleVisibility);
+    }
+
     return function cleanup() {
       mounted = false;
+      if (typeof window !== "undefined") {
+        window.removeEventListener("online", handleOnline);
+        window.removeEventListener("visibilitychange", handleVisibility);
+      }
       subscription.data.subscription.unsubscribe();
     };
   }, [supabase]);
@@ -98,13 +138,56 @@ export function AuthProvider({ children }) {
     session,
     profile,
     loading,
+    profileLoading,
+    profileError,
     syncLabel,
-    async signIn(email, password) {
-      const result = await supabase.auth.signInWithPassword({ email, password });
-      if (result.error) throw result.error;
-      return result.data;
+    async signIn(identifier, password) {
+      // P1-38: route the password sign-in through the rate-limited
+      // /api/v1/auth/login proxy. The browser no longer hits GoTrue
+      // directly, so brute-force attempts are bounded by the persistent
+      // Upstash limiter (5 attempts / 60 s / IP) regardless of which
+      // Vercel region the request lands on.
+      const res = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier, password })
+      });
+      const json = await res.json().catch(function () { return {}; });
+      if (!res.ok || json?.success === false) {
+        const err = new Error(json?.error || "Invalid username or password");
+        err.status = res.status;
+        throw err;
+      }
+      const tokens = json?.data || json;
+      // Hand the freshly minted tokens to supabase-js so onAuthStateChange
+      // fires for the rest of the app exactly as it did before.
+      const setResult = await supabase.auth.setSession({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token
+      });
+      if (setResult.error) throw setResult.error;
+      return { session: setResult.data.session, user: setResult.data.user };
     },
     async signOut() {
+      // M1-C1: hit the server logout first so GoTrue revokes the refresh
+      // token globally. Local clear must run regardless (network failure,
+      // already-expired token, etc.) so the user is never stranded on a
+      // logged-in UI after clicking "Sign out".
+      var currentToken = sessionRef.current?.access_token;
+      if (currentToken) {
+        try {
+          await fetch("/api/v1/auth/logout", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: "Bearer " + currentToken
+            },
+            body: JSON.stringify({ scope: "global" })
+          });
+        } catch (_revokeErr) {
+          /* server-side revoke is best-effort; local clear is canonical */
+        }
+      }
       try {
         localStorage.removeItem("hhcrm-offline-queue");
       } catch (_err) {
@@ -112,6 +195,7 @@ export function AuthProvider({ children }) {
       }
       await supabase.auth.signOut();
       setProfile(null);
+      setProfileError("");
       setSession(null);
       setSyncLabel("Signed out");
     }

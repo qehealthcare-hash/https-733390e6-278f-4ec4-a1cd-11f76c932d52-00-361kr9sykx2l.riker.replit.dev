@@ -4,6 +4,7 @@ import { env } from "@/lib/api/env";
 import { respond } from "@/lib/api/apiResultBridge";
 import { enforceRateLimit, timingSafeEqualString } from "@/lib/api/security";
 import { whatsappService } from "@/services/whatsappService";
+import { whatsappWebhookPayloadSchema } from "@/validation/whatsappValidation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -75,6 +76,16 @@ export async function POST(req: NextRequest) {
       return new NextResponse("invalid body", { status: 400 });
     }
   }
-  const result = await whatsappService.recordWebhook(payload, { verified });
+  // P1-24: Meta sometimes sends partial / malformed payloads (especially
+  // during webhook re-subscribes), and an attacker who replays a captured
+  // HMAC could craft a body that crashes recordWebhook by missing fields.
+  // Validate against the Zod envelope before letting the service touch it.
+  // The schema is passthrough on inner fields so future Meta additions still
+  // flow through — we just enforce the top-level entry/changes shape.
+  const parsed = whatsappWebhookPayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    return new NextResponse("invalid payload shape", { status: 400 });
+  }
+  const result = await whatsappService.recordWebhook(parsed.data, { verified });
   return respond(result);
 }

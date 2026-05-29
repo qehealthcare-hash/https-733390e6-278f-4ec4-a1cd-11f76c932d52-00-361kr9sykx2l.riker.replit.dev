@@ -1,55 +1,55 @@
 /**
  * Shared server-side RBAC role lists for CRM API routes.
- * Keep aligned with `hh_roles.perms` where possible; these are the baseline
- * when the database matrix is empty.
+ *
+ * M2-H1 (2026-05-29): all role-name strings now live in
+ * `src/business/rbac.ts`. This file is retained as a thin compatibility
+ * shim so the ~100 existing route handlers under `app/api/v1/**` don't
+ * need to change their import paths. Prefer importing from
+ * `@/business/rbac` directly in new code.
  */
 
-/** Patients, employees, inquiries, duties, attendance registry reads. */
-export const REGISTRY_READ_ROLES = [
-  "Admin",
-  "Manager",
-  "Staff",
-  "Executive",
-  "Accountant",
-  "Supervisor",
-  "Nurse"
-] as const;
+export {
+  REGISTRY_READ_ROLES,
+  DIRECTORY_READ_ROLES,
+  REPORT_READ_ROLES,
+  AUDIT_READ_ROLES,
+  SETTINGS_READ_ROLES,
+  USER_ADMIN_ROLES,
+  WHATSAPP_READ_ROLES,
+  UPLOAD_WRITE_ROLES,
+  DASHBOARD_READ_ROLES,
+  PATIENT_READ_ROLES,
+  PATIENT_WRITE_ROLES,
+  PATIENT_CLOSE_ROLES,
+  PATIENT_REOPEN_ROLES,
+  PATIENT_HISTORY_ROLES,
+  PATIENT_SYNC_ROLES,
+  EMPLOYEE_READ_ROLES,
+  EMPLOYEE_WRITE_ROLES,
+  EMPLOYEE_STATUS_ROLES,
+  EMPLOYEE_DELETE_ROLES,
+  EMPLOYEE_LINKS_ROLES,
+  EMPLOYEE_SYNC_ROLES,
+  DUTY_READ_ROLES,
+  DUTY_WRITE_ROLES,
+  DUTY_CANCEL_ROLES,
+  DUTY_DELETE_ROLES,
+  DUTY_CHECK_IN_ROLES,
+  DUTY_DIARY_WRITE_ROLES,
+  DUTY_DIARY_BATCH_ROLES,
+  DUTY_MATERIALIZE_ROLES,
+  DUTY_PARTNERS_ROLES,
+  DUTY_TOTALS_ROLES,
+  DUTY_EXTEND_ROLES,
+  ATTENDANCE_READ_ROLES,
+  ATTENDANCE_WRITE_ROLES,
+  ATTENDANCE_DELETE_ROLES,
+  SETTINGS_WRITE_ROLES,
+  SETTINGS_DELETE_ROLES,
+  USER_CREATE_ROLES,
+  USER_UPDATE_ROLES,
+  USER_DEACTIVATE_ROLES,
+  ROLE_ADMIN_ROLES
+} from "@/business/rbac";
 
-/** Doctors, vendors, lookups. */
-export const DIRECTORY_READ_ROLES = [
-  "Admin",
-  "Manager",
-  "Staff",
-  "Executive",
-  "Accountant",
-  "Supervisor"
-] as const;
-
-export const REPORT_READ_ROLES = ["Admin", "Manager", "Accountant"] as const;
-
-export const AUDIT_READ_ROLES = ["Admin", "Manager", "Accountant"] as const;
-
-export const SETTINGS_READ_ROLES = ["Admin", "Manager", "Accountant"] as const;
-
-export const USER_ADMIN_ROLES = ["Admin", "Manager"] as const;
-
-export const WHATSAPP_READ_ROLES = ["Admin", "Manager", "Staff", "Accountant"] as const;
-
-export const UPLOAD_WRITE_ROLES = [
-  "Admin",
-  "Manager",
-  "Staff",
-  "Executive",
-  "Accountant",
-  "Nurse"
-] as const;
-
-export const DASHBOARD_READ_ROLES = [
-  "Admin",
-  "Manager",
-  "Staff",
-  "Executive",
-  "Accountant",
-  "Supervisor",
-  "Nurse"
-] as const;
+export type { Role } from "@/business/rbac";

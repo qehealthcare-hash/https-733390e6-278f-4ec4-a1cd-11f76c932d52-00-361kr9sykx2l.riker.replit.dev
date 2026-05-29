@@ -13,6 +13,7 @@ import {
   updateRow
 } from "@/database/baseRepository";
 import { runListQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 
 const TABLE = "hh_vendors";
 
@@ -31,11 +32,14 @@ export const vendorRepository = {
       (q) => {
         let chain = q;
         if (opts.q) {
-          chain = chain.or(
-            `name.ilike.%${opts.q}%,contact.ilike.%${opts.q}%,phone.ilike.%${opts.q}%,gst.ilike.%${opts.q}%`
-          );
+          const term = sanitizeSearchTerm(opts.q);
+          if (term) {
+            chain = chain.or(
+              `name.ilike.%${term}%,contact.ilike.%${term}%,phone.ilike.%${term}%,gst.ilike.%${term}%`
+            );
+          }
         }
-        if (opts.city) chain = chain.ilike("city", `%${opts.city}%`);
+        if (opts.city) chain = chain.ilike("city", `%${sanitizeSearchTerm(opts.city)}%`);
         return chain;
       },
       {

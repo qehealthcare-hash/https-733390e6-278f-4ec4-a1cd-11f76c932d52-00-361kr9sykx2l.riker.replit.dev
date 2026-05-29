@@ -160,8 +160,11 @@ const CASES: Case[] = [
     call:
       () => async () =>
         BillingsGet(makeRequest("GET", "/api/v1/billings"), ctx({})),
-    allow: [ACTORS.admin, ACTORS.manager, ACTORS.accountant, ACTORS.staff, ACTORS.viewer],
-    deny: [ACTORS.nurse]
+    // M2-H1: dropped "Viewer" from BILLING_READ_ROLES (dead string, never
+    // existed in hh_roles). The viewer fixture is now an "unknown role"
+    // stand-in and must hit 403 like every other unrecognised role.
+    allow: [ACTORS.admin, ACTORS.manager, ACTORS.accountant, ACTORS.staff],
+    deny: [ACTORS.nurse, ACTORS.viewer]
   },
   {
     route: "POST /billings",

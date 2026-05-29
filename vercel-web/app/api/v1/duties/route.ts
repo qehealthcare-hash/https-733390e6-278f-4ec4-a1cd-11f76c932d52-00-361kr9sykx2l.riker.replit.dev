@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
+import { DUTY_READ_ROLES, DUTY_WRITE_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { dutyService } from "@/services/dutyService";
 import { respond } from "@/lib/api/apiResultBridge";
@@ -9,7 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff", "Executive", "Nurse"]);
+  requireRole(actor, DUTY_READ_ROLES);
   const url = new URL(req.url);
   const query = {
     limit: url.searchParams.get("limit") ?? undefined,
@@ -26,7 +27,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
-  requireRole(actor, ["Admin", "Manager", "Staff"]);
+  requireRole(actor, DUTY_WRITE_ROLES);
   return withIdempotency(req, actor, { route: "POST /duties" }, async () => {
     const body = await parseJsonBody(req);
     const result = await dutyService.create(body, { actor });

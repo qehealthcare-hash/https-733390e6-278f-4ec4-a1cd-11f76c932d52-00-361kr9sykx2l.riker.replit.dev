@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Payout ledger UI (M9 Pass D). Date/form helpers: `@/lib/payoutUi`.
+ * All writes via `/api/v1/payouts/*`.
+ */
+
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
@@ -12,65 +17,42 @@ import { paymentMethodOptions } from "@/lib/crm-options";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { openPrintWindow } from "@/lib/print";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
-import { hasPermission } from "@/lib/permissions";
+import {
+  PAYOUT_PAY_ROLES,
+  PAYOUT_REOPEN_ROLES,
+  PAYOUT_WRITE_ROLES
+} from "@/business/rbac";
+import {
+  PAYOUT_STATUS_OPTIONS,
+  currentPeriod,
+  emptyAdjustForm,
+  emptyAdvanceForm,
+  emptyEnsureForm,
+  emptyPayForm,
+  istDayKey
+} from "@/lib/payoutUi";
 
-var payoutStatusOptions = [
-  { value: "OPEN", label: "Open" },
-  { value: "LOCKED", label: "Locked" },
-  { value: "PAID", label: "Paid" }
-];
-
-function currentPeriod() {
-  var d = new Date();
-  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
-}
-
-function emptyEnsureForm() {
-  return {
-    employee_id: "",
-    period_month: currentPeriod(),
-    advance: 0,
-    deduction: 0,
-    bonus: 0,
-    remarks: ""
-  };
-}
-
-function emptyAdjustForm() {
-  return { advance: 0, deduction: 0, bonus: 0, remarks: "" };
-}
-
-function emptyPayForm() {
-  return {
-    paid_on: new Date().toISOString().slice(0, 10),
-    method: "UPI",
-    amount: "",
-    remarks: "",
-    proof: null
-  };
-}
-
-function emptyAdvanceForm() {
-  return {
-    paid_on: new Date().toISOString().slice(0, 10),
-    method: "UPI",
-    amount: "",
-    remarks: "",
-    proof: null
-  };
+function roleInList(role, list) {
+  var normalized = String(role || "").trim().toLowerCase();
+  return list.some(function (r) {
+    return r.toLowerCase() === normalized;
+  });
 }
 
 function PayoutsPageContent() {
   var auth = useAuth();
   var userRole = auth.profile?.role || "";
-  var canWrite = hasPermission(userRole, "payouts.write");
-  var canDisburse =
-    hasPermission(userRole, "payouts.write") ||
-    String(userRole).toLowerCase() === "admin" ||
-    String(userRole).toLowerCase() === "accountant";
+  var canWrite = roleInList(userRole, PAYOUT_WRITE_ROLES);
+  var canDisburse = roleInList(userRole, PAYOUT_PAY_ROLES);
+  var canReopen = roleInList(userRole, PAYOUT_REOPEN_ROLES);
   var searchParams = useSearchParams();
   var [employees, setEmployees] = useState([]);
   var [payouts, setPayouts] = useState([]);
+  // P1-28: track API limit + server total for the "Showing first N of M" cap
+  // banner. With a 200-row cap, busy practices used to silently lose payouts
+  // 201+ from the ledger.
+  var PAYOUTS_LIMIT = 200;
+  var [payoutsTotal, setPayoutsTotal] = useState(0);
   var [loading, setLoading] = useState(true);
   var [periodFilter, setPeriodFilter] = useState(
     searchParams?.get("period") || currentPeriod()
@@ -93,6 +75,28 @@ function PayoutsPageContent() {
   var [adjustForm, setAdjustForm] = useState(emptyAdjustForm());
   var [payForm, setPayForm] = useState(emptyPayForm());
   var [advanceForm, setAdvanceForm] = useState(emptyAdvanceForm());
+  // P1-29: every URL.createObjectURL() we mint for a proof preview must
+  // eventually be released, otherwise the file's bytes stay in browser memory
+  // until the tab closes. The ref accumulates created URLs and the unmount
+  // cleanup + per-replace dispose calls revoke them.
+  var proofObjectUrlsRef = useRef([]);
+  useEffect(function () {
+    return function cleanup() {
+      try {
+        proofObjectUrlsRef.current.forEach(function (u) {
+          if (u) URL.revokeObjectURL(u);
+        });
+      } catch (_e) { /* tab closing — best effort */ }
+      proofObjectUrlsRef.current = [];
+    };
+  }, []);
+  function disposeProofObjectUrl(proof) {
+    if (!proof || !proof.preview_url) return;
+    try { URL.revokeObjectURL(proof.preview_url); } catch (_e) { /* noop */ }
+    proofObjectUrlsRef.current = proofObjectUrlsRef.current.filter(function (u) {
+      return u !== proof.preview_url;
+    });
+  }
   var [advanceOpen, setAdvanceOpen] = useState(false);
   var [rateRepairRate, setRateRepairRate] = useState("");
   var [pending, setPending] = useState(null);
@@ -122,22 +126,30 @@ function PayoutsPageContent() {
   // proof uploader into view so the operator never has to hunt for it.
   var payFormRef = useRef(null);
   var advanceFormRef = useRef(null);
+  // P1-2: openPayout request-token guard. Each click bumps the seq and the
+  // in-flight request remembers its token; if a newer click landed by the
+  // time the network resolves, every setDetail / setPayForm / setAdvanceForm
+  // / setAdjustForm bails out so the user sees only the latest record.
+  var openPayoutSeq = useRef(0);
 
   async function reloadList() {
     if (!auth.session?.access_token) return;
     setLoading(true);
     try {
       var qs = new URLSearchParams();
-      qs.set("limit", "200");
+      qs.set("limit", String(PAYOUTS_LIMIT));
       if (periodFilter) qs.set("period", periodFilter);
       if (statusFilter) qs.set("status", statusFilter);
       if (employeeFilter) qs.set("employee_id", employeeFilter);
       var data = await request("/payouts?" + qs.toString(), null, auth.session);
-      setPayouts(Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : []);
+      var prows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
+      setPayouts(prows);
+      setPayoutsTotal(Number(data?.total ?? prows.length) || prows.length);
       setError("");
     } catch (err) {
       setError(err.message || "Failed to load payouts");
       setPayouts([]);
+      setPayoutsTotal(0);
     } finally {
       setLoading(false);
     }
@@ -242,41 +254,53 @@ function PayoutsPageContent() {
       setAuditTrail([]);
       return;
     }
+    // P1-2: capture the request token BEFORE any await so a rapid second
+    // click (or realtime-triggered re-open) cannot let the slower response
+    // overwrite the latest row's detail/forms.
+    openPayoutSeq.current += 1;
+    var reqId = openPayoutSeq.current;
     setDetailLoading(true);
     setError("");
     try {
       var data = await request("/payouts/" + id, null, auth.session);
+      if (reqId !== openPayoutSeq.current) return;
       setDetail(data);
+      if (reqId !== openPayoutSeq.current) return;
       setSelectedId(id);
-      // Audit trail is informational; never block the detail render on it.
       loadAuditTrail(id);
       var row = data?.payout || {};
+      if (reqId !== openPayoutSeq.current) return;
+      if (!row.updated_at) {
+        setMessage(
+          "Legacy payout without server updated_at — save carefully; another user may have edited it."
+        );
+      }
       setAdjustForm({
         advance: Number(row.advance || 0),
         deduction: Number(row.deduction || 0),
         bonus: Number(row.bonus || 0),
         remarks: row.remarks || ""
       });
+      if (reqId !== openPayoutSeq.current) return;
       setPayForm(emptyPayForm());
+      if (reqId !== openPayoutSeq.current) return;
       setAdvanceForm(emptyAdvanceForm());
-      // Auto-expand the "Pay advance" form for OPEN payouts that have
-      // outstanding balance and zero disbursements so the proof uploader
-      // is immediately visible — the previous flow required an extra
-      // toggle click that operators routinely missed.
       var disbursementCount = Array.isArray(data?.paid_transactions)
         ? data.paid_transactions.length
         : 0;
       var openOutstanding = Number(data?.outstanding || row.net_amount || 0);
+      if (reqId !== openPayoutSeq.current) return;
       setAdvanceOpen(
         String(row.status || "OPEN") === "OPEN" &&
           disbursementCount === 0 &&
           openOutstanding > 0
       );
     } catch (err) {
+      if (reqId !== openPayoutSeq.current) return;
       setError(err.message || "Could not load payout detail");
       setDetail(null);
     } finally {
-      setDetailLoading(false);
+      if (reqId === openPayoutSeq.current) setDetailLoading(false);
     }
   }
 
@@ -294,8 +318,7 @@ function PayoutsPageContent() {
           setEmployees([]);
         });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [auth.session, periodFilter, statusFilter, employeeFilter]
+    [auth.session?.access_token, periodFilter, statusFilter, employeeFilter]
   );
 
   // Deep-link from duty calendar: if the URL carries ?employee_id=&period=
@@ -380,6 +403,7 @@ function PayoutsPageContent() {
 
   async function handleEnsure(event) {
     event.preventDefault();
+    if (!canWrite) return;
     if (!ensureForm.employee_id) return;
     setBusy(true);
     setError("");
@@ -418,6 +442,7 @@ function PayoutsPageContent() {
 
   async function handleAdjust(event) {
     event.preventDefault();
+    if (!canDisburse) return;
     if (!selectedId) return;
     setBusy(true);
     setError("");
@@ -450,6 +475,7 @@ function PayoutsPageContent() {
 
   async function handleSetRate(event) {
     if (event && event.preventDefault) event.preventDefault();
+    if (!canWrite) return;
     if (!payout) return;
     var rate = Number(rateRepairRate);
     if (!rate || rate <= 0) {
@@ -491,6 +517,7 @@ function PayoutsPageContent() {
   }
 
   async function handleRecompute() {
+    if (!canWrite) return;
     if (!selectedId) return;
     setBusy(true);
     setError("");
@@ -513,6 +540,7 @@ function PayoutsPageContent() {
   }
 
   async function handleLock() {
+    if (!canWrite) return;
     if (!selectedId) return;
     var reason = String(lockReason || "").trim();
     if (!reason) {
@@ -547,6 +575,7 @@ function PayoutsPageContent() {
   }
 
   async function handleReopen() {
+    if (!canReopen) return;
     if (!selectedId) return;
     var reason = String(reopenReason || "").trim();
     if (!reason) {
@@ -577,11 +606,21 @@ function PayoutsPageContent() {
     setBusy(true);
     setError("");
     try {
+      // P1-36: proof belongs to the employee being paid. payForm.employee_id
+      // and advanceForm.employee_id are both required by the form so it
+      // should always be present here; we fall back to a draft id for safety.
+      var employeeId =
+        target === "pay"
+          ? payForm.employee_id
+          : advanceForm.employee_id;
+      var resourceId = employeeId || "draft-" + Math.random().toString(36).slice(2);
       var uploaded = await uploadDocument({
         bucket: "payout-proofs",
         file: file,
         session: auth.session,
-        supabase: auth.supabase
+        supabase: auth.supabase,
+        resource: "Employees",
+        resourceId: resourceId
       });
       // Cache an object URL so the preview tile renders the picture/PDF
       // immediately — no extra round-trip to Supabase storage required.
@@ -589,6 +628,7 @@ function PayoutsPageContent() {
       try {
         if (typeof window !== "undefined" && window.URL && file) {
           previewUrl = window.URL.createObjectURL(file);
+          if (previewUrl) proofObjectUrlsRef.current.push(previewUrl);
         }
       } catch (_e) {
         previewUrl = null;
@@ -601,10 +641,13 @@ function PayoutsPageContent() {
       };
       if (target === "pay") {
         setPayForm(function (f) {
+          // P1-29: if an old proof was attached, release its blob URL first.
+          disposeProofObjectUrl(f.proof);
           return { ...f, proof: enriched };
         });
       } else {
         setAdvanceForm(function (f) {
+          disposeProofObjectUrl(f.proof);
           return { ...f, proof: enriched };
         });
       }
@@ -688,6 +731,7 @@ function PayoutsPageContent() {
 
   async function handlePay(event) {
     event.preventDefault();
+    if (!canDisburse) return;
     if (!selectedId) return;
     if (!payForm.proof) {
       setError("Attach a payout proof before marking paid");
@@ -737,6 +781,7 @@ function PayoutsPageContent() {
 
   async function handleAdvance(event) {
     event.preventDefault();
+    if (!canDisburse) return;
     if (!selectedId) return;
     if (!advanceForm.amount || Number(advanceForm.amount) <= 0) {
       setError("Advance amount must be greater than zero");
@@ -1326,11 +1371,20 @@ function PayoutsPageContent() {
                   <div className="field">
                     <label>Period (YYYY-MM)</label>
                     <input
+                      type="month"
                       value={ensureForm.period_month}
                       onChange={function (event) {
-                        setEnsureForm({ ...ensureForm, period_month: event.target.value });
+                        var v = event.target.value;
+                        // P1-17: never trust the keyboard. Some browsers still
+                        // let you free-type into a type="month" input, and a
+                        // stray ":" or "13" got serialized straight into
+                        // hh_payouts.period_month, breaking every downstream
+                        // group-by. Validate against the strict month regex.
+                        if (v && !/^\d{4}-(0[1-9]|1[0-2])$/.test(v)) return;
+                        setEnsureForm({ ...ensureForm, period_month: v });
                       }}
                       placeholder={currentPeriod()}
+                      pattern="\d{4}-(0[1-9]|1[0-2])"
                       required
                     />
                   </div>
@@ -1385,8 +1439,11 @@ function PayoutsPageContent() {
               </form>
             </ModuleShell>
             ) : (
-              <ModuleShell title="Ensure / recompute" description="Read-only access — contact Admin or Accountant to create payouts.">
-                <div className="helper-box">You can view payouts and pending totals but cannot ensure or pay.</div>
+              <ModuleShell title="Ensure / recompute" description="Read-only access — contact Admin, Manager, or Accountant to create payouts.">
+                <div className="helper-box">
+                  You can view payouts and pending totals. Only Admin, Manager, and Accountant can
+                  ensure or lock; only Admin and Accountant can pay or adjust.
+                </div>
               </ModuleShell>
             )}
 
@@ -1580,11 +1637,15 @@ function PayoutsPageContent() {
                 <div className="field">
                   <label>Period</label>
                   <input
+                    type="month"
                     value={periodFilter}
                     onChange={function (event) {
-                      setPeriodFilter(event.target.value);
+                      var v = event.target.value;
+                      if (v && !/^\d{4}-(0[1-9]|1[0-2])$/.test(v)) return;
+                      setPeriodFilter(v);
                     }}
                     placeholder="YYYY-MM"
+                    pattern="\d{4}-(0[1-9]|1[0-2])"
                   />
                 </div>
                 <div className="field">
@@ -1596,7 +1657,7 @@ function PayoutsPageContent() {
                     }}
                   >
                     <option value="">All</option>
-                    {payoutStatusOptions.map(function (o) {
+                    {PAYOUT_STATUS_OPTIONS.map(function (o) {
                       return (
                         <option key={o.value} value={o.value}>
                           {o.label}
@@ -1635,7 +1696,7 @@ function PayoutsPageContent() {
                   />
                 </div>
                 <div className="field">
-                  <label>&nbsp;</label>
+                  <span aria-hidden="true">&nbsp;</span>
                   <button className="button secondary" type="button" onClick={reloadList}>
                     Refresh
                   </button>
@@ -1650,6 +1711,11 @@ function PayoutsPageContent() {
               </div>
               {error ? <div className="error-text">{error}</div> : null}
               {message ? <div className="success-text">{message}</div> : null}
+              {payouts.length >= PAYOUTS_LIMIT && payoutsTotal > payouts.length ? (
+                <div className="info-text" role="status" style={{ background: "#fff7e6", border: "1px solid #ffd28d", padding: "8px 12px", borderRadius: 8, fontSize: 13 }}>
+                  Showing first {payouts.length} of {payoutsTotal} payouts — refine filters to narrow the list.
+                </div>
+              ) : null}
               {!payouts.length ? (
                 <EmptyState
                   title={loading ? "Loading…" : "No payouts"}
@@ -1996,8 +2062,8 @@ function PayoutsPageContent() {
                                     <span>{d.duty_id}</span>
                                     <span>{d.service_name || ""}</span>
                                     <span>
-                                      {String(d.start_at || "").slice(0, 10)} →{" "}
-                                      {String(d.end_at || "").slice(0, 10)}
+                                      {istDayKey(d.start_at) || "—"} →{" "}
+                                      {istDayKey(d.end_at) || "—"}
                                     </span>
                                     <span className={"status " + String(d.status || "").toLowerCase()}>
                                       {d.status}
@@ -2185,7 +2251,7 @@ function PayoutsPageContent() {
                         </button>
                       </div>
                     ) : null}
-                    {canWrite && status === "LOCKED" ? (
+                    {canReopen && status === "LOCKED" ? (
                       <div className="stack" style={{ flex: 1, minWidth: 220 }}>
                         <label className="mini-muted">Reason for reopening (required)</label>
                         <input
@@ -2220,7 +2286,7 @@ function PayoutsPageContent() {
                     ) : null}
                   </div>
 
-                  {canWrite && (!isLocked || status === "LOCKED") ? (
+                  {canDisburse && (!isLocked || status === "LOCKED") ? (
                     <form className="stack" onSubmit={handleAdjust}>
                       <strong>Adjust</strong>
                       <div className="grid-2">

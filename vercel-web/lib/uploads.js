@@ -61,11 +61,30 @@ export async function uploadDocument(options) {
 
   var signed;
   try {
+    // P1-36: every upload must declare its resource ("Patients" |
+    // "Employees" | "Invoices") and the id it belongs to so the object
+    // key carries a per-resource prefix and future RLS can scope reads
+    // to the matching record. Callers that don't yet have a saved id
+    // (new-form flow) should pass a draft-<uuid> that they stamp once
+    // per form open.
+    var resource = options.resource;
+    var resourceId = options.resourceId;
+    if (!resource || !resourceId) {
+      throw new Error(
+        "uploadDocument requires `resource` and `resourceId` (P1-36)"
+      );
+    }
     signed = await request(
       "/uploads/signed-url",
       {
         method: "POST",
-        body: { bucket: options.bucket, fileName: file.name }
+        body: {
+          bucket: options.bucket,
+          fileName: file.name,
+          mime: mime,
+          resource: resource,
+          resourceId: resourceId
+        }
       },
       options.session
     );

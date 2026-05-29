@@ -10,6 +10,7 @@ import {
   listAll
 } from "@/database/baseRepository";
 import { runQuery, runListQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 import { crmDayEndIso, crmDayStartIso } from "@/utils/crmToday";
 
 const TABLE = "hh_attendance";
@@ -117,12 +118,14 @@ export const attendanceRepository = {
           query = query.lte("check_in_at", crmDayEndIso(filters.to.slice(0, 10)));
         }
         if (filters.q) {
-          const term = filters.q.replace(/%/g, "");
-          query = query.or(
-            ["status", "remarks", "employee_id", "duty_id"]
-              .map((c) => `${c}.ilike.%${term}%`)
-              .join(",")
-          );
+          const term = sanitizeSearchTerm(filters.q);
+          if (term) {
+            query = query.or(
+              ["status", "remarks", "employee_id", "duty_id"]
+                .map((c) => `${c}.ilike.%${term}%`)
+                .join(",")
+            );
+          }
         }
         return query;
       },

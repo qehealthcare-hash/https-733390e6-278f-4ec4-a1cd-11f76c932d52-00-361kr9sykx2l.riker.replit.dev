@@ -6,6 +6,7 @@
  */
 
 import { billingSvcKey } from "@/business/billingRules";
+import { crmAddDaysIso, crmDateKeyFromTimestamp } from "@/utils/crmToday";
 
 export interface DutyPartnerAssignment {
   employee_id: string;
@@ -88,19 +89,33 @@ export function expectedDiarySlotKeys(
   return keys;
 }
 
-/** Inclusive calendar days from duty start through end (UTC date parts). */
+/** Inclusive calendar days from duty start through end, computed in the
+ *  CRM (IST) timezone — so a duty starting at 18:30 UTC (which is 00:00
+ *  IST the next day) begins on the IST calendar day, NOT on the prior
+ *  UTC date. Both ends are inclusive: a duty's actual service days are
+ *  every IST day its window touches.
+ *
+ *  Cross-duty handover collisions (same IST day touched by two duties)
+ *  are deduplicated AFTER materialize by the service layer — keeping
+ *  the entry from the duty with the latest start_at — so this rule
+ *  stays simple and doesn't need cross-duty context.
+ */
 export function eachDutyCalendarDay(startAt: string, endAt: string): string[] {
+  if (!startAt || !endAt) return [];
   const start = new Date(startAt);
   const end = new Date(endAt);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
+  if (start.getTime() > end.getTime()) return [];
+
+  const startKey = crmDateKeyFromTimestamp(startAt);
+  const endKey = crmDateKeyFromTimestamp(endAt);
 
   const days: string[] = [];
-  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
-  const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
-
-  while (cursor.getTime() <= last.getTime()) {
-    days.push(cursor.toISOString().slice(0, 10));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  let cur = startKey;
+  while (cur <= endKey) {
+    days.push(cur);
+    if (cur === endKey) break;
+    cur = crmAddDaysIso(cur, 1);
   }
   return days;
 }

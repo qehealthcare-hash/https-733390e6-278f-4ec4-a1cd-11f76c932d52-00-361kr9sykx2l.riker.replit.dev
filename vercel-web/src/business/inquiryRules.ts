@@ -81,7 +81,16 @@ export function inquiryToPatientPatch(inq: Record<string, unknown>): Record<stri
   return patch;
 }
 
-/** Map raw row to the React/legacy UI shape (keeps page rendering working). */
+/**
+ * Map raw row to the React/legacy UI shape (keeps page rendering working).
+ *
+ * M4-L2: deliberately exposes duplicate aliases (`name` + `patient_name`,
+ * `phone` + `mobile`, `service` + `service_required`) so both the modern
+ * Next.js form and the legacy SPA (`public/lib/legacy-api.js`) can consume
+ * the same API envelope without a second mapper. New UI code should prefer
+ * `patient_name`, `mobile`, and `service_required`; the aliases remain
+ * for backward compatibility only.
+ */
 export function inquiryToApi(row: Record<string, unknown>) {
   if (!row) return row;
   return {

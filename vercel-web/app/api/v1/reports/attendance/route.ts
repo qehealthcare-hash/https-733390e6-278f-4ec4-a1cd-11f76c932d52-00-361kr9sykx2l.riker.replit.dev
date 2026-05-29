@@ -11,6 +11,10 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/v1/reports/attendance?period=YYYY-MM[&from=&to=&employee_id=&status=&limit=&offset=]
  *
+ * Payroll/reporting attendance rollup (M8-G). Accountant uses this route;
+ * operational board APIs under `/attendance/*` intentionally exclude Accountant.
+ * Legacy SPA has no `POST /attendance/sync` — CRUD only via standard routes.
+ *
  * Per-period attendance summary with per-employee breakdown. The headline
  * `summary.total` comes from Supabase `count='exact'` so it stays accurate
  * even when more than 1 000 rows exist in the window; the per-employee

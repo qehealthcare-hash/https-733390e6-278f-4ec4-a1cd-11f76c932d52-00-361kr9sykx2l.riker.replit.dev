@@ -10,6 +10,7 @@ import {
   resolveClient
 } from "@/database/baseRepository";
 import { runListQuery } from "@/database/supabaseClient";
+import { sanitizeSearchTerm } from "@/utils/searchTerm";
 
 const TABLE = "hh_employees";
 const SCOPE = "employeeRepository";
@@ -54,12 +55,14 @@ export const employeeRepository = {
         }
         if (filters.dept) query = query.eq("dept", filters.dept);
         if (filters.q) {
-          const term = filters.q.replace(/%/g, "");
-          query = query.or(
-            ["fn", "ln", "mn", "phone", "email", "area", "dept", "desig"]
-              .map((c) => `${c}.ilike.%${term}%`)
-              .join(",")
-          );
+          const term = sanitizeSearchTerm(filters.q);
+          if (term) {
+            query = query.or(
+              ["fn", "ln", "mn", "phone", "email", "area", "dept", "desig"]
+                .map((c) => `${c}.ilike.%${term}%`)
+                .join(",")
+            );
+          }
         }
         return query;
       },
