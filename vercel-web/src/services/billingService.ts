@@ -1721,12 +1721,20 @@ export const billingService = {
     if (!billing.success) return passFailure(billing);
     if (!billing.data) return notFoundFailure("Billing", input.billing_id);
 
-    const editGuard = canEditBilling(String(billing.data.status || ""));
-    if (!editGuard.success) {
+    // Receipts are intentionally MORE permissive than other mutations:
+    //   - Cancelled bills: still hard-blocked (terminal / voided).
+    //   - Closed bills: ALLOWED when there's still outstanding (or the receipt
+    //     targets a specific unpaid/partial invoice). This is the recovery
+    //     path for bills that were force-closed or auto-closed via the FINAL
+    //     flow before the customer's payment landed — the supervisor can
+    //     record the receipt without having to reopen the bill first, which
+    //     would also re-trigger duty materialization.
+    const billingStatus = String(billing.data.status || "");
+    if (billingStatus === "Cancelled") {
       return failure(
-        editGuard.error || "Bill is closed — cannot accept new receipts",
-        editGuard.code,
-        editGuard.details
+        "Bill is Cancelled — cannot record receipts",
+        ErrorCodes.business,
+        { status: billingStatus }
       );
     }
 
@@ -1742,6 +1750,18 @@ export const billingService = {
           amount: input.amount,
           billing_id: input.billing_id
         }
+      );
+    }
+    // On a Closed bill, refuse "advance / on-account" receipts that aren't
+    // pinned to a specific invoice — Closed bills should never accumulate
+    // un-allocated credit. Receipts targeting a specific outstanding invoice
+    // remain allowed (the bill outstanding check above already caps the
+    // amount).
+    if (billingStatus === "Closed" && !input.invoice_id && billingOutstanding <= 0) {
+      return failure(
+        "Bill is Closed and fully settled — nothing to receive",
+        ErrorCodes.business,
+        { status: billingStatus, outstanding: billingOutstanding }
       );
     }
 

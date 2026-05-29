@@ -920,6 +920,12 @@ export default function BillingsPage() {
   var status = String(bundle?.billing?.status || "Active");
   var paidStatus = String(bundle?.billing?.paid_status || "UNPAID");
   var isClosed = status === "Closed" || status === "Cancelled";
+  // Receipts are allowed on Closed bills (to settle outstanding); only
+  // Cancelled bills hard-block new receipts. All OTHER write actions
+  // (service edits, status changes, manual invoice, etc.) continue to use
+  // `isClosed` so a closed bill can't accept fresh service days.
+  var isCancelledForReceipts = status === "Cancelled";
+  var canRecordReceipts = !isCancelledForReceipts && Number(totals.outstanding || 0) > 0;
   var monthOpts = useMemo(function () { return monthOptions(12); }, []);
   var [invoicePeriod, setInvoicePeriod] = useState(monthOpts[0]?.value || "");
   var [showManualInvoice, setShowManualInvoice] = useState(false);
@@ -1541,6 +1547,15 @@ export default function BillingsPage() {
 
                   <form className="stack" onSubmit={handleReceiptSubmit}>
                     <strong>Add receipt</strong>
+                    {isCancelledForReceipts ? (
+                      <div className="helper-box" style={{ background: "#fee2e2", color: "#991b1b" }}>
+                        Bill is Cancelled — receipts cannot be recorded against a voided bill.
+                      </div>
+                    ) : status === "Closed" ? (
+                      <div className="helper-box" style={{ background: "#fef3c7", color: "#92400e" }}>
+                        Bill is Closed. You can still record receipts to settle outstanding invoices on it without reopening the bill.
+                      </div>
+                    ) : null}
                     {selectedInvoiceOutstanding != null ? (
                       <div className="mini-muted">
                         Invoice outstanding: <strong>{formatCurrency(selectedInvoiceOutstanding)}</strong>
@@ -1559,7 +1574,7 @@ export default function BillingsPage() {
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, invoice_id: event.target.value });
                           }}
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         >
                           <option value="">No invoice (on-account / advance)</option>
                           {(bundle.invoices || [])
@@ -1586,7 +1601,7 @@ export default function BillingsPage() {
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, type: event.target.value });
                           }}
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         >
                           {receiptTypeOptions.map(function (o) {
                             return (
@@ -1604,7 +1619,7 @@ export default function BillingsPage() {
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, method: event.target.value });
                           }}
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         >
                           {paymentMethodOptions.map(function (o) {
                             return (
@@ -1625,7 +1640,7 @@ export default function BillingsPage() {
                             setReceiptForm({ ...receiptForm, amount: event.target.value });
                           }}
                           required
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         />
                       </div>
                       <div className="field">
@@ -1637,7 +1652,7 @@ export default function BillingsPage() {
                             setReceiptForm({ ...receiptForm, date: event.target.value });
                           }}
                           required
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         />
                       </div>
                       <div className="field">
@@ -1648,7 +1663,7 @@ export default function BillingsPage() {
                             setReceiptForm({ ...receiptForm, ref: event.target.value });
                           }}
                           placeholder="UPI ref / cheque no"
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         />
                       </div>
                       <div className="field">
@@ -1658,7 +1673,7 @@ export default function BillingsPage() {
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, remarks: event.target.value });
                           }}
-                          disabled={isClosed}
+                          disabled={isCancelledForReceipts}
                         />
                       </div>
                     </div>
@@ -1668,10 +1683,17 @@ export default function BillingsPage() {
                         type="submit"
                         disabled={
                           busy ||
-                          isClosed ||
+                          !canRecordReceipts ||
                           (selectedInvoiceOutstanding != null &&
                             Number(receiptForm.amount || 0) >
                               selectedInvoiceOutstanding + 0.005)
+                        }
+                        title={
+                          isCancelledForReceipts
+                            ? "Bill is Cancelled"
+                            : !canRecordReceipts
+                              ? "Bill is fully settled — nothing to receive"
+                              : undefined
                         }
                       >
                         Record receipt

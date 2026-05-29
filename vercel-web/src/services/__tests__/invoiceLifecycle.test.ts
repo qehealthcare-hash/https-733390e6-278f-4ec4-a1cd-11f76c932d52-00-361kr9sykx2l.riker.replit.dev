@@ -164,6 +164,86 @@ describe("billingService — invoices", () => {
     expect(result.code).toBe(ErrorCodes.business);
   });
 
+  it("recordPayment is allowed on a Closed bill with outstanding (recovery path)", async () => {
+    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Closed", patient_id: "PAT1" }
+    });
+    vi.mocked(billingRepository.loadBillingBundle).mockResolvedValue({
+      success: true,
+      data: {
+        billing: { id: "BILL1", status: "Closed", patient_id: "PAT1", sec_dep: 0 },
+        services: [{ total: 6050 }],
+        receipts: [{ amount: 5000, invoice_id: "IV_FINAL" }]
+      }
+    });
+    vi.mocked(patientRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "PAT1", name: "Test" }
+    });
+    vi.mocked(billingRepository.listInvoicesByBilling).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(billingRepository.findInvoiceById).mockResolvedValue({
+      success: true,
+      data: {
+        id: "IV_MONTHLY",
+        billing_id: "BILL1",
+        invoice_no: "INV2026000001",
+        amount: 6050,
+        status: "UNPAID"
+      }
+    });
+    vi.mocked(billingRepository.listReceiptsByInvoice).mockResolvedValue({
+      success: true,
+      data: []
+    });
+    vi.mocked(billingRepository.receiptExists).mockResolvedValue({
+      success: true,
+      data: false
+    });
+    vi.mocked(billingRepository.saveReceiptV2Rpc).mockResolvedValue({
+      success: true,
+      data: { id: "R1", receipt_no: "RCP-1", paid_status: "PARTIAL" }
+    });
+
+    const result = await billingService.recordPayment(
+      {
+        billing_id: "BILL1",
+        invoice_id: "IV_MONTHLY",
+        amount: 1050,
+        date: "2026-05-30",
+        type: "Cash",
+        method: "Cash"
+      },
+      ctx
+    );
+    expect(result.success).toBe(true);
+    expect(billingRepository.saveReceiptV2Rpc).toHaveBeenCalled();
+  });
+
+  it("recordPayment is blocked on a Cancelled bill", async () => {
+    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Cancelled", patient_id: "PAT1" }
+    });
+
+    const result = await billingService.recordPayment(
+      {
+        billing_id: "BILL1",
+        amount: 500,
+        date: "2026-05-30",
+        type: "Cash",
+        method: "Cash"
+      },
+      ctx
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe(ErrorCodes.business);
+    expect(billingRepository.saveReceiptV2Rpc).not.toHaveBeenCalled();
+  });
+
   it("cancelInvoice uses RPC and refuses PAID from server", async () => {
     vi.mocked(billingRepository.findInvoiceById).mockResolvedValue({
       success: true,
