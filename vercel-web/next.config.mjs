@@ -6,10 +6,8 @@ const nextConfig = {
   poweredByHeader: false,
   // ESLint runs at build time (no-var sweep completed in fb03a5c9).
   eslint: { ignoreDuringBuilds: false },
-  // Same rationale as eslint above: app/attendance/page.tsx and similar pages
-  // ship implicit-any annotations that fail strict typecheck. Build-time
-  // typecheck is bypassed here so the urgent billing fixes deploy; tsc still
-  // runs in CI / locally to surface regressions.
+  // App pages are not strict-typed yet; CI runs `tsc -p tsconfig.ci.json` on
+  // src/lib/app/api. Next build skips page-level TS until a dedicated pass.
   typescript: { ignoreBuildErrors: true },
   images: {
     remotePatterns: [
