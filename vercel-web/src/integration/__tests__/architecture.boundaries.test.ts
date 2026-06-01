@@ -247,6 +247,42 @@ describe("architecture: every domain has a service that returns ApiResult", () =
   });
 });
 
+describe("architecture: Supabase client import boundary", () => {
+  const allowedSupabaseJs = new Set([
+    "src/database/supabaseClient.ts",
+    "src/database/clients.ts",
+    "src/database/baseRepository.ts",
+    "lib/supabase/browser.js"
+  ]);
+
+  it("only database layer and browser entry import @supabase/supabase-js", () => {
+    const scanRoots = [
+      path.join(ROOT, "app"),
+      path.join(ROOT, "components"),
+      path.join(ROOT, "lib"),
+      path.join(ROOT, "src")
+    ];
+    const violations: { file: string; importPath: string }[] = [];
+    for (const root of scanRoots) {
+      for (const file of walk(root)) {
+        const r = rel(file);
+        if (r.includes("__tests__") || r.includes("node_modules")) continue;
+        if (allowedSupabaseJs.has(r)) continue;
+        const imports = collectImports(read(file));
+        for (const spec of imports) {
+          if (spec === "@supabase/supabase-js") {
+            violations.push({ file: r, importPath: spec });
+          }
+        }
+      }
+    }
+    if (violations.length > 0) {
+      console.error(JSON.stringify(violations, null, 2));
+    }
+    expect(violations).toEqual([]);
+  });
+});
+
 describe("architecture: barrel exports stay in sync", () => {
   it("src/services/index.ts re-exports every <name>Service", () => {
     const barrel = read(path.join(ROOT, "src", "services", "index.ts"));

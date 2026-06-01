@@ -591,9 +591,10 @@ export const billingRepository = {
     opts?: DbAccess
   ): Promise<
     ApiResult<{
-      invoice_id: string;
+      invoice_id?: string | null;
       invoice_no?: string;
       duplicate: boolean;
+      noop?: boolean;
       security_receipt_id: string | null;
       refund_id: string | null;
       refund_amount: number;

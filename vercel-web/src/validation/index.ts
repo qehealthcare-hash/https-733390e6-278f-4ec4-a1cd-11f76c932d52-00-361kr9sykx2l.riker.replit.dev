@@ -13,6 +13,7 @@ export * from "@/validation/employeeValidation";
 export * from "@/validation/inquiryValidation";
 export * from "@/validation/dutyValidation";
 export * from "@/validation/billingValidation";
+export * from "@/validation/billingDto";
 export * from "@/validation/payoutValidation";
 export * from "@/validation/attendanceValidation";
 export * from "@/validation/whatsappValidation";

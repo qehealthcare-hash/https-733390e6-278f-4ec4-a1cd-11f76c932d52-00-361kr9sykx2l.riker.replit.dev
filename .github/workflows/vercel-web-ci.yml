@@ -41,7 +41,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Unit + integration tests (business matrix + API route handlers)
+      - name: Unit + integration tests (business matrix + API route handlers + DTO contracts)
         run: npm test
         env:
           API_AUDIT_DISABLED: "true"

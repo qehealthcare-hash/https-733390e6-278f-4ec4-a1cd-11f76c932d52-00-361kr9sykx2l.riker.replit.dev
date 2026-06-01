@@ -54,6 +54,16 @@ import {
 } from "@/validation/billingValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
+  assertCanGenerateFinalInvoice,
+  assertCanRecordReceipt,
+  assertInvoiceBelongsToBilling,
+  canCancelInvoice,
+  canDeleteInvoice,
+  canIssueInvoice,
+  canRegenerateInvoice,
+  canSoftDeleteReceipt
+} from "@/business/billingMutationRules";
+import {
   amountForShift,
   billingCloseRow,
   billingPauseRow,
@@ -61,6 +71,7 @@ import {
   billingReopenRow,
   billingStatusRow,
   buildServiceEntryFromDuty,
+  buildBillingPermissions,
   canBillDuty,
   canCloseBilling,
   canEditBilling,
@@ -79,6 +90,12 @@ import {
   serviceKey,
   type BillingTotals
 } from "@/business/billingRules";
+import {
+  buildInvoiceSummaries,
+  derivePerInvoiceStatus
+} from "@/business/invoiceRules";
+import type { BillingPermissionsDto } from "@/validation/billingDto";
+import { parseBillingSummaryDto } from "@/validation/billingDto";
 import { assertNotStale } from "@/business/concurrencyRules";
 import { businessFailure, businessOk } from "@/business/businessResult";
 import { monthRangeUTC } from "@/business/dateRules";
@@ -103,6 +120,46 @@ import type { ServiceActor } from "@/types/serviceActor";
 
 /** @deprecated Import `ServiceActor` from `@/types/serviceActor`. */
 export type ActorLike = ServiceActor;
+
+function guardFailure(guard: ApiResult<null>): ApiResult<never> | null {
+  if (guard.success) return null;
+  return failure(
+    guard.error || "Operation not allowed",
+    guard.code || ErrorCodes.business,
+    guard.details
+  );
+}
+
+/** Ensure child rows include billing_id so BillingSummaryDTO parses in CI. */
+function normalizeBundleRows(
+  billingId: string,
+  services: JsonRow[],
+  receipts: JsonRow[],
+  invoiceRows: JsonRow[]
+): { services: JsonRow[]; receipts: JsonRow[]; invoiceRows: JsonRow[] } {
+  return {
+    services,
+    receipts: receipts.map((r) => ({
+      ...r,
+      billing_id: String(r.billing_id || billingId)
+    })),
+    invoiceRows: invoiceRows.map((inv) => ({
+      ...inv,
+      billing_id: String(inv.billing_id || billingId)
+    }))
+  };
+}
+
+function validateBillingBundleContract(bundle: BillingWithTotals): BillingWithTotals {
+  const parsed = parseBillingSummaryDto(bundle);
+  if (!parsed.success && process.env.NODE_ENV !== "production") {
+    console.warn(
+      "[billingService] BillingSummaryDTO contract mismatch",
+      parsed.error.flatten()
+    );
+  }
+  return bundle;
+}
 
 export interface BillingServiceContext {
   actor: ServiceActor;
@@ -337,112 +394,8 @@ export interface BillingWithTotals {
     city: string;
     pincode: string;
   } | null;
-}
-
-function buildInvoiceSummaries(
-  invoiceRows: JsonRow[],
-  receipts: JsonRow[]
-): InvoiceSummary[] {
-  const receiptsByInvoice = new Map<string, number>();
-  for (const r of receipts) {
-    const invId = String(r.invoice_id || "");
-    if (!invId) continue;
-    receiptsByInvoice.set(
-      invId,
-      Number(receiptsByInvoice.get(invId) || 0) + Number(r.amount || 0)
-    );
-  }
-
-  const activeInvoices = invoiceRows.filter(
-    (inv) => String(inv.status || "").toUpperCase() !== "CANCELLED"
-  );
-
-  // FINAL invoices with `amount = 0` can carry deposit / refund receipts
-  // (see `hominal_generate_final_invoice` v3 — when all svc_entries were
-  // already snapshotted into a MONTHLY invoice, the FINAL is opened at
-  // gross 0 but the Security deposit receipt is still attached to it).
-  // For display we redistribute that overpayment to the oldest unpaid
-  // sibling invoice on the same bill, so:
-  //   * MONTHLY shows the deposit credit instead of a phantom outstanding
-  //   * FINAL no longer shows "received > amount"
-  //   * Σ(per-invoice outstanding) matches the bill-level outstanding.
-  // DB rows are untouched — this is purely the view layer for the table.
-  const overflow = new Map<string, number>();
-  for (const inv of activeInvoices) {
-    const id = String(inv.id);
-    const amount = Number(inv.amount || 0);
-    const rawReceived = Number(receiptsByInvoice.get(id) || 0);
-    const over = rawReceived - Math.max(0, amount);
-    if (over > 0) {
-      overflow.set(id, over);
-    }
-  }
-
-  if (overflow.size > 0) {
-    // Oldest non-overflow invoice first (FIFO settles older balances first).
-    const sortKey = (inv: JsonRow): string =>
-      String(inv.created_at || inv.from_date || inv.period || inv.id || "");
-    const unpaidTargets = activeInvoices
-      .filter((inv) => !overflow.has(String(inv.id)))
-      .slice()
-      .sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
-
-    overflow.forEach((overAmount, sourceId) => {
-      let remaining = overAmount;
-      for (const target of unpaidTargets) {
-        if (remaining <= 0) break;
-        const tid = String(target.id);
-        const tAmount = Number(target.amount || 0);
-        if (tAmount <= 0) continue;
-        const tReceived = Number(receiptsByInvoice.get(tid) || 0);
-        const room = tAmount - tReceived;
-        if (room <= 0) continue;
-        const apply = Math.min(room, remaining);
-        receiptsByInvoice.set(tid, tReceived + apply);
-        remaining -= apply;
-      }
-      const sourceReceived = Number(receiptsByInvoice.get(sourceId) || 0);
-      receiptsByInvoice.set(sourceId, sourceReceived - (overAmount - remaining));
-    });
-  }
-
-  return activeInvoices.map((inv) => {
-    const id = String(inv.id);
-    const amount = Number(inv.amount || 0);
-    const received = Number(receiptsByInvoice.get(id) || 0);
-    const outstanding = invoiceOutstanding(amount, received);
-    const persisted = String(inv.status || "").toUpperCase();
-    const status = derivePerInvoiceStatus(persisted, amount, received, outstanding);
-    return { invoice: inv, amount, received, outstanding, status };
-  });
-}
-
-/**
- * Per-invoice paid status. Was previously `amount <= 0 || received <= 0
- * => UNPAID`, which incorrectly flagged settled FINAL invoices as unpaid:
- *  - FINAL invoices with `amount = 0` carry the Security deposit receipt
- *    (after the overflow redistribution above moves it onto the MONTHLY).
- *    Such a FINAL has nothing left to collect and should display as PAID.
- *  - A FINAL with no work and no deposit is also a closing no-op — PAID.
- *
- * Rules:
- *  - persisted CANCELLED                → CANCELLED
- *  - amount == 0                        → PAID  (closing / no-op doc)
- *  - amount  > 0, received >= amount    → PAID
- *  - amount  > 0, 0 < received < amount → PARTIAL
- *  - amount  > 0, received <= 0         → UNPAID
- */
-function derivePerInvoiceStatus(
-  persisted: string,
-  amount: number,
-  received: number,
-  _outstanding: number
-): InvoiceSummary["status"] {
-  if (persisted === "CANCELLED") return "CANCELLED";
-  if (amount <= 0) return "PAID";
-  if (received >= amount) return "PAID";
-  if (received > 0) return "PARTIAL";
-  return "UNPAID";
+  /** Server-derived UI gates — billings page should read these, not re-derive status rules. */
+  permissions: BillingPermissionsDto;
 }
 
 /** Refuse svc mutations for months that already have a MONTHLY invoice. */
@@ -531,13 +484,15 @@ async function recomputeInvoiceStatus(
     (sum, r) => sum + Number(r.amount || 0),
     0
   );
-  // Mirrors `derivePerInvoiceStatus` (view layer). A ₹0 closing invoice is
-  // settled by definition; otherwise classify by received vs amount.
-  let next: BillingPaidStatus;
-  if (amount <= 0) next = "PAID";
-  else if (received >= amount) next = "PAID";
-  else if (received > 0) next = "PARTIAL";
-  else next = "UNPAID";
+  const outstanding = invoiceOutstanding(amount, received);
+  const derived = derivePerInvoiceStatus(
+    String(invoice.data.status || "").toUpperCase(),
+    amount,
+    received,
+    outstanding
+  );
+  const next: BillingPaidStatus | "CANCELLED" =
+    derived === "CANCELLED" ? "CANCELLED" : derived;
 
   const current = String(invoice.data.status || "");
   if (current !== next) {
@@ -574,8 +529,19 @@ async function loadBundleWithTotals(
   if (!bundle.success) return toLoadFailure(bundle);
   const billing = bundle.data?.billing;
   if (!billing) return toLoadFailure(notFoundFailure("Billing", billingId));
-  const services = bundle.data?.services || [];
-  const receipts = bundle.data?.receipts || [];
+  const rawServices = bundle.data?.services || [];
+  const rawReceipts = bundle.data?.receipts || [];
+  const invoicesRes = await billingRepository.listInvoicesByBilling(
+    billingId,
+    dbAccess(ctx)
+  );
+  const rawInvoiceRows = invoicesRes.success ? invoicesRes.data || [] : [];
+  const { services, receipts, invoiceRows: invoiceRowsNorm } = normalizeBundleRows(
+    billingId,
+    rawServices,
+    rawReceipts,
+    rawInvoiceRows
+  );
   const totals = computeBillingTotals({
     services,
     receipts,
@@ -605,12 +571,16 @@ async function loadBundleWithTotals(
   // Per-period invoices for this bill. We compute received-per-invoice
   // from the bill's receipt set (cheaper than per-invoice round-trips and
   // keeps the bundle one Supabase call per child table).
-  const invoicesRes = await billingRepository.listInvoicesByBilling(
-    billingId,
-    dbAccess(ctx)
-  );
-  const invoiceRows = invoicesRes.success ? invoicesRes.data || [] : [];
-  const invoices = buildInvoiceSummaries(invoiceRows, receipts);
+  const invoices = buildInvoiceSummaries(invoiceRowsNorm, receipts);
+
+  const permissions = buildBillingPermissions({
+    billingStatus: String(billing.status || ""),
+    totals,
+    serviceCount: services.length,
+    invoices: invoiceRowsNorm,
+    servicesTotal: totals.services,
+    secDep: Number(billing.sec_dep || 0)
+  });
 
   return {
     success: true,
@@ -621,7 +591,8 @@ async function loadBundleWithTotals(
       invoices,
       totals,
       period: periodFromServices(services),
-      patient: patientSummary
+      patient: patientSummary,
+      permissions
     }
   };
 }
@@ -910,7 +881,7 @@ export const billingService = {
     if (!bundle.success) {
       return failure(bundle.error || "Billing not found", bundle.code, bundle.details);
     }
-    return success(bundle.data);
+    return success(validateBillingBundleContract(bundle.data));
   },
 
   /** Refetch endpoint used by the UI after every mutation. */
@@ -1137,8 +1108,12 @@ export const billingService = {
       refund_amount: number;
     } | null = null;
     try {
-      const finalRes = await this.generateFinalInvoice({ billing_id: id }, ctx);
-      if (finalRes.success && finalRes.data) {
+      const finalRes = await this.generateFinalInvoice(
+        { billing_id: id },
+        ctx,
+        { skipEligibilityCheck: true }
+      );
+      if (finalRes.success && finalRes.data && !finalRes.data.noop) {
         finalInvoiceSummary = {
           invoice_no: String(finalRes.data.invoice.invoice_no || ""),
           sec_dep_applied: Number(finalRes.data.sec_dep_applied || 0),
@@ -1147,14 +1122,11 @@ export const billingService = {
           refund_amount: Number(finalRes.data.refund_amount || 0)
         };
       } else if (!finalRes.success) {
-        const msg = String(finalRes.error || "").toLowerCase();
-        if (!msg.includes("nothing to finalize")) {
-          return failure(
-            finalRes.error || "Could not raise FINAL invoice before close",
-            finalRes.code,
-            finalRes.details
-          );
-        }
+        return failure(
+          finalRes.error || "Could not raise FINAL invoice before close",
+          finalRes.code,
+          finalRes.details
+        );
       }
     } catch (err) {
       console.error("[billingService.close] FINAL invoice generation threw", err);
@@ -1730,69 +1702,46 @@ export const billingService = {
     //     record the receipt without having to reopen the bill first, which
     //     would also re-trigger duty materialization.
     const billingStatus = String(billing.data.status || "");
-    if (billingStatus === "Cancelled") {
-      return failure(
-        "Bill is Cancelled — cannot record receipts",
-        ErrorCodes.business,
-        { status: billingStatus }
-      );
-    }
 
     const bundle = await loadBundleWithTotals(input.billing_id, ctx);
     if (!bundle.success) return passFailure(bundle);
-    const billingOutstanding = bundle.data.totals.outstanding;
-    if (Number(input.amount) > billingOutstanding + 0.005) {
-      return failure(
-        `Receipt amount ₹${input.amount} exceeds bill outstanding ₹${billingOutstanding}`,
-        ErrorCodes.business,
-        {
-          outstanding: billingOutstanding,
-          amount: input.amount,
-          billing_id: input.billing_id
-        }
-      );
-    }
-    // On a Closed bill, refuse "advance / on-account" receipts that aren't
-    // pinned to a specific invoice — Closed bills should never accumulate
-    // un-allocated credit. Receipts targeting a specific outstanding invoice
-    // remain allowed (the bill outstanding check above already caps the
-    // amount).
-    if (billingStatus === "Closed" && !input.invoice_id && billingOutstanding <= 0) {
-      return failure(
-        "Bill is Closed and fully settled — nothing to receive",
-        ErrorCodes.business,
-        { status: billingStatus, outstanding: billingOutstanding }
-      );
-    }
 
+    let invoiceAmount: number | undefined;
+    let invoiceReceived: number | undefined;
     if (input.invoice_id) {
       const inv = await billingRepository.findInvoiceById(String(input.invoice_id), access);
       if (!inv.success) return passFailure(inv);
       if (!inv.data) return notFoundFailure("Invoice", String(input.invoice_id));
-      if (String(inv.data.billing_id) !== input.billing_id) {
-        return failure(
-          "Invoice does not belong to this bill",
-          ErrorCodes.business,
-          { invoice_id: input.invoice_id, billing_id: input.billing_id }
-        );
-      }
+      const belongs = assertInvoiceBelongsToBilling(inv.data.billing_id, input.billing_id);
+      const blocked = guardFailure(belongs);
+      if (blocked) return blocked;
       const invReceipts = await billingRepository.listReceiptsByInvoice(
         String(input.invoice_id),
         access
       );
       if (!invReceipts.success) return passFailure(invReceipts);
-      const received = (invReceipts.data || []).reduce(
+      invoiceAmount = Number(inv.data.amount || 0);
+      invoiceReceived = (invReceipts.data || []).reduce(
         (s, r) => s + Number(r.amount || 0),
         0
       );
-      const outstanding = invoiceOutstanding(Number(inv.data.amount || 0), received);
-      if (Number(input.amount) > outstanding + 0.005) {
-        return failure(
-          `Receipt amount ₹${input.amount} exceeds invoice outstanding ₹${outstanding}`,
-          ErrorCodes.business,
-          { outstanding, amount: input.amount, invoice_no: inv.data.invoice_no }
-        );
-      }
+    }
+
+    const receiveBlocked = guardFailure(
+      assertCanRecordReceipt({
+        billingStatus,
+        totals: bundle.data.totals,
+        amount: Number(input.amount),
+        invoiceId: input.invoice_id,
+        invoiceAmount,
+        invoiceReceived
+      })
+    );
+    if (receiveBlocked) {
+      return failure(receiveBlocked.error || "Cannot record receipt", receiveBlocked.code, {
+        ...((receiveBlocked.details as object) || {}),
+        billing_id: input.billing_id
+      });
     }
 
     if (input.id) {
@@ -1921,13 +1870,13 @@ export const billingService = {
       (s, r) => s + Number(r.amount || 0),
       0
     );
-    const outstanding = Math.max(0, amount - received);
-    let status: BillingPaidStatus | "CANCELLED";
-    const persisted = String(invoice.data.status || "").toUpperCase();
-    if (persisted === "CANCELLED") status = "CANCELLED";
-    else if (amount <= 0 || received <= 0) status = "UNPAID";
-    else if (received >= amount) status = "PAID";
-    else status = "PARTIAL";
+    const outstanding = invoiceOutstanding(amount, received);
+    const status = derivePerInvoiceStatus(
+      String(invoice.data.status || "").toUpperCase(),
+      amount,
+      received,
+      outstanding
+    );
     return success({
       invoice: invoice.data,
       lines: lines.data || [],
@@ -1965,12 +1914,12 @@ export const billingService = {
     if (!billing.success) return passFailure(billing);
     if (!billing.data) return notFoundFailure("Billing", input.billing_id);
 
-    const editGuard = canEditBilling(String(billing.data.status || ""));
-    if (!editGuard.success) {
+    const issueBlocked = guardFailure(canIssueInvoice(String(billing.data.status || "")));
+    if (issueBlocked) {
       return failure(
-        editGuard.error || "Bill is closed — cannot issue new invoices",
-        editGuard.code,
-        editGuard.details
+        issueBlocked.error || "Bill is closed — cannot issue new invoices",
+        issueBlocked.code,
+        issueBlocked.details
       );
     }
 
@@ -2144,7 +2093,8 @@ export const billingService = {
    */
   async generateFinalInvoice(
     rawInput: unknown,
-    ctx: BillingServiceContext
+    ctx: BillingServiceContext,
+    options?: { skipEligibilityCheck?: boolean }
   ): Promise<
     ApiResult<{
       invoice: JsonRow;
@@ -2167,16 +2117,35 @@ export const billingService = {
     if (!billing.success) return passFailure(billing);
     if (!billing.data) return notFoundFailure("Billing", input.billing_id);
 
-    // Cancelled bills can never get a FINAL. Closed bills CAN — that
-    // is the recovery path for bills closed before the FINAL flow
-    // shipped. The unique-final-per-billing partial index keeps it
-    // idempotent and the RPC re-checks the Cancelled status.
     const billingStatus = String(billing.data.status || "");
     if (billingStatus === "Cancelled") {
       return failure(
         "Bill is Cancelled — cannot issue a FINAL invoice",
         ErrorCodes.business
       );
+    }
+
+    if (!options?.skipEligibilityCheck) {
+      const svc = await billingRepository.listSvcByBilling(input.billing_id, access);
+      if (!svc.success) return passFailure(svc);
+      const invoicesRes = await billingRepository.listInvoicesByBilling(
+        input.billing_id,
+        access
+      );
+      if (!invoicesRes.success) return passFailure(invoicesRes);
+      const servicesTotal = (svc.data || []).reduce(
+        (sum, row) => sum + Number(row.total || 0),
+        0
+      );
+      const finalBlocked = guardFailure(
+        assertCanGenerateFinalInvoice({
+          billingStatus,
+          invoices: invoicesRes.data || [],
+          servicesTotal,
+          secDep: Number(billing.data.sec_dep || 0)
+        })
+      );
+      if (finalBlocked) return finalBlocked;
     }
 
     const rpc = await billingRepository.generateFinalInvoiceRpc(
@@ -2186,7 +2155,24 @@ export const billingService = {
       access
     );
     if (!rpc.success) return passFailure(rpc);
-    if (!rpc.data || !rpc.data.invoice_id) {
+    if (!rpc.data) {
+      return failure("FINAL invoice generation returned no payload", ErrorCodes.internal);
+    }
+    if (rpc.data.noop) {
+      return success({
+        invoice: {} as JsonRow,
+        lines: [],
+        duplicate: false,
+        security_receipt_id: null,
+        refund_id: null,
+        refund_amount: 0,
+        sec_dep_applied: 0,
+        gross: 0,
+        net: 0,
+        noop: true
+      });
+    }
+    if (!rpc.data.invoice_id) {
       return failure("FINAL invoice generation returned no row", ErrorCodes.internal);
     }
 
@@ -2249,33 +2235,27 @@ export const billingService = {
     if (!existing.success) return passFailure(existing);
     if (!existing.data) return notFoundFailure("Invoice", invoiceId);
 
-    if (String(existing.data.kind || "") !== "MONTHLY" || !existing.data.period) {
-      return failure(
-        "Only MONTHLY invoices can be regenerated from service entries",
-        ErrorCodes.business
-      );
-    }
-
     const billingId = String(existing.data.billing_id || "");
     const billing = await billingRepository.findBillingById(billingId, access);
     if (!billing.success) return passFailure(billing);
     if (!billing.data) return notFoundFailure("Billing", billingId);
 
-    const editGuard = canEditBilling(String(billing.data.status || ""));
-    if (!editGuard.success) {
-      return failure(editGuard.error || "Bill is locked", editGuard.code, editGuard.details);
+    const issueBlocked = guardFailure(canIssueInvoice(String(billing.data.status || "")));
+    if (issueBlocked) {
+      return failure(issueBlocked.error || "Bill is locked", issueBlocked.code, issueBlocked.details);
     }
 
     const receipts = await billingRepository.listReceiptsByInvoice(invoiceId, access);
     if (!receipts.success) return passFailure(receipts);
     const received = (receipts.data || []).reduce((s, r) => s + Number(r.amount || 0), 0);
-    if (received > 0) {
-      return failure(
-        "Cannot regenerate an invoice that already has receipts — delete receipts first",
-        ErrorCodes.business,
-        { received }
-      );
-    }
+    const regenBlocked = guardFailure(
+      canRegenerateInvoice({
+        kind: existing.data.kind,
+        period: existing.data.period,
+        receivedOnInvoice: received
+      })
+    );
+    if (regenBlocked) return regenBlocked;
 
     const period = String(existing.data.period);
     const svc = await billingRepository.listSvcByBilling(billingId, access);
@@ -2374,6 +2354,22 @@ export const billingService = {
     if (!existing.success) return passFailure(existing);
     if (!existing.data) return notFoundFailure("Invoice", invoiceId);
 
+    const deleteBlocked = guardFailure(
+      canDeleteInvoice(String(existing.data.status || ""))
+    );
+    if (deleteBlocked) return deleteBlocked;
+
+    const billingId = String(existing.data.billing_id || "");
+    if (billingId) {
+      const billing = await billingRepository.findBillingById(billingId, access);
+      if (!billing.success) return passFailure(billing);
+      if (!billing.data) return notFoundFailure("Billing", billingId);
+      const cancelBlocked = guardFailure(
+        canCancelInvoice(String(billing.data.status || ""))
+      );
+      if (cancelBlocked) return cancelBlocked;
+    }
+
     const rpc = await billingRepository.deleteInvoiceRpc(
       invoiceId,
       ctx.actor.email || "",
@@ -2389,9 +2385,9 @@ export const billingService = {
       );
     }
 
-    const billingId = String(payload.billing_id || existing.data.billing_id || "");
-    if (billingId) {
-      const paid = await recomputePaidStatus(billingId, ctx);
+    const recomputeBillingId = String(payload.billing_id || billingId || "");
+    if (recomputeBillingId) {
+      const paid = await recomputePaidStatus(recomputeBillingId, ctx);
       if (!paid.success) return passFailure(paid);
     }
 
@@ -2444,12 +2440,14 @@ export const billingService = {
     if (!billing.success) return passFailure(billing);
     if (!billing.data) return notFoundFailure("Billing", billingId);
 
-    const editGuard = canEditBilling(String(billing.data.status || ""));
-    if (!editGuard.success) {
+    const deleteBlocked = guardFailure(
+      canSoftDeleteReceipt(String(billing.data.status || ""))
+    );
+    if (deleteBlocked) {
       return failure(
-        editGuard.error || "Bill is closed — cannot delete receipts",
-        editGuard.code,
-        editGuard.details
+        deleteBlocked.error || "Bill is closed — cannot delete receipts",
+        deleteBlocked.code,
+        deleteBlocked.details
       );
     }
 

@@ -1,5 +1,6 @@
 import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
+import type { BillingPermissionsDto } from "@/validation/billingDto";
 import type { BillingStatus, ShiftRates } from "@/validation/billingValidation";
 import {
   BILLING_CLOSED_STATUSES,
@@ -343,6 +344,174 @@ export function billingStatusRow(status: BillingStatus, _actorEmail: string) {
  * Returns a failure when the duty is already linked to a *closed* bill so the
  * UI gets a clear "reopen the bill first" message.
  */
+// ───────────────────────────────────────────────────────────────────────────
+// FINAL invoice eligibility
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Minimal invoice row for permission / FINAL-invoice checks. */
+export interface InvoiceRowLike {
+  id?: string | null;
+  status?: string | null;
+  amount?: number | string | null;
+  kind?: string | null;
+}
+
+export interface CanGenerateFinalInput {
+  billingStatus: string;
+  invoices: InvoiceRowLike[];
+  servicesTotal: number;
+  secDep: number;
+}
+
+/** Whether the UI may offer "Generate FINAL invoice". */
+export function canGenerateFinalInvoice(input: CanGenerateFinalInput): ApiResult<null> {
+  const status = String(input.billingStatus || "");
+  if (status === "Cancelled") {
+    return businessFailure("Bill is Cancelled — cannot generate a FINAL invoice", {
+      status
+    });
+  }
+
+  const hasFinal = input.invoices.some((inv) => {
+    const st = String(inv.status || "").toUpperCase();
+    return String(inv.kind || "").toUpperCase() === "FINAL" && st !== "CANCELLED";
+  });
+  if (hasFinal) {
+    return businessFailure("This bill already has a FINAL invoice", { status });
+  }
+
+  const invoicedTotal = input.invoices
+    .filter((inv) => String(inv.status || "").toUpperCase() !== "CANCELLED")
+    .reduce((sum, inv) => sum + Number(inv.amount || 0), 0);
+
+  const hasUnbilled = input.servicesTotal > invoicedTotal;
+  if (!hasUnbilled && Number(input.secDep || 0) <= 0) {
+    return businessFailure(
+      "No unbilled services and no security deposit to apply on a FINAL invoice",
+      { servicesTotal: input.servicesTotal, invoicedTotal, sec_dep: input.secDep }
+    );
+  }
+
+  return businessOk();
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Receipt recording (single source of truth for recordPayment + UI flags)
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Whether the Add receipt form should be enabled (bill-level gate). */
+export function canReceiveOnBilling(
+  billingStatus: string | null | undefined,
+  totals: BillingTotals
+): ApiResult<null> {
+  const status = String(billingStatus || "");
+  if (status === "Cancelled") {
+    return businessFailure("Bill is Cancelled — cannot record receipts", { status });
+  }
+  if (Number(totals.outstanding || 0) <= 0) {
+    return businessFailure("Bill is fully settled — nothing to receive", {
+      status,
+      outstanding: totals.outstanding
+    });
+  }
+  return businessOk();
+}
+
+export interface CanReceiveAgainstInput {
+  billingStatus: string | null | undefined;
+  totals: BillingTotals;
+  amount: number;
+  invoiceId?: string | null;
+  invoiceOutstanding?: number | null;
+}
+
+/**
+ * Validate a specific receipt before RPC write.
+ * Closed bills may receive against outstanding; Cancelled is terminal.
+ */
+export function canReceiveAgainst(input: CanReceiveAgainstInput): ApiResult<null> {
+  const status = String(input.billingStatus || "");
+  if (status === "Cancelled") {
+    return businessFailure("Bill is Cancelled — cannot record receipts", { status });
+  }
+
+  const amount = Number(input.amount || 0);
+  const billOutstanding = Number(input.totals.outstanding || 0);
+  if (amount > billOutstanding + 0.005) {
+    return businessFailure(
+      `Receipt amount ₹${amount} exceeds bill outstanding ₹${billOutstanding}`,
+      { outstanding: billOutstanding, amount }
+    );
+  }
+
+  if (status === "Closed" && !input.invoiceId && billOutstanding <= 0) {
+    return businessFailure("Bill is Closed and fully settled — nothing to receive", {
+      status,
+      outstanding: billOutstanding
+    });
+  }
+
+  if (input.invoiceId && input.invoiceOutstanding != null) {
+    const invOut = Number(input.invoiceOutstanding);
+    if (amount > invOut + 0.005) {
+      return businessFailure(
+        `Receipt amount ₹${amount} exceeds invoice outstanding ₹${invOut}`,
+        { outstanding: invOut, amount, invoice_id: input.invoiceId }
+      );
+    }
+  }
+
+  return businessOk();
+}
+
+export interface BuildBillingPermissionsInput {
+  billingStatus: string | null | undefined;
+  totals: BillingTotals;
+  serviceCount: number;
+  invoices: InvoiceRowLike[];
+  servicesTotal: number;
+  secDep: number;
+}
+
+/** Derive UI permission flags and optional block reasons for tooltips. */
+export function buildBillingPermissions(
+  input: BuildBillingPermissionsInput
+): BillingPermissionsDto {
+  const status = String(input.billingStatus || "");
+  const blockReasons: Record<string, string> = {};
+
+  const edit = canEditBilling(status);
+  if (!edit.success) blockReasons.canEdit = edit.error || "Cannot edit";
+
+  const receive = canReceiveOnBilling(status, input.totals);
+  if (!receive.success) blockReasons.canReceive = receive.error || "Cannot receive";
+
+  const finalInv = canGenerateFinalInvoice({
+    billingStatus: status,
+    invoices: input.invoices,
+    servicesTotal: input.servicesTotal,
+    secDep: input.secDep
+  });
+  if (!finalInv.success) {
+    blockReasons.canGenerateFinal = finalInv.error || "Cannot generate FINAL";
+  }
+
+  const close = canCloseBilling(input.totals, input.serviceCount, false);
+  if (!close.success) blockReasons.canClose = close.error || "Cannot close";
+
+  const reopen = canReopenBilling(status);
+  if (!reopen.success) blockReasons.canReopen = reopen.error || "Cannot reopen";
+
+  return {
+    canEdit: edit.success,
+    canReceive: receive.success,
+    canGenerateFinal: finalInv.success,
+    canClose: edit.success && close.success,
+    canReopen: reopen.success,
+    blockReasons: Object.keys(blockReasons).length ? blockReasons : undefined
+  };
+}
+
 export function canBillDuty(
   duty: { billing_id?: string | null; status?: string | null; patient_id?: string | null },
   existingBillingStatus: string | null | undefined

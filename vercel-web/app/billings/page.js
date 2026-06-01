@@ -919,13 +919,16 @@ export default function BillingsPage() {
   var totals = totalsFromBundle(bundle);
   var status = String(bundle?.billing?.status || "Active");
   var paidStatus = String(bundle?.billing?.paid_status || "UNPAID");
-  var isClosed = status === "Closed" || status === "Cancelled";
-  // Receipts are allowed on Closed bills (to settle outstanding); only
-  // Cancelled bills hard-block new receipts. All OTHER write actions
-  // (service edits, status changes, manual invoice, etc.) continue to use
-  // `isClosed` so a closed bill can't accept fresh service days.
-  var isCancelledForReceipts = status === "Cancelled";
-  var canRecordReceipts = !isCancelledForReceipts && Number(totals.outstanding || 0) > 0;
+  // Action flags come from the API (business layer); do not re-derive policy here.
+  var permissions = bundle?.permissions || {
+    canEdit: false,
+    canReceive: false,
+    canGenerateFinal: false,
+    canClose: false,
+    canReopen: false
+  };
+  var receiveBlockReason =
+    (permissions.blockReasons && permissions.blockReasons.canReceive) || "";
   var monthOpts = useMemo(function () { return monthOptions(12); }, []);
   var [invoicePeriod, setInvoicePeriod] = useState(monthOpts[0]?.value || "");
   var [showManualInvoice, setShowManualInvoice] = useState(false);
@@ -1179,15 +1182,22 @@ export default function BillingsPage() {
                         Resume
                       </button>
                     ) : null}
-                    {!isClosed ? (
-                      <button className="button danger" type="button" onClick={handleClose} disabled={busy}>
+                    {permissions.canClose ? (
+                      <button
+                        className="button danger"
+                        type="button"
+                        onClick={handleClose}
+                        disabled={busy}
+                        title={permissions.blockReasons?.canClose}
+                      >
                         Close bill
                       </button>
-                    ) : (
+                    ) : null}
+                    {permissions.canReopen ? (
                       <button className="button secondary" type="button" onClick={handleReopen} disabled={busy}>
                         Reopen
                       </button>
-                    )}
+                    ) : null}
                   </div>
 
                   <div className="stack">
@@ -1200,7 +1210,7 @@ export default function BillingsPage() {
                           onChange={function (event) {
                             setInvoicePeriod(event.target.value);
                           }}
-                          disabled={isClosed}
+                          disabled={!permissions.canEdit}
                         >
                           {(availablePeriods.length
                             ? availablePeriods.map(function (p) { return { value: p, label: p }; })
@@ -1223,7 +1233,7 @@ export default function BillingsPage() {
                             var inv = await handleGenerateInvoice("MONTHLY", invoicePeriod);
                             if (inv && inv.id) printInvoiceById(inv.id);
                           }}
-                          disabled={!invoicePeriod || isClosed || busy}
+                          disabled={!invoicePeriod || !permissions.canEdit || busy}
                         >
                           Generate monthly invoice
                         </button>
@@ -1232,46 +1242,32 @@ export default function BillingsPage() {
                     <div className="mini-muted">
                       Snapshots all services dated in the chosen month into a new invoice with its own number. The new invoice opens as UNPAID — record receipts below to move it to PARTIAL/PAID.
                     </div>
-                    {(function () {
-                      var status = String((bundle.billing && bundle.billing.status) || "");
-                      var isCancelled = status === "Cancelled";
-                      var hasFinal = (bundle.invoices || []).some(function (row) {
-                        var inv = row && row.invoice;
-                        var st = String((inv && inv.status) || "").toUpperCase();
-                        return inv && inv.kind === "FINAL" && st !== "CANCELLED";
-                      });
-                      var hasUnbilled =
-                        Number((bundle.totals && bundle.totals.services) || 0) >
-                          (bundle.invoices || []).reduce(function (s, row) {
-                            var inv = row && row.invoice;
-                            var st = String((inv && inv.status) || "").toUpperCase();
-                            return s + (inv && st !== "CANCELLED" ? Number(inv.amount || 0) : 0);
-                          }, 0);
-                      var canRaiseFinal =
-                        !isCancelled && !hasFinal && (hasUnbilled || Number(totals.sec_dep || 0) > 0);
-                      if (!canRaiseFinal) return null;
-                      return (
+                    {permissions.canGenerateFinal ? (
                       <div className="stack" style={{ marginTop: 12 }}>
                         <button
                           className="button primary"
                           type="button"
                           onClick={handleGenerateFinalInvoice}
                           disabled={busy}
-                          title={isClosed
-                            ? "This bill is Closed but never got a FINAL invoice — recover unbilled service days and apply the security deposit"
-                            : "Snapshot remaining services + apply security deposit + auto-refund any excess"}
+                          title={
+                            permissions.blockReasons?.canGenerateFinal ||
+                            (status === "Closed"
+                              ? "This bill is Closed but never got a FINAL invoice — recover unbilled service days and apply the security deposit"
+                              : "Snapshot remaining services + apply security deposit + auto-refund any excess")
+                          }
                         >
-                          {isClosed ? "Generate FINAL invoice (recover closed bill)" : "Generate FINAL invoice (apply deposit)"}
+                          {status === "Closed"
+                            ? "Generate FINAL invoice (recover closed bill)"
+                            : "Generate FINAL invoice (apply deposit)"}
                         </button>
                         <div className="mini-muted">
-                          {isClosed
+                          {status === "Closed"
                             ? "This bill was closed before the FINAL flow shipped. Generating the FINAL invoice now will snapshot unbilled service days and apply the security deposit (" + formatCurrency(totals.sec_dep) + ") as a Security receipt."
                             : "Final settlement: snapshots unbilled services at full gross, records the security deposit (" + formatCurrency(totals.sec_dep) + ") as a Security receipt on that invoice, and auto-refunds any excess. Also runs automatically when you close the bill or close the patient. One FINAL invoice per bill."}
                         </div>
                       </div>
-                      );
-                    })()}
-                    {!isClosed ? (
+                    ) : null}
+                    {permissions.canEdit ? (
                       <div className="stack" style={{ marginTop: 12 }}>
                         <button
                           className="button secondary"
@@ -1445,7 +1441,7 @@ export default function BillingsPage() {
                                     {inv.kind === "MONTHLY" &&
                                     Number(row.received || 0) <= 0 &&
                                     statusUpper !== "PAID" &&
-                                    !isClosed ? (
+                                    permissions.canEdit ? (
                                       <button
                                         className="button secondary"
                                         type="button"
@@ -1459,7 +1455,7 @@ export default function BillingsPage() {
                                         Regenerate
                                       </button>
                                     ) : null}
-                                    {statusUpper !== "PAID" && !isClosed ? (
+                                    {statusUpper !== "PAID" && permissions.canEdit ? (
                                       <button
                                         className="button danger"
                                         type="button"
@@ -1495,12 +1491,12 @@ export default function BillingsPage() {
                           onChange={function (event) {
                             setSecDepForm({ sec_dep: event.target.value });
                           }}
-                          disabled={isClosed}
+                          disabled={!permissions.canEdit}
                         />
                       </div>
                       <div className="field">
                         <span aria-hidden="true">&nbsp;</span>
-                        <button className="button primary" type="submit" disabled={busy || isClosed}>
+                        <button className="button primary" type="submit" disabled={busy || !permissions.canEdit}>
                           Update deposit
                         </button>
                       </div>
@@ -1547,7 +1543,7 @@ export default function BillingsPage() {
 
                   <form className="stack" onSubmit={handleReceiptSubmit}>
                     <strong>Add receipt</strong>
-                    {isCancelledForReceipts ? (
+                    {status === "Cancelled" ? (
                       <div className="helper-box" style={{ background: "#fee2e2", color: "#991b1b" }}>
                         Bill is Cancelled — receipts cannot be recorded against a voided bill.
                       </div>
@@ -1574,7 +1570,7 @@ export default function BillingsPage() {
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, invoice_id: event.target.value });
                           }}
-                          disabled={isCancelledForReceipts}
+                          disabled={!permissions.canReceive}
                         >
                           <option value="">No invoice (on-account / advance)</option>
                           {(bundle.invoices || [])
@@ -1601,7 +1597,7 @@ export default function BillingsPage() {
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, type: event.target.value });
                           }}
-                          disabled={isCancelledForReceipts}
+                          disabled={!permissions.canReceive}
                         >
                           {receiptTypeOptions.map(function (o) {
                             return (
@@ -1619,7 +1615,7 @@ export default function BillingsPage() {
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, method: event.target.value });
                           }}
-                          disabled={isCancelledForReceipts}
+                          disabled={!permissions.canReceive}
                         >
                           {paymentMethodOptions.map(function (o) {
                             return (
@@ -1640,7 +1636,7 @@ export default function BillingsPage() {
                             setReceiptForm({ ...receiptForm, amount: event.target.value });
                           }}
                           required
-                          disabled={isCancelledForReceipts}
+                          disabled={!permissions.canReceive}
                         />
                       </div>
                       <div className="field">
@@ -1652,7 +1648,7 @@ export default function BillingsPage() {
                             setReceiptForm({ ...receiptForm, date: event.target.value });
                           }}
                           required
-                          disabled={isCancelledForReceipts}
+                          disabled={!permissions.canReceive}
                         />
                       </div>
                       <div className="field">
@@ -1663,7 +1659,7 @@ export default function BillingsPage() {
                             setReceiptForm({ ...receiptForm, ref: event.target.value });
                           }}
                           placeholder="UPI ref / cheque no"
-                          disabled={isCancelledForReceipts}
+                          disabled={!permissions.canReceive}
                         />
                       </div>
                       <div className="field">
@@ -1673,7 +1669,7 @@ export default function BillingsPage() {
                           onChange={function (event) {
                             setReceiptForm({ ...receiptForm, remarks: event.target.value });
                           }}
-                          disabled={isCancelledForReceipts}
+                          disabled={!permissions.canReceive}
                         />
                       </div>
                     </div>
@@ -1683,17 +1679,18 @@ export default function BillingsPage() {
                         type="submit"
                         disabled={
                           busy ||
-                          !canRecordReceipts ||
+                          !permissions.canReceive ||
                           (selectedInvoiceOutstanding != null &&
                             Number(receiptForm.amount || 0) >
                               selectedInvoiceOutstanding + 0.005)
                         }
                         title={
-                          isCancelledForReceipts
-                            ? "Bill is Cancelled"
-                            : !canRecordReceipts
-                              ? "Bill is fully settled — nothing to receive"
-                              : undefined
+                          receiveBlockReason ||
+                          (selectedInvoiceOutstanding != null &&
+                          Number(receiptForm.amount || 0) >
+                            selectedInvoiceOutstanding + 0.005
+                            ? "Amount exceeds invoice outstanding"
+                            : undefined)
                         }
                       >
                         Record receipt

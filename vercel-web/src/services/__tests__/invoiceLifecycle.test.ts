@@ -3,6 +3,7 @@ import { ErrorCodes } from "@/types/common";
 import { billingService } from "@/services/billingService";
 import { billingRepository } from "@/database/billingRepository";
 import { patientRepository } from "@/database/patientRepository";
+import { parseBillingSummaryDto } from "@/validation/billingDto";
 import {
   billingPeriodsFromDates,
   invoiceOutstanding
@@ -105,6 +106,16 @@ describe("billingService — invoice summary view", () => {
     expect(final?.status).toBe("PAID");
     expect(result.data.totals.outstanding).toBe(1050);
     expect(result.data.totals.billed).toBe(6050);
+
+    const contract = parseBillingSummaryDto(result.data);
+    if (!contract.success) {
+      console.error(contract.error.flatten());
+    }
+    expect(contract.success).toBe(true);
+    if (contract.success) {
+      expect(contract.data.permissions).toBeDefined();
+      expect(typeof contract.data.permissions.canReceive).toBe("boolean");
+    }
   });
 });
 
@@ -244,7 +255,7 @@ describe("billingService — invoices", () => {
     expect(billingRepository.saveReceiptV2Rpc).not.toHaveBeenCalled();
   });
 
-  it("cancelInvoice uses RPC and refuses PAID from server", async () => {
+  it("cancelInvoice refuses PAID in the service layer before RPC", async () => {
     vi.mocked(billingRepository.findInvoiceById).mockResolvedValue({
       success: true,
       data: {
@@ -254,18 +265,11 @@ describe("billingService — invoices", () => {
         status: "PAID"
       }
     });
-    vi.mocked(billingRepository.deleteInvoiceRpc).mockResolvedValue({
-      success: true,
-      data: {
-        ok: false,
-        code: "BUSINESS",
-        message: "Cannot delete a PAID invoice — void receipts first"
-      }
-    });
 
     const result = await billingService.cancelInvoice("IV1", ctx);
     expect(result.success).toBe(false);
     expect(result.code).toBe(ErrorCodes.business);
+    expect(billingRepository.deleteInvoiceRpc).not.toHaveBeenCalled();
   });
 
   it("cancelInvoice succeeds via RPC and recomputes bill paid_status", async () => {
@@ -277,6 +281,10 @@ describe("billingService — invoices", () => {
         invoice_no: "INV2026000001",
         status: "UNPAID"
       }
+    });
+    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Active", patient_id: "PAT1" }
     });
     vi.mocked(billingRepository.deleteInvoiceRpc).mockResolvedValue({
       success: true,
@@ -355,6 +363,14 @@ describe("billingService — invoices", () => {
       success: true,
       data: { id: "BILL1", status: "Active", patient_id: "PAT1", sec_dep: 5000 }
     });
+    vi.mocked(billingRepository.listSvcByBilling).mockResolvedValue({
+      success: true,
+      data: [{ total: 18750 }]
+    });
+    vi.mocked(billingRepository.listInvoicesByBilling).mockResolvedValue({
+      success: true,
+      data: []
+    });
     vi.mocked(billingRepository.generateFinalInvoiceRpc).mockResolvedValue({
       success: true,
       data: {
@@ -403,6 +419,14 @@ describe("billingService — invoices", () => {
     vi.mocked(billingRepository.findBillingById).mockResolvedValue({
       success: true,
       data: { id: "BILL1", status: "Active", patient_id: "PAT1", sec_dep: 25000 }
+    });
+    vi.mocked(billingRepository.listSvcByBilling).mockResolvedValue({
+      success: true,
+      data: [{ total: 18750 }]
+    });
+    vi.mocked(billingRepository.listInvoicesByBilling).mockResolvedValue({
+      success: true,
+      data: []
     });
     vi.mocked(billingRepository.generateFinalInvoiceRpc).mockResolvedValue({
       success: true,
@@ -464,6 +488,14 @@ describe("billingService — invoices", () => {
     vi.mocked(billingRepository.findBillingById).mockResolvedValue({
       success: true,
       data: { id: "BILL1", status: "Closed", patient_id: "PAT1", sec_dep: 5000 }
+    });
+    vi.mocked(billingRepository.listSvcByBilling).mockResolvedValue({
+      success: true,
+      data: [{ total: 25300 }]
+    });
+    vi.mocked(billingRepository.listInvoicesByBilling).mockResolvedValue({
+      success: true,
+      data: [{ id: "IV_M", kind: "MONTHLY", amount: 10000, status: "PAID" }]
     });
     vi.mocked(billingRepository.generateFinalInvoiceRpc).mockResolvedValue({
       success: true,

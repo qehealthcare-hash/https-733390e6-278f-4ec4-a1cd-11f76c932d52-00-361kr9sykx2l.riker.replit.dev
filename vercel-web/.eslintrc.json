@@ -114,6 +114,35 @@
           }
         ]
       }
+    },
+    {
+      "files": [
+        "app/**/*.{js,jsx,ts,tsx}",
+        "components/**/*.{js,jsx,ts,tsx}",
+        "lib/**/*.{js,jsx,ts,tsx}",
+        "src/business/**/*.{js,jsx,ts,tsx}",
+        "src/services/**/*.{js,jsx,ts,tsx}",
+        "src/validation/**/*.{js,jsx,ts,tsx}"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@supabase/supabase-js",
+                "message": "Import Supabase only from `@/database/*` (server) or `lib/supabase/browser.js` (browser). UI and services must use repositories / API routes."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["lib/supabase/browser.js"],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
     }
   ]
 }
