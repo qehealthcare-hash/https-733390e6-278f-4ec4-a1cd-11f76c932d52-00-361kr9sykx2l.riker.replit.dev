@@ -1,14 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { appConfig } from "@/lib/config";
 import { useAuth } from "@/components/providers/auth-provider";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { useToast } from "@/components/ui/toast";
 
+/** Minimal auth context shape for the login screen (provider is still JS). */
+type LoginAuth = {
+  loading: boolean;
+  session: { access_token?: string } | null;
+  profile: Record<string, unknown> | null;
+  profileLoading: boolean;
+  profileError: string;
+  signIn: (email: string, password: string) => Promise<void>;
+};
+
 export default function LoginPage() {
-  const auth = useAuth();
+  const auth = useAuth() as unknown as LoginAuth;
   const router = useRouter();
   const toast = useToast();
   const [email, setEmail] = useState("");
@@ -16,7 +26,7 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setErrorState] = useState("");
   const setError = useCallback(
-    function (msg) {
+    function (msg: string) {
       const text = String(msg || "");
       setErrorState(text);
       if (text) toast.error(text);
@@ -45,14 +55,16 @@ export default function LoginPage() {
     [auth.profileError, setError]
   );
 
-  async function handleSubmit(event) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
       await auth.signIn(email.trim(), password);
-    } catch (signInError) {
-      setError(signInError.message || "Sign-in failed");
+    } catch (signInError: unknown) {
+      const message =
+        signInError instanceof Error ? signInError.message : "Sign-in failed";
+      setError(message);
     } finally {
       setBusy(false);
     }
@@ -70,7 +82,12 @@ export default function LoginPage() {
     <div className="login-wrap">
       <div className="panel login-card stack">
         <div style={{ textAlign: "center" }}>
-          <BrandLogo src={appConfig.companyLogo} alt={appConfig.companyName} className="auth-logo" priority />
+          <BrandLogo
+            src={appConfig.companyLogo}
+            alt={appConfig.companyName}
+            className="auth-logo"
+            priority
+          />
           <h1 style={{ margin: "12px 0 4px" }}>{appConfig.appName}</h1>
           <div className="mini-muted">Sign in with your CRM email (Supabase Auth)</div>
         </div>

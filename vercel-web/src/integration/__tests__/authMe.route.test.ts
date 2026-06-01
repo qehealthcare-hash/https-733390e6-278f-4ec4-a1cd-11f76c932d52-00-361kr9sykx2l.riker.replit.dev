@@ -26,6 +26,7 @@ import {
 
 import { GET as MeGet } from "../../../app/api/v1/auth/me/route";
 import { GET as HealthGet } from "../../../app/api/v1/health/route";
+import { GET as HealthAliasGet } from "../../../app/api/health/route";
 
 describe("GET /api/v1/auth/me", () => {
   beforeEach(() => {
@@ -77,5 +78,15 @@ describe("GET /api/v1/health", () => {
     expect(body.data.version).toBe(1);
     expect(body.data.deps.supabase.ok).toBe(true);
     expect(typeof body.data.time).toBe("string");
+  });
+});
+
+describe("GET /api/health (alias)", () => {
+  it("re-exports the same handler as /api/v1/health", async () => {
+    const res = await HealthAliasGet();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.data.service).toBe("hominal-crm-api");
   });
 });
