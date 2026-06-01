@@ -1,4 +1,13 @@
-export function ModuleShell({ title, description, actions, children }) {
+import type { ReactNode } from "react";
+
+type ModuleShellProps = {
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+};
+
+export function ModuleShell({ title, description, actions, children }: ModuleShellProps) {
   return (
     <section className="panel module-shell">
       <div className="module-head">

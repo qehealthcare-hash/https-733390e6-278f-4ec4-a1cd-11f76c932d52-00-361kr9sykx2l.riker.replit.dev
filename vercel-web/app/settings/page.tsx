@@ -22,35 +22,41 @@ import {
 import {
   SETTINGS_KNOWN_KEYS,
   parseSettingsValue,
-  settingsValueToString
+  settingsValueToString,
+  type SettingsKeyDef
 } from "@/lib/settingsUi";
 
-function roleInList(role, list) {
+function roleInList(role: string | undefined | null, list: readonly string[]): boolean {
   const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
   });
 }
 
+type SettingsAuth = {
+  session?: { access_token?: string } | null;
+  profile?: { role?: string } | null;
+};
+
 export default function SettingsPage() {
-  const auth = useAuth();
+  const auth = useAuth() as unknown as SettingsAuth;
   const canRead = roleInList(auth.profile?.role, SETTINGS_READ_ROLES);
   const canWrite = roleInList(auth.profile?.role, SETTINGS_WRITE_ROLES);
   const canDelete = roleInList(auth.profile?.role, SETTINGS_DELETE_ROLES);
   const confirm = useConfirm();
-  const [settings, setSettings] = useState({});
-  const [drafts, setDrafts] = useState({});
+  const [settings, setSettings] = useState<Record<string, unknown>>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [customKey, setCustomKey] = useState("");
   const [customValue, setCustomValue] = useState("");
   const [error, setErrorState] = useState("");
   const [message, setMessageState] = useState("");
   const toast = useToast();
-  const setError = useCallback(function (msg) {
+  const setError = useCallback(function (msg: string) {
     const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  const setMessage = useCallback(function (msg) {
+  const setMessage = useCallback(function (msg: string) {
     const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
@@ -64,7 +70,7 @@ export default function SettingsPage() {
     try {
       const data = await request("/settings", null, auth.session);
       setSettings(data || {});
-      const initialDrafts = {};
+      const initialDrafts: Record<string, string> = {};
       SETTINGS_KNOWN_KEYS.forEach(function (k) {
         initialDrafts[k.key] = settingsValueToString(data ? data[k.key] : null);
       });
@@ -73,8 +79,8 @@ export default function SettingsPage() {
       });
       setDrafts(initialDrafts);
       setError("");
-    } catch (err) {
-      setError(err.message || "Failed to load settings");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load settings");
       setSettings({});
     } finally {
       setLoading(false);
@@ -88,7 +94,7 @@ export default function SettingsPage() {
     [auth.session?.access_token, canRead]
   );
 
-  async function saveKey(keyDef) {
+  async function saveKey(keyDef: SettingsKeyDef) {
     if (!canWrite) return;
     setBusy(true);
     setError("");
@@ -103,14 +109,14 @@ export default function SettingsPage() {
       );
       setMessage("Saved " + keyDef.key);
       await reload();
-    } catch (err) {
-      setError(err.message || "Could not save");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not save");
     } finally {
       setBusy(false);
     }
   }
 
-  async function deleteKey(key) {
+  async function deleteKey(key: string) {
     if (!canDelete) return;
     const ok = await confirm({
       title: "Delete setting '" + key + "'?",
@@ -125,8 +131,8 @@ export default function SettingsPage() {
       await requestWithOfflineFallback("/settings/" + encodeURIComponent(key), { method: "DELETE" }, auth.session);
       setMessage("Deleted " + key);
       await reload();
-    } catch (err) {
-      setError(err.message || "Could not delete");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not delete");
     } finally {
       setBusy(false);
     }
@@ -158,8 +164,8 @@ export default function SettingsPage() {
       setCustomKey("");
       setCustomValue("");
       await reload();
-    } catch (err) {
-      setError(err.message || "Could not save custom setting");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not save custom setting");
     } finally {
       setBusy(false);
     }
@@ -193,7 +199,7 @@ export default function SettingsPage() {
                       </label>
                       {def.textarea ? (
                         <textarea id="settings-codedef-keycode-def-labe-1"
-                          rows="4"
+                          rows={4}
                           value={drafts[def.key] || ""}
                           onChange={function (event) {
                             setDrafts(Object.assign({}, drafts, { [def.key]: event.target.value }));

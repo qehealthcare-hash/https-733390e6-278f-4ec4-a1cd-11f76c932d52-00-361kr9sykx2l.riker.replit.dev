@@ -6,10 +6,12 @@
     "lib/**/*.ts",
     "app/api/**/*.ts",
     "components/ui/status-banner.tsx",
+    "components/ui/module-shell.tsx",
     "app/login/page.tsx",
     "app/reset-password/page.tsx",
     "app/dashboard/page.tsx",
-    "app/inquiries/page.tsx"
+    "app/inquiries/page.tsx",
+    "app/settings/page.tsx"
   ],
   "exclude": [
     "node_modules",
