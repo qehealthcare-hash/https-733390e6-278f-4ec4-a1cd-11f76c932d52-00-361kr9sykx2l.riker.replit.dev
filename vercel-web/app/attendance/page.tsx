@@ -10,6 +10,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import { formatDate } from "@/lib/formatters";
@@ -44,8 +45,21 @@ export default function AttendancePage() {
   var [loading, setLoading] = useState(true);
   var [employees, setEmployees] = useState([]);
   var [patients, setPatients] = useState([]);
-  var [error, setError] = useState("");
-  var [message, setMessage] = useState("");
+  var [error, setErrorState] = useState("");
+  var [message, setMessageState] = useState("");
+  // Mirror local banner state into the centralized toast layer so users see
+  // success/error feedback even when the inline banner is offscreen.
+  var toast = useToast();
+  var setError = useCallback(function (msg) {
+    var text = String(msg || "");
+    setErrorState(text);
+    if (text) toast.error(text);
+  }, [toast]);
+  var setMessage = useCallback(function (msg) {
+    var text = String(msg || "");
+    setMessageState(text);
+    if (text) toast.success(text);
+  }, [toast]);
   var [from, setFrom] = useState(startOfWeek());
   var [to, setTo] = useState(todayDate());
   var [statusFilter, setStatusFilter] = useState("");
@@ -153,10 +167,13 @@ export default function AttendancePage() {
       );
       setMessage("Marked " + status);
       await loadBoard();
-      // Existing log/stats also depend on attendance — refresh once.
-      reload();
+      // Existing log/stats also depend on attendance — refresh and await
+      // so a fast double-click cannot interleave with stale rows.
+      await reload();
     } catch (err) {
-      setBoardError(err.message || "Could not mark");
+      var msg = err.message || "Could not mark";
+      setBoardError(msg);
+      toast.error(msg);
     } finally {
       setBoardBusyKey("");
     }
