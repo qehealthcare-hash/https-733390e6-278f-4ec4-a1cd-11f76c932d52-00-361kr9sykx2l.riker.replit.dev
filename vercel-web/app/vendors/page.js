@@ -5,6 +5,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
@@ -217,8 +218,8 @@ export default function VendorsPage() {
                 <label htmlFor="vendors-city-8">City</label>
                 <input id="vendors-city-8" value={form.city} onChange={function (event) { updateField("city", event.target.value); }} />
               </div>
-              {error ? <div className="error-text">{error}</div> : null}
-              {message ? <div className="success-text">{message}</div> : null}
+              <ErrorBanner message={error} />
+              <SuccessBanner message={message} />
               <div className="button-row">
                 <button className="button primary" type="submit" disabled={busy}>
                   {busy ? "Saving…" : form.id ? "Update vendor" : "Create vendor"}

@@ -6,6 +6,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBanner } from "@/components/ui/status-banner";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
 import { formatDate } from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
@@ -108,7 +109,7 @@ export default function AuditsPage() {
                 />
               </div>
             </div>
-            {resource.error ? <div className="error-text">{resource.error}</div> : null}
+            <ErrorBanner message={resource.error} />
             <PaginationBar
               page={resource.page}
               pageSize={resource.pageSize}

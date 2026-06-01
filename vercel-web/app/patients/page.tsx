@@ -12,6 +12,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
@@ -1018,13 +1019,16 @@ export default function PatientsPage() {
                   </div>
                 </div>
               ) : null}
-              {error && !conflictPrompt && !duplicatePrompt ? (
-                <div className="error-text">{error}</div>
-              ) : null}
-              {!error && resource.error ? (
-                <div className="error-text">Live patient list error — {resource.error}</div>
-              ) : null}
-              {message ? <div className="success-text">{message}</div> : null}
+              <ErrorBanner
+                message={
+                  error && !conflictPrompt && !duplicatePrompt
+                    ? error
+                    : !error && resource.error
+                      ? `Live patient list error — ${resource.error}`
+                      : ""
+                }
+              />
+              <SuccessBanner message={message} />
               {canWrite ? (
                 <div className="button-row">
                   <button className="button primary" type="submit" disabled={busy}>

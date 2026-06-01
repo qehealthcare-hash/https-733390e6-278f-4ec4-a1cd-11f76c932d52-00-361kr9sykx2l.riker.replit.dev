@@ -13,6 +13,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
@@ -686,7 +687,7 @@ export default function InquiriesPage() {
                 <textarea id="inquiries-notes-14" rows={3} value={form.notes} onChange={function (event) { updateField("notes", event.target.value); }} />
               </div>
               {conflictPrompt ? (
-                <div className="error-text" style={{ border: "1px solid var(--warn, #d97706)", background: "rgba(217,119,6,0.08)", padding: "10px 12px", borderRadius: 6 }}>
+                <div className="error-text" role="alert" aria-live="assertive" style={{ border: "1px solid var(--warn, #d97706)", background: "rgba(217,119,6,0.08)", padding: "10px 12px", borderRadius: 6 }}>
                   <div style={{ marginBottom: 6 }}>
                     <strong>Concurrent edit detected.</strong> {conflictPrompt.message}
                   </div>
@@ -697,7 +698,7 @@ export default function InquiriesPage() {
                 </div>
               ) : null}
               {duplicatePatientPrompt ? (
-                <div className="error-text" style={{ border: "1px solid var(--warn, #d97706)", background: "rgba(217,119,6,0.08)", padding: "10px 12px", borderRadius: 6 }}>
+                <div className="error-text" role="alert" aria-live="assertive" style={{ border: "1px solid var(--warn, #d97706)", background: "rgba(217,119,6,0.08)", padding: "10px 12px", borderRadius: 6 }}>
                   <div style={{ marginBottom: 6 }}>
                     <strong>Existing patient.</strong> {duplicatePatientPrompt.message}
                   </div>
@@ -707,13 +708,16 @@ export default function InquiriesPage() {
                   </div>
                 </div>
               ) : null}
-              {error && !conflictPrompt && !duplicatePatientPrompt ? (
-                <div className="error-text">{error}</div>
-              ) : null}
-              {!error && !conflictPrompt && !duplicatePatientPrompt && resource.error ? (
-                <div className="error-text">Live inquiry list error — {resource.error}</div>
-              ) : null}
-              {message ? <div className="success-text">{message}</div> : null}
+              <ErrorBanner
+                message={
+                  error && !conflictPrompt && !duplicatePatientPrompt
+                    ? error
+                    : !error && !conflictPrompt && !duplicatePatientPrompt && resource.error
+                      ? `Live inquiry list error — ${resource.error}`
+                      : ""
+                }
+              />
+              <SuccessBanner message={message} />
               <div className="button-row">
                 <button className="button primary" type="submit" disabled={busy}>
                   {busy ? "Saving..." : form.id ? "Update Inquiry" : "Create Inquiry"}

@@ -80,9 +80,9 @@ export default function LoginPage() {
               required
             />
           </div>
-          {error ? <div className="error-text">{error}</div> : null}
+          {error ? <div className="error-text" role="alert" aria-live="assertive">{error}</div> : null}
           {!error && auth.session && auth.profileError ? (
-            <div className="error-text">{auth.profileError}</div>
+            <div className="error-text" role="alert" aria-live="assertive">{auth.profileError}</div>
           ) : null}
           <button className="button primary" type="submit" disabled={busy}>
             {busy ? "Signing in…" : "Sign in"}

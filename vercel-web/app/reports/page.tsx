@@ -11,6 +11,7 @@ import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { StatCard } from "@/components/ui/stat-card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBanner } from "@/components/ui/status-banner";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request } from "@/lib/api-client";
 import { downloadCsv } from "@/lib/csv";
@@ -263,7 +264,7 @@ export default function ReportsPage() {
               <button type="button" className={reportTabClass(tab === "patients")} onClick={function () { setTab("patients"); }}>Patients</button>
             </div>
             {loading ? <div className="mini-muted">Loading…</div> : null}
-            {error ? <div className="error-text">{error}</div> : null}
+            <ErrorBanner message={error} />
           </ModuleShell>
 
           {tab === "overview" ? (

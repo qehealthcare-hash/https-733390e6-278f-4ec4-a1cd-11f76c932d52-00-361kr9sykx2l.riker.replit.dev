@@ -10,6 +10,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
+import { SuccessBanner } from "@/components/ui/status-banner";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
@@ -1109,6 +1110,8 @@ export default function EmployeesPage() {
               {conflictPrompt ? (
                 <div
                   className="error-text"
+                  role="alert"
+                  aria-live="assertive"
                   style={{
                     border: "1px solid var(--warn, #d97706)",
                     background: "rgba(217,119,6,0.08)",
@@ -1147,6 +1150,8 @@ export default function EmployeesPage() {
               {duplicatePrompt ? (
                 <div
                   className="error-text"
+                  role="alert"
+                  aria-live="assertive"
                   style={{
                     border: "1px solid var(--warn, #d97706)",
                     background: "rgba(217,119,6,0.08)",
@@ -1178,7 +1183,7 @@ export default function EmployeesPage() {
                 </div>
               ) : null}
               {error && !conflictPrompt && !duplicatePrompt ? (
-                <div className="error-text">
+                <div className="error-text" role="alert" aria-live="assertive">
                   <div>{error}</div>
                   {fieldErrors && (
                     (fieldErrors.fields && Object.keys(fieldErrors.fields).length > 0) ||
@@ -1203,9 +1208,11 @@ export default function EmployeesPage() {
                 </div>
               ) : null}
               {!error && !conflictPrompt && !duplicatePrompt && resource.error ? (
-                <div className="error-text">Live employee list error — {resource.error}</div>
+                <div className="error-text" role="alert" aria-live="assertive">
+                  Live employee list error — {resource.error}
+                </div>
               ) : null}
-              {message ? <div className="success-text">{message}</div> : null}
+              <SuccessBanner message={message} />
               <div className="button-row">
                 <button className="button primary" type="submit" disabled={busy || !canManage}>
                   {busy ? "Saving..." : form.id ? "Update employee" : "Create employee"}
