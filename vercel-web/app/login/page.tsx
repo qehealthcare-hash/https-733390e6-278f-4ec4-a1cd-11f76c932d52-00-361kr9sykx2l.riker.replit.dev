@@ -55,6 +55,17 @@ export default function LoginPage() {
     [auth.profileError, setError]
   );
 
+  useEffect(
+    function () {
+      if (typeof window === "undefined") return;
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("reset") === "1") {
+        toast.success("Password updated. Sign in with your new password.");
+      }
+    },
+    [toast]
+  );
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);

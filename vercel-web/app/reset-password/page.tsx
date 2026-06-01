@@ -1,12 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
 
+type ResetAuth = {
+  loading: boolean;
+  session: { access_token?: string } | null;
+  syncLabel: string;
+  supabase: {
+    auth: {
+      updateUser: (args: {
+        password: string;
+      }) => Promise<{ error: { message?: string } | null }>;
+    };
+  };
+  signOut: () => Promise<void>;
+};
+
 export default function ResetPasswordPage() {
-  const auth = useAuth();
+  const auth = useAuth() as unknown as ResetAuth;
   const router = useRouter();
   const toast = useToast();
   const [password, setPassword] = useState("");
@@ -15,7 +29,7 @@ export default function ResetPasswordPage() {
   const [busy, setBusy] = useState(false);
   const [recoveryReady, setRecoveryReady] = useState(false);
   const setError = useCallback(
-    function (msg) {
+    function (msg: string) {
       const text = String(msg || "");
       setErrorState(text);
       if (text) toast.error(text);
@@ -39,7 +53,7 @@ export default function ResetPasswordPage() {
     [auth.loading, auth.session, auth.syncLabel, recoveryReady, router]
   );
 
-  async function handleSubmit(event) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     if (password.length < 8) {
@@ -52,13 +66,17 @@ export default function ResetPasswordPage() {
     }
     setBusy(true);
     try {
-      const result = await auth.supabase.auth.updateUser({ password: password });
+      const result = await auth.supabase.auth.updateUser({ password });
       if (result.error) throw result.error;
       toast.success("Password updated. Sign in with your new password.");
       await auth.signOut();
       router.replace("/login?reset=1");
-    } catch (submitError) {
-      setError(submitError.message || "Unable to update password.");
+    } catch (submitError: unknown) {
+      const message =
+        submitError instanceof Error
+          ? submitError.message
+          : "Unable to update password.";
+      setError(message);
     } finally {
       setBusy(false);
     }

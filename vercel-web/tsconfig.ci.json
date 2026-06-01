@@ -5,7 +5,9 @@
     "src/**/*.ts",
     "lib/**/*.ts",
     "app/api/**/*.ts",
-    "app/login/page.tsx"
+    "app/login/page.tsx",
+    "app/reset-password/page.tsx",
+    "app/dashboard/page.tsx"
   ],
   "exclude": [
     "node_modules",
