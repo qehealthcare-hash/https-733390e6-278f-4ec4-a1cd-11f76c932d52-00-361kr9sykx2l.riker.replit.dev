@@ -6,6 +6,7 @@ import {
   INQUIRY_OPEN_STATUSES,
   INQUIRY_STATUSES
 } from "@/validation/inquiryValidation";
+import type { InquiryPermissionsDto } from "@/validation/inquiryDto";
 import { findPhoneDuplicate } from "@/business/phoneRules";
 
 export type { InquiryStatus };
@@ -237,6 +238,77 @@ export function inquiryClosePatch(actorEmail: string, reason = "") {
   };
   if (reason.trim()) patch.remarks = reason.trim();
   return patch;
+}
+
+export interface BuildInquiryPermissionsInput {
+  status: string | null | undefined;
+  phone?: string | null;
+}
+
+/**
+ * Server-computed action flags for the React inquiries UI.
+ *
+ * Pure: depends only on the inquiry's own state-machine truth. Role gating
+ * (e.g. who can delete) is enforced at the API boundary by `requireRole`;
+ * the UI still gates the *button visibility* by role.
+ */
+export function buildInquiryPermissions(
+  input: BuildInquiryPermissionsInput
+): InquiryPermissionsDto {
+  const status = String(input.status || "New");
+  const phone = String(input.phone || "").trim();
+  const blockReasons: Record<string, string> = {};
+
+  const editGuard = canEditInquiry(status);
+  if (!editGuard.success) blockReasons.canEdit = editGuard.error || "Cannot edit";
+
+  const convertGuard = canConvertInquiry(status, phone);
+  if (!convertGuard.success) {
+    blockReasons.canConvert = convertGuard.error || "Cannot convert";
+  }
+
+  // Closing is allowed from any open status. Already-closed/converted/lost
+  // statuses cannot be re-closed; they need an explicit reopen first.
+  const isAlreadyClosed = INQUIRY_CLOSED_SET.has(status as InquiryStatus);
+  const canClose = !isAlreadyClosed;
+  if (!canClose) {
+    blockReasons.canClose =
+      status === "Converted"
+        ? "Converted inquiries are terminal"
+        : `Inquiry is already ${status}`;
+  }
+
+  // Reopen only makes sense from Closed / Lost; Converted is terminal.
+  const canReopen = status === "Closed" || status === "Lost";
+  if (!canReopen) {
+    blockReasons.canReopen =
+      status === "Converted"
+        ? "Converted inquiries cannot be reopened"
+        : `Cannot reopen a ${status} inquiry`;
+  }
+
+  // Soft-delete (status=Closed via DELETE) — same predicate as canClose.
+  const canDelete = !isAlreadyClosed;
+  if (!canDelete) {
+    blockReasons.canDelete =
+      status === "Converted"
+        ? "Cannot delete a converted inquiry — edit the linked patient instead"
+        : `Inquiry is already ${status}`;
+  }
+
+  // Hard delete: Admin-only at the API edge; state-allowed at all times so
+  // the UI can show the button to admins regardless of status.
+  const canHardDelete = true;
+
+  return {
+    canEdit: editGuard.success,
+    canConvert: convertGuard.success,
+    canClose,
+    canReopen,
+    canDelete,
+    canHardDelete,
+    blockReasons: Object.keys(blockReasons).length ? blockReasons : undefined
+  };
 }
 
 /** True when follow-up date is set and before today (YYYY-MM-DD compare). */

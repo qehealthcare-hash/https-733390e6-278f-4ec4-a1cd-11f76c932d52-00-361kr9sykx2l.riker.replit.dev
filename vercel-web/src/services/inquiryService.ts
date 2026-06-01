@@ -34,6 +34,7 @@ import {
 } from "@/validation/inquiryValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
+  buildInquiryPermissions,
   canConvertInquiry,
   canEditInquiry,
   canTransitionInquiryTo,
@@ -208,12 +209,19 @@ export const inquiryService = {
   async getById(
     id: string,
     ctx: InquiryServiceContext
-  ): Promise<ApiResult<ReturnType<typeof inquiryToApi>>> {
+  ): Promise<ApiResult<ReturnType<typeof inquiryToApi> & { permissions: ReturnType<typeof buildInquiryPermissions> }>> {
     const loaded = await loadInquiry(id, ctx);
     if (!loaded.success) {
       return failure(loaded.error || "Inquiry not found", loaded.code, loaded.details);
     }
-    return success(inquiryToApi(loaded.data));
+    const apiRow = inquiryToApi(loaded.data);
+    // Decorate with server-computed action flags so the UI never
+    // re-derives inquiry policy from raw `status`.
+    const permissions = buildInquiryPermissions({
+      status: String(loaded.data.status || "New"),
+      phone: String(loaded.data.phone || apiRow.phone || "")
+    });
+    return success({ ...apiRow, permissions });
   },
 
   // ─────────────────────────────────────────────────────────────────────
