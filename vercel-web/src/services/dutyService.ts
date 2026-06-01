@@ -35,6 +35,7 @@ import {
 } from "@/validation/dutyValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
+  buildDutyPermissions,
   canCancelDutyWithBilling,
   canCancelDuty,
   canEditDutyStatus,
@@ -313,7 +314,15 @@ export const dutyService = {
   },
 
   async getById(id: string, ctx: DutyServiceContext): Promise<ApiResult<DutyApiRow>> {
-    return loadDuty(id, ctx);
+    const loaded = await loadDuty(id, ctx);
+    if (!loaded.success) return passFailure(loaded);
+    // Decorate the read row with server-computed `permissions` so the UI
+    // never re-derives duty policy. Sibling field is additive — existing
+    // callers that ignore it stay compatible.
+    const permissions = buildDutyPermissions({
+      status: String(loaded.data.status || "SCHEDULED")
+    });
+    return success({ ...loaded.data, permissions } as DutyApiRow);
   },
 
   async create(rawInput: unknown, ctx: DutyServiceContext): Promise<ApiResult<DutyApiRow>> {

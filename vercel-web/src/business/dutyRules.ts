@@ -2,6 +2,7 @@ import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
 import type { DutyShiftType, DutyStatus } from "@/validation/dutyValidation";
 import { DUTY_SHIFT_TYPES } from "@/validation/dutyValidation";
+import type { DutyPermissionsDto } from "@/validation/dutyDto";
 import { crmDateKeyFromTimestamp } from "@/utils/crmToday";
 
 export { DUTY_SHIFT_TYPES };
@@ -171,6 +172,87 @@ export function canEditDutyStatus(currentStatus: string, nextStatus: string): Ap
       `Use the Check-in / Check-out / Cancel actions instead.`,
     { currentStatus, nextStatus }
   );
+}
+
+export interface BuildDutyPermissionsInput {
+  status: string | null | undefined;
+  hasActiveReceiptOnBilling?: boolean;
+  hasBillingServiceLine?: boolean;
+  hasCheckIn?: boolean;
+}
+
+/**
+ * Server-computed duty action flags for the React duty calendar / drawer.
+ *
+ * Pure: depends only on the duty's own state + a couple of pre-fetched
+ * counts from the parent billing. RBAC is enforced at the API edge via
+ * `requireRole`; this function is about *state-machine* truth.
+ */
+export function buildDutyPermissions(
+  input: BuildDutyPermissionsInput
+): DutyPermissionsDto {
+  const status = String(input.status || "SCHEDULED").toUpperCase();
+  const blockReasons: Record<string, string> = {};
+
+  // Editing the duty form — anything except CANCELLED / COMPLETED is editable.
+  let canEdit = true;
+  if (status === "COMPLETED") {
+    canEdit = false;
+    blockReasons.canEdit = "Completed duties cannot be edited";
+  } else if (status === "CANCELLED") {
+    canEdit = false;
+    blockReasons.canEdit = "Cancelled duties cannot be edited";
+  }
+
+  const cancelStateOk = canCancelDuty(status);
+  let canCancel = cancelStateOk.success;
+  if (!cancelStateOk.success) {
+    blockReasons.canCancel = cancelStateOk.error || "Cannot cancel";
+  } else if (input.hasBillingServiceLine && (input.hasActiveReceiptOnBilling ?? false)) {
+    canCancel = false;
+    blockReasons.canCancel =
+      "Cannot cancel — receipts have already been recorded against the bill from this duty";
+  }
+
+  // Check-in only meaningful for SCHEDULED; check-out only for IN_PROGRESS
+  // duties that already have an attendance row (hasCheckIn flag).
+  const canCheckIn = status === "SCHEDULED";
+  if (!canCheckIn) {
+    blockReasons.canCheckIn =
+      status === "IN_PROGRESS"
+        ? "Duty is already in progress"
+        : status === "COMPLETED"
+          ? "Duty is already complete"
+          : `Cannot check in from status ${status}`;
+  }
+
+  const canCheckOut = status === "IN_PROGRESS" && (input.hasCheckIn ?? true);
+  if (!canCheckOut) {
+    blockReasons.canCheckOut =
+      status !== "IN_PROGRESS"
+        ? `Cannot check out from status ${status}`
+        : "Missing check-in record";
+  }
+
+  // Materialize (expand diary rows) makes sense while a duty is active.
+  const canMaterialize = status === "SCHEDULED" || status === "IN_PROGRESS";
+  if (!canMaterialize) {
+    blockReasons.canMaterialize = `Cannot materialize a ${status} duty`;
+  }
+
+  // Hard delete is always state-allowed (admin-only at RBAC layer); the UI
+  // still gates the button by role. Flag exists for completeness.
+  const canHardDelete = true;
+
+  return {
+    canEdit,
+    canCancel,
+    canCheckIn,
+    canCheckOut,
+    canMaterialize,
+    canHardDelete,
+    blockReasons: Object.keys(blockReasons).length ? blockReasons : undefined
+  };
 }
 
 /** Dedicated cancel endpoint — COMPLETED duties are terminal. */
