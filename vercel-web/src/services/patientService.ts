@@ -208,7 +208,15 @@ export const patientService = {
       dbAccess(ctx)
     );
     if (!result.success) return passFailure(result);
-    const rows = (result.data?.rows || []).map((r) => patientToApi(r));
+    const rows = (result.data?.rows || []).map((r) => {
+      const apiRow = patientToApi(r);
+      return {
+        ...apiRow,
+        permissions: buildPatientPermissions({
+          status: String(r.status || apiRow.status || "Active")
+        })
+      };
+    });
     return success({ rows, total: result.data?.total ?? rows.length });
   },
 

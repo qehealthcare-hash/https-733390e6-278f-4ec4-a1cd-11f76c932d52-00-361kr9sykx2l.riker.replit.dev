@@ -240,7 +240,15 @@ export const employeeService = {
     );
     if (!result.success) return passFailure(result);
     return success({
-      rows: (result.data?.rows || []).map(employeeToApi),
+      rows: (result.data?.rows || []).map((r) => {
+        const apiRow = employeeToApi(r);
+        return {
+          ...apiRow,
+          permissions: buildEmployeePermissions({
+            status: String(apiRow.status || "Active")
+          })
+        };
+      }),
       total: result.data?.total ?? 0
     });
   },

@@ -45,6 +45,18 @@ function roleInList(role, list) {
   });
 }
 
+function employeeRowPermissions(row) {
+  return (
+    (row && row.permissions) || {
+      canEdit: false,
+      canDeactivate: false,
+      canActivate: false,
+      canChangeStatus: false,
+      canHardDelete: false
+    }
+  );
+}
+
 function createInitialForm() {
   return {
     id: "",
@@ -237,6 +249,7 @@ export default function EmployeesPage() {
   );
 
   var [form, setForm] = useState(createInitialForm());
+  var [formPermissions, setFormPermissions] = useState(null);
   // P1-36: stable draft id for uploads that fire before the employee row
   // has been persisted. Once form.id exists we prefer that.
   var employeeDraftIdRef = useRef(
@@ -366,6 +379,7 @@ export default function EmployeesPage() {
 
   function resetForm() {
     setForm(createInitialForm());
+    setFormPermissions(null);
     setError("");
     setFieldErrors(null);
     setMessage("");
@@ -422,6 +436,7 @@ export default function EmployeesPage() {
       photo: row.photo && typeof row.photo === "object" ? row.photo : null,
       documents: row.employee_documents || row.docs || []
     });
+    setFormPermissions(employeeRowPermissions(row));
     setError("");
     setFieldErrors(null);
     if (!row.updated_at) {
@@ -795,7 +810,9 @@ export default function EmployeesPage() {
             <fieldset
               className="stack"
               style={{ border: 0, padding: 0, margin: 0 }}
-              disabled={!canManage}
+              disabled={
+                !canManage || (form.id && formPermissions && !formPermissions.canEdit)
+              }
             >
             <form className="stack" onSubmit={handleSubmit}>
               <strong>Personal</strong>
@@ -1214,7 +1231,20 @@ export default function EmployeesPage() {
               ) : null}
               <SuccessBanner message={message} />
               <div className="button-row">
-                <button className="button primary" type="submit" disabled={busy || !canManage}>
+                <button
+                  className="button primary"
+                  type="submit"
+                  disabled={
+                    busy ||
+                    !canManage ||
+                    (form.id && formPermissions && !formPermissions.canEdit)
+                  }
+                  title={
+                    formPermissions && formPermissions.blockReasons
+                      ? formPermissions.blockReasons.canEdit
+                      : undefined
+                  }
+                >
                   {busy ? "Saving..." : form.id ? "Update employee" : "Create employee"}
                 </button>
                 <button className="button secondary" type="button" onClick={resetForm}>
@@ -1391,7 +1421,7 @@ export default function EmployeesPage() {
                           </div>
                         ) : null}
                         <div className="button-row" style={{ marginTop: 12 }}>
-                          {canManage ? (
+                          {canManage && employeeRowPermissions(row).canEdit ? (
                             <button className="button secondary" type="button" onClick={function () { editEmployee(row); }}>
                               Edit
                             </button>
@@ -1401,12 +1431,12 @@ export default function EmployeesPage() {
                               History
                             </button>
                           ) : null}
-                          {canManage && !isActive ? (
+                          {canManage && employeeRowPermissions(row).canActivate ? (
                             <button className="button primary" type="button" onClick={function () { changeStatus(row.id, "Active", row.full_name || row.name); }}>
                               Activate
                             </button>
                           ) : null}
-                          {canManage && isActive ? (
+                          {canManage && isActive && employeeRowPermissions(row).canDeactivate ? (
                             <>
                               <button className="button secondary" type="button" onClick={function () { changeStatus(row.id, "OnLeave", row.full_name || row.name); }}>
                                 On leave
@@ -1425,7 +1455,7 @@ export default function EmployeesPage() {
                           <button className="button secondary" type="button" onClick={function () { openEmployeePdf(row, true); }}>
                             PDF (sanitised)
                           </button>
-                          {isAdmin ? (
+                          {isAdmin && employeeRowPermissions(row).canHardDelete ? (
                             <button className="button danger" type="button" onClick={function () { openDeleteDialog(row); }}>
                               Delete
                             </button>

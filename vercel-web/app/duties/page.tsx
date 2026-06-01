@@ -42,6 +42,20 @@ function roleInList(role, list) {
   });
 }
 
+/** Server-computed flags from GET/list; deny-all when missing (legacy rows). */
+function dutyRowPermissions(row) {
+  return (
+    (row && row.permissions) || {
+      canEdit: false,
+      canCancel: false,
+      canCheckIn: false,
+      canCheckOut: false,
+      canMaterialize: false,
+      canHardDelete: false
+    }
+  );
+}
+
 function createInitialForm() {
   var start = new Date();
   start.setHours(8, 0, 0, 0);
@@ -322,6 +336,7 @@ export default function DutiesPage() {
   var [filterPatient, setFilterPatient] = useState("");
   var [filterEmployee, setFilterEmployee] = useState("");
   var [form, setForm] = useState(createInitialForm());
+  var [formPermissions, setFormPermissions] = useState(null);
   var [statusFilter, setStatusFilter] = useState("");
   var [busy, setBusy] = useState(false);
   var [error, setErrorState] = useState("");
@@ -730,6 +745,7 @@ export default function DutiesPage() {
 
   function resetForm() {
     setForm(createInitialForm());
+    setFormPermissions(null);
     setConflictBanner("");
     setError("");
     setMessage("");
@@ -755,6 +771,7 @@ export default function DutiesPage() {
       notes: row.notes || "",
       expected_updated_at: row.updated_at || ""
     });
+    setFormPermissions(dutyRowPermissions(row));
     setSelectedDay(istDayKey(row.start_at));
     if (!row.updated_at) {
       setMessage(
@@ -1192,7 +1209,9 @@ export default function DutiesPage() {
             <fieldset
               className="stack"
               style={{ border: 0, padding: 0, margin: 0 }}
-              disabled={!canWrite}
+              disabled={
+                !canWrite || (form.id && formPermissions && !formPermissions.canEdit)
+              }
             >
             <form className="stack" onSubmit={handleSubmit}>
               <div className="grid-2">
@@ -1444,7 +1463,20 @@ export default function DutiesPage() {
               <SuccessBanner message={message} />
 
               <div className="button-row">
-                <button className="button primary" type="submit" disabled={busy}>
+                <button
+                  className="button primary"
+                  type="submit"
+                  disabled={
+                    busy ||
+                    !canWrite ||
+                    (form.id && formPermissions && !formPermissions.canEdit)
+                  }
+                  title={
+                    formPermissions && formPermissions.blockReasons
+                      ? formPermissions.blockReasons.canEdit
+                      : undefined
+                  }
+                >
                   {busy ? "Saving…" : form.id ? "Update duty" : "Save & materialize"}
                 </button>
                 <button className="button secondary" type="button" onClick={resetForm}>
@@ -1702,12 +1734,12 @@ export default function DutiesPage() {
                               </div>
                             </div>
                             <div className="button-row">
-                              {canWrite ? (
+                              {canWrite && dutyRowPermissions(row).canEdit ? (
                                 <button className="button secondary" type="button" onClick={function () { editDuty(row); }}>
                                   Edit
                                 </button>
                               ) : null}
-                              {canMaterialize ? (
+                              {canMaterialize && dutyRowPermissions(row).canMaterialize ? (
                                 <button
                                   className="button secondary"
                                   type="button"
@@ -1717,7 +1749,7 @@ export default function DutiesPage() {
                                   Sync diary
                                 </button>
                               ) : null}
-                              {canCheckIn && row.status === "SCHEDULED" ? (
+                              {canCheckIn && dutyRowPermissions(row).canCheckIn ? (
                                 <button
                                   className="button success"
                                   type="button"
@@ -1727,7 +1759,7 @@ export default function DutiesPage() {
                                   Check in
                                 </button>
                               ) : null}
-                              {canCheckIn && row.status === "IN_PROGRESS" ? (
+                              {canCheckIn && dutyRowPermissions(row).canCheckOut ? (
                                 <button
                                   className="button success"
                                   type="button"
@@ -1737,7 +1769,7 @@ export default function DutiesPage() {
                                   Check out
                                 </button>
                               ) : null}
-                              {canHardDelete ? (
+                              {canHardDelete && dutyRowPermissions(row).canHardDelete ? (
                                 <button
                                   className="button danger ghost"
                                   type="button"
@@ -1758,7 +1790,7 @@ export default function DutiesPage() {
                                   Delete
                                 </button>
                               ) : null}
-                              {canCancel && row.status !== "CANCELLED" && row.status !== "COMPLETED" ? (
+                              {canCancel && dutyRowPermissions(row).canCancel ? (
                                 <button
                                   className="button danger"
                                   type="button"

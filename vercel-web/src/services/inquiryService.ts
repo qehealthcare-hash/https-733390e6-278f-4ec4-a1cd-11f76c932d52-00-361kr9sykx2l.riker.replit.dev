@@ -202,7 +202,16 @@ export const inquiryService = {
       dbAccess(ctx)
     );
     if (!result.success) return passFailure(result);
-    const rows = (result.data?.rows || []).map((r) => inquiryToApi(r));
+    const rows = (result.data?.rows || []).map((r) => {
+      const apiRow = inquiryToApi(r);
+      return {
+        ...apiRow,
+        permissions: buildInquiryPermissions({
+          status: String(r.status || apiRow.status || "New"),
+          phone: String(r.phone || apiRow.phone || "")
+        })
+      };
+    });
     return success({ rows, total: result.data?.total ?? rows.length });
   },
 

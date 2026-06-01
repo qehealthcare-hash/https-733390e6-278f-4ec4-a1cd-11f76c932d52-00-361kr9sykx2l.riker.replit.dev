@@ -123,6 +123,18 @@ function deriveAgeFromDob(dob) {
   return age < 0 ? 0 : age;
 }
 
+function patientRowPermissions(row) {
+  return (
+    (row && row.permissions) || {
+      canEdit: false,
+      canAssignCaretaker: false,
+      canClose: false,
+      canReopen: false,
+      canHardDelete: false
+    }
+  );
+}
+
 export default function PatientsPage() {
   const auth = useAuth();
   const accessToken = auth.session?.access_token ?? "";
@@ -182,6 +194,7 @@ export default function PatientsPage() {
   });
   var [employees, setEmployees] = useState([]);
   var [form, setForm] = useState(createInitialForm());
+  var [formPermissions, setFormPermissions] = useState(null);
   // P1-36: stable per-form-session resource id for uploads that happen
   // BEFORE the patient is persisted (new-patient flow). Once form.id
   // exists we prefer that; otherwise this draft-id keeps every file
@@ -413,6 +426,7 @@ export default function PatientsPage() {
       expected_updated_at: row.updated_at || "",
       confirm_duplicate_name: false
     });
+    setFormPermissions(patientRowPermissions(row));
     if (!row.updated_at) {
       setMessage(
         "Loaded a legacy patient without a last-modified timestamp — concurrent edit detection is disabled for this record. Save with care."
@@ -422,6 +436,7 @@ export default function PatientsPage() {
 
   function resetForm() {
     setForm(createInitialForm());
+    setFormPermissions(null);
     setError("");
     setMessage("");
   }
@@ -1031,7 +1046,19 @@ export default function PatientsPage() {
               <SuccessBanner message={message} />
               {canWrite ? (
                 <div className="button-row">
-                  <button className="button primary" type="submit" disabled={busy}>
+                  <button
+                    className="button primary"
+                    type="submit"
+                    disabled={
+                      busy ||
+                      (form.id && formPermissions && !formPermissions.canEdit)
+                    }
+                    title={
+                      formPermissions && formPermissions.blockReasons
+                        ? formPermissions.blockReasons.canEdit
+                        : undefined
+                    }
+                  >
                     {busy ? "Saving..." : form.id ? "Update patient" : "Create patient"}
                   </button>
                   <button className="button secondary" type="button" onClick={resetForm}>
@@ -1199,7 +1226,7 @@ export default function PatientsPage() {
                                 >
                                   Print
                                 </button>
-                                {canWrite && !isRegistryClosed(listRow.status) ? (
+                                {canWrite && patientRowPermissions(listRow).canEdit ? (
                                   <button
                                     className="button secondary"
                                     type="button"
@@ -1209,31 +1236,30 @@ export default function PatientsPage() {
                                     Edit
                                   </button>
                                 ) : null}
-                                {!isActiveStatus(listRow.status) ? (
-                                  <>
-                                    {canClose ? (
-                                      <button
-                                        className="button secondary"
-                                        type="button"
-                                        onClick={function () { openReopenDialog(listRow); }}
-                                        disabled={busy}
-                                      >
-                                        Reopen
-                                      </button>
-                                    ) : null}
-                                    {isAdmin && isRegistryClosed(listRow.status) ? (
-                                      <button
-                                        className="button danger"
-                                        type="button"
-                                        onClick={function () { deletePatientPermanently(listRow.id); }}
-                                        disabled={busy}
-                                        title="Permanent delete (Admin only). Refused if linked billings, duties, or receipts exist."
-                                      >
-                                        Delete
-                                      </button>
-                                    ) : null}
-                                  </>
-                                ) : canClose ? (
+                                {patientRowPermissions(listRow).canReopen ? (
+                                  canClose ? (
+                                    <button
+                                      className="button secondary"
+                                      type="button"
+                                      onClick={function () { openReopenDialog(listRow); }}
+                                      disabled={busy}
+                                    >
+                                      Reopen
+                                    </button>
+                                  ) : null
+                                ) : null}
+                                {isAdmin && patientRowPermissions(listRow).canHardDelete ? (
+                                  <button
+                                    className="button danger"
+                                    type="button"
+                                    onClick={function () { deletePatientPermanently(listRow.id); }}
+                                    disabled={busy}
+                                    title="Permanent delete (Admin only). Refused if linked billings, duties, or receipts exist."
+                                  >
+                                    Delete
+                                  </button>
+                                ) : null}
+                                {canClose && patientRowPermissions(listRow).canClose ? (
                                   <button
                                     className="button danger"
                                     type="button"

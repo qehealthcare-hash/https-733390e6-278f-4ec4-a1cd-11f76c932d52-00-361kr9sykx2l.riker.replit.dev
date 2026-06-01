@@ -40,6 +40,19 @@ import {
 import { isOverdueFollowup as inquiryIsOverdueFollowup } from "@/business/inquiryRules";
 
 const OPEN_STATUSES = INQUIRY_OPEN_STATUSES;
+
+function inquiryRowPermissions(row) {
+  return (
+    (row && row.permissions) || {
+      canEdit: false,
+      canConvert: false,
+      canClose: false,
+      canReopen: false,
+      canDelete: false,
+      canHardDelete: false
+    }
+  );
+}
 const CLOSED_STATUSES = INQUIRY_CLOSED_STATUSES;
 
 interface InquiryFormState {
@@ -214,6 +227,7 @@ export default function InquiriesPage() {
     pageSize: 50
   });
   const [form, setForm] = useState<InquiryFormState>(createInitialForm);
+  const [formPermissions, setFormPermissions] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -265,6 +279,7 @@ export default function InquiriesPage() {
 
   function resetForm() {
     setForm(createInitialForm());
+    setFormPermissions(null);
     setError("");
     setMessage("");
     setConflictPrompt(null);
@@ -296,6 +311,7 @@ export default function InquiriesPage() {
       confirm_existing_patient: false,
       notes: row.notes || row.remarks || ""
     });
+    setFormPermissions(inquiryRowPermissions(row));
     setError("");
     // M4-M4: legacy rows can lack `updated_at` (the column was added later).
     // Without it, optimistic-concurrency control silently degrades to "last
@@ -719,7 +735,19 @@ export default function InquiriesPage() {
               />
               <SuccessBanner message={message} />
               <div className="button-row">
-                <button className="button primary" type="submit" disabled={busy}>
+                <button
+                  className="button primary"
+                  type="submit"
+                  disabled={
+                    busy ||
+                    (form.id && formPermissions && !formPermissions.canEdit)
+                  }
+                  title={
+                    formPermissions && formPermissions.blockReasons
+                      ? formPermissions.blockReasons.canEdit
+                      : undefined
+                  }
+                >
                   {busy ? "Saving..." : form.id ? "Update Inquiry" : "Create Inquiry"}
                 </button>
                 <button className="button secondary" type="button" onClick={resetForm}>
@@ -801,7 +829,7 @@ export default function InquiriesPage() {
               <div className="record-list">
                 {filtered.map(function (row, index) {
                   const status = row.status || "New";
-                  const isClosed = (CLOSED_STATUSES as readonly string[]).includes(status);
+                  const perms = inquiryRowPermissions(row);
                   const overdue = isOverdueFollowup(row);
                   const listPosition = inquiryListPosition(
                     resource.page,
@@ -837,35 +865,37 @@ export default function InquiriesPage() {
                         <span>{formatDate(row.created_at)}</span>
                       </div>
                       <div className="button-row" style={{ marginTop: 12, flexWrap: "wrap" }}>
-                        <button className="button secondary" type="button" onClick={function () { editInquiry(row); }}>
-                          Edit
-                        </button>
-                        {!isClosed ? (
+                        {perms.canEdit ? (
+                          <button className="button secondary" type="button" onClick={function () { editInquiry(row); }}>
+                            Edit
+                          </button>
+                        ) : null}
+                        {perms.canConvert ? (
                           <button className="button success" type="button" onClick={function () { openConvertDialog(row); }} disabled={busy}>
                             Convert to patient
                           </button>
                         ) : null}
-                        {(OPEN_STATUSES as readonly string[]).includes(status) && status !== "Contacted" ? (
+                        {perms.canEdit && status !== "Contacted" ? (
                           <button className="button secondary" type="button" onClick={function () { openStatusDialog(row, "Contacted"); }} disabled={busy}>
                             Mark Contacted
                           </button>
                         ) : null}
-                        {status !== "FollowUp" && !isClosed ? (
+                        {perms.canEdit && status !== "FollowUp" ? (
                           <button className="button secondary" type="button" onClick={function () { openStatusDialog(row, "FollowUp"); }} disabled={busy}>
                             Follow-up
                           </button>
                         ) : null}
-                        {status !== "Negotiating" && !isClosed ? (
+                        {perms.canEdit && status !== "Negotiating" ? (
                           <button className="button secondary" type="button" onClick={function () { openStatusDialog(row, "Negotiating"); }} disabled={busy}>
                             Negotiating
                           </button>
                         ) : null}
-                        {!isClosed ? (
+                        {perms.canClose ? (
                           <button className="button danger" type="button" onClick={function () { openStatusDialog(row, "Lost"); }} disabled={busy}>
                             Lost
                           </button>
                         ) : null}
-                        {(status === "Closed" || status === "Lost") ? (
+                        {perms.canReopen ? (
                           <button className="button primary" type="button" onClick={function () { openStatusDialog(row, "New"); }} disabled={busy}>
                             Reopen
                           </button>

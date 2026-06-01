@@ -307,8 +307,14 @@ export const dutyService = {
       dbAccess(ctx)
     );
     if (!result.success) return passFailure(result);
+    const rows = (result.data?.rows || []).map((row) => ({
+      ...row,
+      permissions: buildDutyPermissions({
+        status: String(row.status || "SCHEDULED")
+      })
+    }));
     return success({
-      rows: result.data?.rows || [],
+      rows,
       total: result.data?.total ?? 0
     });
   },
