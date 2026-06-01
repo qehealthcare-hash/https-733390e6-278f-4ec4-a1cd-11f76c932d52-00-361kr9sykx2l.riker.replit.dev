@@ -4,7 +4,13 @@
  * Users & roles admin (M11). Canonical roles from `@/business/rbac`.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent
+} from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -23,14 +29,51 @@ import {
   USER_UPDATE_ROLES
 } from "@/business/rbac";
 
-function roleInList(role, list) {
+type UsersAuth = {
+  session?: { access_token?: string } | null;
+  profile?: { role?: string } | null;
+};
+
+interface AppUserRow {
+  id: string;
+  username?: string;
+  email?: string;
+  phone?: string;
+  role?: string;
+  is_active?: boolean;
+}
+
+interface AppRoleRow {
+  id: string;
+  name?: string;
+}
+
+interface UserFormState {
+  id: string;
+  username: string;
+  email: string;
+  phone: string;
+  role: string;
+  is_active: boolean;
+}
+
+interface RoleFormState {
+  id: string;
+  name: string;
+}
+
+type ListEnvelope<T> = {
+  rows?: T[];
+};
+
+function roleInList(role: string | undefined | null, list: readonly string[]): boolean {
   const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
   });
 }
 
-function emptyUserForm() {
+function emptyUserForm(): UserFormState {
   return {
     id: "",
     username: "",
@@ -41,7 +84,7 @@ function emptyUserForm() {
   };
 }
 
-function emptyRoleForm() {
+function emptyRoleForm(): RoleFormState {
   return {
     id: "",
     name: ""
@@ -49,27 +92,27 @@ function emptyRoleForm() {
 }
 
 export default function UsersPage() {
-  const auth = useAuth();
+  const auth = useAuth() as unknown as UsersAuth;
   const canAdminUsers = roleInList(auth.profile?.role, USER_ADMIN_ROLES);
   const canCreateUser = roleInList(auth.profile?.role, USER_CREATE_ROLES);
   const canUpdateUser = roleInList(auth.profile?.role, USER_UPDATE_ROLES);
   const canDeactivateUser = roleInList(auth.profile?.role, USER_DEACTIVATE_ROLES);
   const canManageRoles = roleInList(auth.profile?.role, ROLE_ADMIN_ROLES);
   const confirm = useConfirm();
-  const [users, setUsers] = useState([]);
-  const [roles, setRoles] = useState([]);
+  const [users, setUsers] = useState<AppUserRow[]>([]);
+  const [roles, setRoles] = useState<AppRoleRow[]>([]);
   const [userForm, setUserForm] = useState(emptyUserForm());
   const [roleForm, setRoleForm] = useState(emptyRoleForm());
   const [search, setSearch] = useState("");
   const [error, setErrorState] = useState("");
   const [message, setMessageState] = useState("");
   const toast = useToast();
-  const setError = useCallback(function (msg) {
+  const setError = useCallback(function (msg: string) {
     const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  const setMessage = useCallback(function (msg) {
+  const setMessage = useCallback(function (msg: string) {
     const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
@@ -83,14 +126,16 @@ export default function UsersPage() {
       qs.set("limit", "500");
       if (search.trim()) qs.set("q", search.trim());
       const [usersResp, rolesResp] = await Promise.all([
-        request("/users?" + qs.toString(), null, auth.session),
-        request("/roles", null, auth.session)
+        request("/users?" + qs.toString(), null, auth.session) as Promise<
+          ListEnvelope<AppUserRow>
+        >,
+        request("/roles", null, auth.session) as Promise<ListEnvelope<AppRoleRow>>
       ]);
       setUsers(Array.isArray(usersResp?.rows) ? usersResp.rows : []);
       setRoles(Array.isArray(rolesResp?.rows) ? rolesResp.rows : []);
       setError("");
-    } catch (err) {
-      setError(err.message || "Failed to load users / roles");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load users / roles");
     }
   }
 
@@ -116,13 +161,13 @@ export default function UsersPage() {
     [users, search]
   );
 
-  function updateUserField(name, value) {
+  function updateUserField(name: keyof UserFormState, value: string | boolean) {
     setUserForm(function (current) {
       return { ...current, [name]: value };
     });
   }
 
-  function editUser(row) {
+  function editUser(row: AppUserRow) {
     setUserForm({
       id: row.id,
       username: row.username || "",
@@ -139,7 +184,7 @@ export default function UsersPage() {
     setUserForm(emptyUserForm());
   }
 
-  async function submitUser(event) {
+  async function submitUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (userForm.id ? !canUpdateUser : !canCreateUser) return;
     setBusy(true);
@@ -163,14 +208,14 @@ export default function UsersPage() {
       setMessage(userForm.id ? "User updated" : "User created");
       resetUserForm();
       await reload();
-    } catch (err) {
-      setError(err.message || "Could not save user");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not save user");
     } finally {
       setBusy(false);
     }
   }
 
-  async function deactivateUser(id) {
+  async function deactivateUser(id: string) {
     if (!canDeactivateUser) return;
     const ok = await confirm({
       title: "Deactivate this user?",
@@ -186,8 +231,8 @@ export default function UsersPage() {
       if (userForm.id === id) resetUserForm();
       setMessage("User deactivated");
       await reload();
-    } catch (err) {
-      setError(err.message || "Could not deactivate");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not deactivate");
     } finally {
       setBusy(false);
     }
@@ -200,7 +245,7 @@ export default function UsersPage() {
   // capability list lives in `lib/permissions.js` (frontend) and
   // `lib/api/crmRoles.ts` (server). New roles created here will fall
   // back to STAFF-level capabilities until those code maps are updated.
-  function editRole(row) {
+  function editRole(row: AppRoleRow) {
     setRoleForm({
       id: row.id,
       name: row.name || ""
@@ -213,7 +258,7 @@ export default function UsersPage() {
     setRoleForm(emptyRoleForm());
   }
 
-  async function submitRole(event) {
+  async function submitRole(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canManageRoles) return;
     setBusy(true);
@@ -231,14 +276,14 @@ export default function UsersPage() {
       setMessage(roleForm.id ? "Role updated" : "Role created");
       resetRoleForm();
       await reload();
-    } catch (err) {
-      setError(err.message || "Could not save role");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not save role");
     } finally {
       setBusy(false);
     }
   }
 
-  async function deleteRole(id) {
+  async function deleteRole(id: string) {
     if (!canManageRoles) return;
     const ok = await confirm({
       title: "Delete this role?",
@@ -254,8 +299,8 @@ export default function UsersPage() {
       if (roleForm.id === id) resetRoleForm();
       setMessage("Role deleted");
       await reload();
-    } catch (err) {
-      setError(err.message || "Could not delete");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not delete");
     } finally {
       setBusy(false);
     }
@@ -321,7 +366,13 @@ export default function UsersPage() {
                         return <option key={label} value={label}>{label}</option>;
                       })}
                       {roles
-                        .filter(function (r) { return CANONICAL_ROLES.indexOf(r.name) < 0; })
+                        .filter(function (r) {
+                          return (
+                            (CANONICAL_ROLES as readonly string[]).indexOf(
+                              String(r.name || "")
+                            ) < 0
+                          );
+                        })
                         .map(function (r) {
                           return <option key={r.id} value={r.name}>{r.name} (custom)</option>;
                         })
@@ -454,7 +505,9 @@ export default function UsersPage() {
               ) : (
                 <div className="record-list">
                   {roles.map(function (r) {
-                    const isCanonical = CANONICAL_ROLES.indexOf(r.name) >= 0;
+                    const isCanonical = (CANONICAL_ROLES as readonly string[]).includes(
+                      String(r.name || "")
+                    );
                     return (
                       <div className="record-card" key={r.id}>
                         <div className="button-row" style={{ justifyContent: "space-between" }}>

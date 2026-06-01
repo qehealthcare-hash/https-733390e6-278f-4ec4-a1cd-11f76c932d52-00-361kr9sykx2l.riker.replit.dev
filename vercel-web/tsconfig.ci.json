@@ -11,7 +11,8 @@
     "app/reset-password/page.tsx",
     "app/dashboard/page.tsx",
     "app/inquiries/page.tsx",
-    "app/settings/page.tsx"
+    "app/settings/page.tsx",
+    "app/users/page.tsx"
   ],
   "exclude": [
     "node_modules",
