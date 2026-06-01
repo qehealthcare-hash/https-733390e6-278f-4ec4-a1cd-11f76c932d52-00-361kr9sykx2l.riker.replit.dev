@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.ci.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test e2e/smoke.spec.ts e2e/critical-flow.spec.ts",

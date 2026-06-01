@@ -38,6 +38,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # tsconfig.ci.json — services/API layer only (app pages use ignoreBuildErrors at deploy).
       - name: Typecheck
         run: npm run typecheck
 

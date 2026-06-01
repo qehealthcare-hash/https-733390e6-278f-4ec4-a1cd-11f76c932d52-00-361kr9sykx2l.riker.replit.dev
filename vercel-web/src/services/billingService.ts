@@ -92,7 +92,8 @@ import {
 } from "@/business/billingRules";
 import {
   buildInvoiceSummaries,
-  derivePerInvoiceStatus
+  derivePerInvoiceStatus,
+  type InvoiceSummaryView
 } from "@/business/invoiceRules";
 import type { BillingPermissionsDto } from "@/validation/billingDto";
 import { parseBillingSummaryDto } from "@/validation/billingDto";
@@ -364,19 +365,14 @@ async function loadFreshBilling(
   return { success: true, data: row };
 }
 
-export interface InvoiceSummary {
-  invoice: JsonRow;
-  amount: number;
-  received: number;
-  outstanding: number;
-  status: BillingPaidStatus | "CANCELLED";
-}
+/** @deprecated Use InvoiceSummaryView from invoiceRules — kept for imports. */
+export type InvoiceSummary = InvoiceSummaryView;
 
 export interface BillingWithTotals {
   billing: JsonRow;
   services: JsonRow[];
   receipts: JsonRow[];
-  invoices: InvoiceSummary[];
+  invoices: InvoiceSummaryView[];
   totals: BillingTotals;
   period: { from?: string; to?: string; months: string[] };
   /**
@@ -1712,7 +1708,10 @@ export const billingService = {
       const inv = await billingRepository.findInvoiceById(String(input.invoice_id), access);
       if (!inv.success) return passFailure(inv);
       if (!inv.data) return notFoundFailure("Invoice", String(input.invoice_id));
-      const belongs = assertInvoiceBelongsToBilling(inv.data.billing_id, input.billing_id);
+      const belongs = assertInvoiceBelongsToBilling(
+        String(inv.data.billing_id ?? ""),
+        input.billing_id
+      );
       const blocked = guardFailure(belongs);
       if (blocked) return blocked;
       const invReceipts = await billingRepository.listReceiptsByInvoice(
@@ -2106,6 +2105,7 @@ export const billingService = {
       sec_dep_applied: number;
       gross: number;
       net: number;
+      noop?: boolean;
     }>
   > {
     const parsed = parseInput(finalInvoiceSchema, rawInput);
@@ -2250,8 +2250,8 @@ export const billingService = {
     const received = (receipts.data || []).reduce((s, r) => s + Number(r.amount || 0), 0);
     const regenBlocked = guardFailure(
       canRegenerateInvoice({
-        kind: existing.data.kind,
-        period: existing.data.period,
+        kind: String(existing.data.kind ?? ""),
+        period: String(existing.data.period ?? ""),
         receivedOnInvoice: received
       })
     );
