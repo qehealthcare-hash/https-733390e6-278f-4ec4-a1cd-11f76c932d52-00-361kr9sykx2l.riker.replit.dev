@@ -17,9 +17,18 @@ export default defineConfig({
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    // Mobile viewport project — exercises responsive CSS + toast stack on a
-    // real phone-sized window. Run with `npm run test:e2e:mobile` or pass
-    // `--project=mobile` to any of the existing E2E scripts.
-    { name: "mobile", use: { ...devices["iPhone 13"] } }
+    // Mobile viewport project — iPhone 13 dimensions on Chromium so CI only
+    // needs `playwright install chromium` (WebKit is not required).
+    {
+      name: "mobile",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: devices["iPhone 13"].viewport,
+        userAgent: devices["iPhone 13"].userAgent,
+        deviceScaleFactor: devices["iPhone 13"].deviceScaleFactor,
+        isMobile: true,
+        hasTouch: true
+      }
+    }
   ]
 });
