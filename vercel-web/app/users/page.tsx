@@ -4,12 +4,13 @@
  * Users & roles admin (M11). Canonical roles from `@/business/rbac`.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
+import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -60,8 +61,19 @@ export default function UsersPage() {
   var [userForm, setUserForm] = useState(emptyUserForm());
   var [roleForm, setRoleForm] = useState(emptyRoleForm());
   var [search, setSearch] = useState("");
-  var [error, setError] = useState("");
-  var [message, setMessage] = useState("");
+  var [error, setErrorState] = useState("");
+  var [message, setMessageState] = useState("");
+  var toast = useToast();
+  var setError = useCallback(function (msg) {
+    var text = String(msg || "");
+    setErrorState(text);
+    if (text) toast.error(text);
+  }, [toast]);
+  var setMessage = useCallback(function (msg) {
+    var text = String(msg || "");
+    setMessageState(text);
+    if (text) toast.success(text);
+  }, [toast]);
   var [busy, setBusy] = useState(false);
 
   async function reload() {

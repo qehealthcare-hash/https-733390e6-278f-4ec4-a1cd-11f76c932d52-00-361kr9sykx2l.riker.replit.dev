@@ -5,12 +5,13 @@
  * PDF helpers live in `@/lib/employeeUi`.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SuccessBanner } from "@/components/ui/status-banner";
+import { useToast } from "@/components/ui/toast";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
@@ -267,9 +268,20 @@ export default function EmployeesPage() {
   var [eduFilter, setEduFilter] = useState("");
   var [shiftFilter, setShiftFilter] = useState("");
   var [scoreFilter, setScoreFilter] = useState("");
-  var [error, setError] = useState("");
+  var [error, setErrorState] = useState("");
   var [fieldErrors, setFieldErrors] = useState(null);
-  var [message, setMessage] = useState("");
+  var [message, setMessageState] = useState("");
+  var toast = useToast();
+  var setError = useCallback(function (msg) {
+    var text = String(msg || "");
+    setErrorState(text);
+    if (text) toast.error(text);
+  }, [toast]);
+  var setMessage = useCallback(function (msg) {
+    var text = String(msg || "");
+    setMessageState(text);
+    if (text) toast.success(text);
+  }, [toast]);
 
   var [statusDialog, setStatusDialog] = useState(null);
   var [activateDialog, setActivateDialog] = useState(null);

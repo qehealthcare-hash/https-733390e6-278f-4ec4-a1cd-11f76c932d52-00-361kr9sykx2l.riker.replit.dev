@@ -4,12 +4,13 @@
  * App settings (M11 Pass D). Helpers: `@/lib/settingsUi`.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
+import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request, requestWithOfflineFallback } from "@/lib/api-client";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -41,8 +42,19 @@ export default function SettingsPage() {
   var [drafts, setDrafts] = useState({});
   var [customKey, setCustomKey] = useState("");
   var [customValue, setCustomValue] = useState("");
-  var [error, setError] = useState("");
-  var [message, setMessage] = useState("");
+  var [error, setErrorState] = useState("");
+  var [message, setMessageState] = useState("");
+  var toast = useToast();
+  var setError = useCallback(function (msg) {
+    var text = String(msg || "");
+    setErrorState(text);
+    if (text) toast.error(text);
+  }, [toast]);
+  var setMessage = useCallback(function (msg) {
+    var text = String(msg || "");
+    setMessageState(text);
+    if (text) toast.success(text);
+  }, [toast]);
   var [busy, setBusy] = useState(false);
   var [loading, setLoading] = useState(true);
 

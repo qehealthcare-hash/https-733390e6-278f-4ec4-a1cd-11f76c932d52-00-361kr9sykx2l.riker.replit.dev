@@ -31,6 +31,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { StatCard } from "@/components/ui/stat-card";
+import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request } from "@/lib/api-client";
 import { formatCurrency } from "@/lib/formatters";
@@ -76,7 +77,16 @@ export default function DashboardPage() {
 
   const [period, setPeriod] = useState<string>(() => currentPeriod());
   const [kpis, setKpis] = useState<DashboardKpis | null>(null);
-  const [error, setError] = useState<string>("");
+  const [error, setErrorState] = useState<string>("");
+  const toast = useToast();
+  const setError = useCallback(
+    function (msg: string) {
+      const text = String(msg || "");
+      setErrorState(text);
+      if (text) toast.error(text);
+    },
+    [toast]
+  );
   const [loading, setLoading] = useState<boolean>(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [retryCount, setRetryCount] = useState<number>(0);

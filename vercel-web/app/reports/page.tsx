@@ -5,13 +5,14 @@
  * All data via `/api/v1/reports/*`.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { StatCard } from "@/components/ui/stat-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner } from "@/components/ui/status-banner";
+import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
 import { request } from "@/lib/api-client";
 import { downloadCsv } from "@/lib/csv";
@@ -42,7 +43,13 @@ export default function ReportsPage() {
   var [payout, setPayout] = useState(null);
   var [profitLoss, setProfitLoss] = useState(null);
   var [payroll, setPayroll] = useState(null);
-  var [error, setError] = useState("");
+  var [error, setErrorState] = useState("");
+  var toast = useToast();
+  var setError = useCallback(function (msg) {
+    var text = String(msg || "");
+    setErrorState(text);
+    if (text) toast.error(text);
+  }, [toast]);
   var [loading, setLoading] = useState(false);
 
   // Phase 12: detail tabs are now driven by server-side aggregation endpoints

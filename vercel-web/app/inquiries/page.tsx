@@ -8,12 +8,13 @@
  * helpers in `@/lib/inquiryUi`.
  */
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
+import { useToast } from "@/components/ui/toast";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
@@ -229,8 +230,19 @@ export default function InquiriesPage() {
   const [form, setForm] = useState<InquiryFormState>(createInitialForm);
   const [formPermissions, setFormPermissions] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [error, setErrorState] = useState("");
+  const [message, setMessageState] = useState("");
+  const toast = useToast();
+  const setError = useCallback(function (msg: string) {
+    const text = String(msg || "");
+    setErrorState(text);
+    if (text) toast.error(text);
+  }, [toast]);
+  const setMessage = useCallback(function (msg: string) {
+    const text = String(msg || "");
+    setMessageState(text);
+    if (text) toast.success(text);
+  }, [toast]);
 
   const [statusDialog, setStatusDialog] = useState<StatusDialogState | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);

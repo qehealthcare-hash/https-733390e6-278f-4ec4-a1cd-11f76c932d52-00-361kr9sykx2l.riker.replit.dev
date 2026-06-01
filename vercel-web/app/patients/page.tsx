@@ -7,12 +7,13 @@
  * live in `@/lib/patientUi`.
  */
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
+import { useToast } from "@/components/ui/toast";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
@@ -206,8 +207,19 @@ export default function PatientsPage() {
         : Math.random().toString(36).slice(2) + Date.now().toString(36))
   );
   var [busy, setBusy] = useState(false);
-  var [message, setMessage] = useState("");
-  var [error, setError] = useState("");
+  var [message, setMessageState] = useState("");
+  var [error, setErrorState] = useState("");
+  var toast = useToast();
+  var setError = useCallback(function (msg) {
+    var text = String(msg || "");
+    setErrorState(text);
+    if (text) toast.error(text);
+  }, [toast]);
+  var setMessage = useCallback(function (msg) {
+    var text = String(msg || "");
+    setMessageState(text);
+    if (text) toast.success(text);
+  }, [toast]);
   var [conflictPrompt, setConflictPrompt] = useState(null); // { actual, action }
   var [duplicatePrompt, setDuplicatePrompt] = useState(null); // { message }
   // Inline modals: close-reason dialog and full patient history viewer.
@@ -560,14 +572,6 @@ export default function PatientsPage() {
     const next = { ...form, confirm_duplicate_name: true };
     setForm(next);
     await submitForm(next);
-  }
-
-  function isActiveStatus(status) {
-    return String(status || "Active") === "Active";
-  }
-
-  function isRegistryClosed(status) {
-    return String(status || "") === "Closed";
   }
 
   function openCloseDialog(row) {
