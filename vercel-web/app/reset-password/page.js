@@ -1,17 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
+import { useToast } from "@/components/ui/toast";
 
 export default function ResetPasswordPage() {
-  var auth = useAuth();
-  var router = useRouter();
-  var [password, setPassword] = useState("");
-  var [confirm, setConfirm] = useState("");
-  var [error, setError] = useState("");
-  var [busy, setBusy] = useState(false);
-  var [recoveryReady, setRecoveryReady] = useState(false);
+  const auth = useAuth();
+  const router = useRouter();
+  const toast = useToast();
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setErrorState] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [recoveryReady, setRecoveryReady] = useState(false);
+  const setError = useCallback(
+    function (msg) {
+      const text = String(msg || "");
+      setErrorState(text);
+      if (text) toast.error(text);
+    },
+    [toast]
+  );
 
   useEffect(
     function () {
@@ -42,8 +52,9 @@ export default function ResetPasswordPage() {
     }
     setBusy(true);
     try {
-      var result = await auth.supabase.auth.updateUser({ password: password });
+      const result = await auth.supabase.auth.updateUser({ password: password });
       if (result.error) throw result.error;
+      toast.success("Password updated. Sign in with your new password.");
       await auth.signOut();
       router.replace("/login?reset=1");
     } catch (submitError) {
@@ -69,7 +80,8 @@ export default function ResetPasswordPage() {
         <form onSubmit={handleSubmit}>
           <label htmlFor="reset-password-new-password-1">
             New password
-            <input id="reset-password-new-password-1"
+            <input
+              id="reset-password-new-password-1"
               type="password"
               autoComplete="new-password"
               value={password}
@@ -82,7 +94,8 @@ export default function ResetPasswordPage() {
           </label>
           <label htmlFor="reset-password-confirm-password-2">
             Confirm password
-            <input id="reset-password-confirm-password-2"
+            <input
+              id="reset-password-confirm-password-2"
               type="password"
               autoComplete="new-password"
               value={confirm}
@@ -94,7 +107,7 @@ export default function ResetPasswordPage() {
             />
           </label>
           {error ? (
-            <div className="error-text" role="alert">
+            <div className="error-text" role="alert" aria-live="assertive">
               {error}
             </div>
           ) : null}

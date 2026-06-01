@@ -1,18 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { appConfig } from "@/lib/config";
 import { useAuth } from "@/components/providers/auth-provider";
 import { BrandLogo } from "@/components/ui/brand-logo";
+import { useToast } from "@/components/ui/toast";
 
 export default function LoginPage() {
-  var auth = useAuth();
-  var router = useRouter();
-  var [email, setEmail] = useState("");
-  var [password, setPassword] = useState("");
-  var [busy, setBusy] = useState(false);
-  var [error, setError] = useState("");
+  const auth = useAuth();
+  const router = useRouter();
+  const toast = useToast();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setErrorState] = useState("");
+  const setError = useCallback(
+    function (msg) {
+      const text = String(msg || "");
+      setErrorState(text);
+      if (text) toast.error(text);
+    },
+    [toast]
+  );
 
   useEffect(
     function () {
@@ -24,6 +34,15 @@ export default function LoginPage() {
       }
     },
     [auth.loading, auth.session, auth.profile, auth.profileLoading, router]
+  );
+
+  useEffect(
+    function () {
+      if (auth.profileError) {
+        setError(auth.profileError);
+      }
+    },
+    [auth.profileError, setError]
   );
 
   async function handleSubmit(event) {
@@ -58,7 +77,8 @@ export default function LoginPage() {
         <form className="stack" onSubmit={handleSubmit}>
           <div className="field">
             <label htmlFor="login-email-1">Email</label>
-            <input id="login-email-1"
+            <input
+              id="login-email-1"
               type="email"
               autoComplete="username"
               value={email}
@@ -70,7 +90,8 @@ export default function LoginPage() {
           </div>
           <div className="field">
             <label htmlFor="login-password-2">Password</label>
-            <input id="login-password-2"
+            <input
+              id="login-password-2"
               type="password"
               autoComplete="current-password"
               value={password}
@@ -80,9 +101,10 @@ export default function LoginPage() {
               required
             />
           </div>
-          {error ? <div className="error-text" role="alert" aria-live="assertive">{error}</div> : null}
-          {!error && auth.session && auth.profileError ? (
-            <div className="error-text" role="alert" aria-live="assertive">{auth.profileError}</div>
+          {error ? (
+            <div className="error-text" role="alert" aria-live="assertive">
+              {error}
+            </div>
           ) : null}
           <button className="button primary" type="submit" disabled={busy}>
             {busy ? "Signing in…" : "Sign in"}
