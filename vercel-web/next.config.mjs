@@ -4,12 +4,8 @@ import { withSentryConfig } from "@sentry/nextjs";
 const nextConfig = {
   typedRoutes: false,
   poweredByHeader: false,
-  // Pre-existing no-var lint errors in app/users/page.tsx and others (added in
-  // ec6db47b) were not in the rubric when the last green prod build shipped.
-  // Skip lint during builds so urgent app fixes (closed-bill receipts, billing
-  // header totals) can ship; a separate sweep will fix the var → let/const
-  // violations and re-enable strict lint at build time.
-  eslint: { ignoreDuringBuilds: true },
+  // ESLint runs at build time (no-var sweep completed in fb03a5c9).
+  eslint: { ignoreDuringBuilds: false },
   // Same rationale as eslint above: app/attendance/page.tsx and similar pages
   // ship implicit-any annotations that fail strict typecheck. Build-time
   // typecheck is bypassed here so the urgent billing fixes deploy; tsc still

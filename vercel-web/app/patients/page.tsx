@@ -841,7 +841,25 @@ export default function PatientsPage() {
               <div className="grid-2">
                 <div className="field">
                   <label htmlFor="patients-assigned-staff-14">Assigned staff</label>
-                  <select id="patients-assigned-staff-14" value={form.assigned_staff_id} onChange={function (event) { updateField("assigned_staff_id", event.target.value); }}>
+                  <select
+                    id="patients-assigned-staff-14"
+                    value={form.assigned_staff_id}
+                    disabled={
+                      Boolean(
+                        form.id &&
+                          formPermissions &&
+                          !formPermissions.canAssignCaretaker
+                      )
+                    }
+                    title={
+                      formPermissions && formPermissions.blockReasons
+                        ? formPermissions.blockReasons.canAssignCaretaker
+                        : undefined
+                    }
+                    onChange={function (event) {
+                      updateField("assigned_staff_id", event.target.value);
+                    }}
+                  >
                     <option value="">No assignment</option>
                     {employees.map(function (employee) {
                       return (
