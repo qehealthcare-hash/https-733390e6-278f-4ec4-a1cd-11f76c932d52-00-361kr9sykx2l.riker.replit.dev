@@ -46,6 +46,7 @@ import {
 import { parseInput } from "@/validation/parseValidation";
 import {
   PAYABLE_ATTENDANCE_STATUSES,
+  buildPayoutPermissions,
   canEditPayout,
   canLockPayout,
   canMarkPayoutPaid,
@@ -65,6 +66,7 @@ import {
   type PayoutPatientBreakdownRow,
   type PayoutTotals
 } from "@/business/payoutRules";
+import { parsePayoutDetailDto, type PayoutPermissionsDto } from "@/validation/payoutDto";
 import { assertNotStale } from "@/business/concurrencyRules";
 import { monthRangeUTC } from "@/business/dateRules";
 import { newId } from "@/business/idRules";
@@ -182,6 +184,8 @@ export interface PayoutDetail {
    * ensure / adjust / pay paths.
    */
   diagnostics: PayoutDiagnostics;
+  /** Business-layer action flags — authoritative for the payouts UI. */
+  permissions: PayoutPermissionsDto;
 }
 
 export interface PayoutPatientSummary {
@@ -535,6 +539,30 @@ async function buildPatientBreakdown(
     .sort((a, b) => b.amount - a.amount || b.days_worked - a.days_worked);
 }
 
+function validatePayoutDetailContract(detail: PayoutDetail): PayoutDetail {
+  const parsed = parsePayoutDetailDto(detail);
+  if (!parsed.success && process.env.NODE_ENV !== "production") {
+    console.warn(
+      "[payoutService] PayoutDetailDTO contract mismatch",
+      parsed.error.flatten()
+    );
+  }
+  return detail;
+}
+
+function payoutDetailPermissions(
+  payout: JsonRow,
+  outstanding: number,
+  dutyCount: number
+): PayoutPermissionsDto {
+  return buildPayoutPermissions({
+    status: String(payout.status || "OPEN"),
+    outstanding,
+    netAmount: Number(payout.net_amount || 0),
+    dutyCount
+  });
+}
+
 /** Load a payout + its source duty/attendance for the breakdown widget. */
 async function loadPayoutDetail(
   payout: JsonRow,
@@ -546,18 +574,22 @@ async function loadPayoutDetail(
   const employeeName = nameMap.get(employeeId) || employeeId;
 
   if (!employeeId || !period) {
-    return success({
-      payout: { ...payout, employee_name: employeeName },
-      duties: [],
-      attendance: [],
-      breakdown: [],
-      paid_transactions: [],
-      paid_total: 0,
-      outstanding: Math.max(0, Number(payout.net_amount || 0)),
-      employee_name: employeeName,
-      patient_breakdown: [],
-      diagnostics: emptyDiagnostics()
-    });
+    const outstanding = Math.max(0, Number(payout.net_amount || 0));
+    return success(
+      validatePayoutDetailContract({
+        payout: { ...payout, employee_name: employeeName },
+        duties: [],
+        attendance: [],
+        breakdown: [],
+        paid_transactions: [],
+        paid_total: 0,
+        outstanding,
+        employee_name: employeeName,
+        patient_breakdown: [],
+        diagnostics: emptyDiagnostics(),
+        permissions: payoutDetailPermissions(payout, outstanding, 0)
+      })
+    );
   }
 
   const access = dbAccess(ctx);
@@ -601,26 +633,38 @@ async function loadPayoutDetail(
     0
   );
   const outstanding = Math.max(0, Number(payout.net_amount || 0) - paidTotal);
+  const dutyCount = Math.max(
+    Number(payout.duty_count || 0),
+    diagnostics.duty_row_count,
+    dutyRows.length
+  );
 
-  return success({
-    payout: { ...payout, employee_name: employeeName },
-    duties: dutyRows,
-    attendance: attendanceRows,
-    paid_transactions: paidRows,
-    paid_total: Math.round(paidTotal * 100) / 100,
-    outstanding: Math.round(outstanding * 100) / 100,
-    employee_name: employeeName,
-    patient_breakdown: patientBreakdown,
-    diagnostics,
-    // Legacy `breakdown` mirrors patient_breakdown so consumers never see
-    // divergent day counts (PRESENT-only vs PRESENT/LATE/HALF_DAY).
-    breakdown: patientBreakdown.map((p) => ({
-      patient_id: p.patient_id,
-      duty_count: p.days_worked,
-      hours: p.hours,
-      duty_ids: p.duty_ids
-    }))
-  });
+  return success(
+    validatePayoutDetailContract({
+      payout: { ...payout, employee_name: employeeName },
+      duties: dutyRows,
+      attendance: attendanceRows,
+      paid_transactions: paidRows,
+      paid_total: Math.round(paidTotal * 100) / 100,
+      outstanding: Math.round(outstanding * 100) / 100,
+      employee_name: employeeName,
+      patient_breakdown: patientBreakdown,
+      diagnostics,
+      permissions: payoutDetailPermissions(
+        payout,
+        Math.round(outstanding * 100) / 100,
+        dutyCount
+      ),
+      // Legacy `breakdown` mirrors patient_breakdown so consumers never see
+      // divergent day counts (PRESENT-only vs PRESENT/LATE/HALF_DAY).
+      breakdown: patientBreakdown.map((p) => ({
+        patient_id: p.patient_id,
+        duty_count: p.days_worked,
+        hours: p.hours,
+        duty_ids: p.duty_ids
+      }))
+    })
+  );
 }
 
 /**

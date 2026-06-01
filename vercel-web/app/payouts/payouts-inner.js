@@ -1277,7 +1277,13 @@ function PayoutsPageContent() {
 
   var payout = detail?.payout || null;
   var status = String(payout?.status || "OPEN");
-  var isLocked = status === "LOCKED" || status === "PAID";
+  var permissions = detail?.permissions || {
+    canAdjust: false,
+    canLock: false,
+    canReopen: false,
+    canPayFinal: false,
+    canPayAdvance: false
+  };
   var isPaid = status === "PAID";
   var paidTransactions = Array.isArray(detail?.paid_transactions)
     ? detail.paid_transactions
@@ -2113,7 +2119,7 @@ function PayoutsPageContent() {
                     </div>
                   ) : null}
 
-                  {canDisburse && outstanding > 0 && !isPaid ? (
+                  {canDisburse && permissions.canPayFinal ? (
                     <div
                       className="helper-box"
                       style={{
@@ -2227,11 +2233,11 @@ function PayoutsPageContent() {
                       Print payout statement
                     </button>
                     {canWrite ? (
-                      <button className="button secondary" type="button" onClick={handleRecompute} disabled={busy || isLocked}>
+                      <button className="button secondary" type="button" onClick={handleRecompute} disabled={busy || !permissions.canAdjust}>
                         Recompute
                       </button>
                     ) : null}
-                    {canWrite && status === "OPEN" ? (
+                    {canWrite && permissions.canLock ? (
                       <div className="stack" style={{ flex: 1, minWidth: 220 }}>
                         <label className="mini-muted">Reason for locking (required)</label>
                         <input
@@ -2251,7 +2257,7 @@ function PayoutsPageContent() {
                         </button>
                       </div>
                     ) : null}
-                    {canReopen && status === "LOCKED" ? (
+                    {canReopen && permissions.canReopen ? (
                       <div className="stack" style={{ flex: 1, minWidth: 220 }}>
                         <label className="mini-muted">Reason for reopening (required)</label>
                         <input
@@ -2271,7 +2277,7 @@ function PayoutsPageContent() {
                         </button>
                       </div>
                     ) : null}
-                    {canDisburse && status === "OPEN" ? (
+                    {canDisburse && permissions.canPayAdvance ? (
                       <button
                         className="button secondary"
                         type="button"
@@ -2286,7 +2292,7 @@ function PayoutsPageContent() {
                     ) : null}
                   </div>
 
-                  {canDisburse && (!isLocked || status === "LOCKED") ? (
+                  {canDisburse && permissions.canAdjust ? (
                     <form className="stack" onSubmit={handleAdjust}>
                       <strong>Adjust</strong>
                       <div className="grid-2">
@@ -2299,7 +2305,7 @@ function PayoutsPageContent() {
                             onChange={function (event) {
                               setAdjustForm({ ...adjustForm, advance: event.target.value });
                             }}
-                            disabled={isLocked}
+                            disabled={!permissions.canAdjust}
                           />
                         </div>
                         <div className="field">
@@ -2311,7 +2317,7 @@ function PayoutsPageContent() {
                             onChange={function (event) {
                               setAdjustForm({ ...adjustForm, deduction: event.target.value });
                             }}
-                            disabled={isLocked}
+                            disabled={!permissions.canAdjust}
                           />
                         </div>
                         <div className="field">
@@ -2323,7 +2329,7 @@ function PayoutsPageContent() {
                             onChange={function (event) {
                               setAdjustForm({ ...adjustForm, bonus: event.target.value });
                             }}
-                            disabled={isLocked}
+                            disabled={!permissions.canAdjust}
                           />
                         </div>
                         <div className="field">
@@ -2333,19 +2339,19 @@ function PayoutsPageContent() {
                             onChange={function (event) {
                               setAdjustForm({ ...adjustForm, remarks: event.target.value });
                             }}
-                            disabled={isLocked}
+                            disabled={!permissions.canAdjust}
                           />
                         </div>
                       </div>
                       <div className="button-row">
-                        <button className="button primary" type="submit" disabled={busy || isLocked}>
+                        <button className="button primary" type="submit" disabled={busy || !permissions.canAdjust}>
                           Apply adjustment
                         </button>
                       </div>
                     </form>
                   ) : null}
 
-                  {canDisburse && advanceOpen && status === "OPEN" ? (
+                  {canDisburse && advanceOpen && permissions.canPayAdvance ? (
                     <form className="stack" onSubmit={handleAdvance} ref={advanceFormRef}>
                       <strong>Pay advance</strong>
                       <div className="helper-box" style={{ background: "#fff7e6", borderColor: "#f59e0b" }}>
@@ -2451,7 +2457,7 @@ function PayoutsPageContent() {
                     </form>
                   ) : null}
 
-                  {canDisburse && status === "LOCKED" ? (
+                  {canDisburse && permissions.canPayFinal ? (
                     <form className="stack" onSubmit={handlePay} ref={payFormRef}>
                       <strong>Mark as paid</strong>
                       <div className="helper-box" style={{ background: "#fff7e6", borderColor: "#f59e0b" }}>

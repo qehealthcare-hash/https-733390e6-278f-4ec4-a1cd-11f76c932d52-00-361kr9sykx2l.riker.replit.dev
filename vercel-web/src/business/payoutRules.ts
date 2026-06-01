@@ -1,5 +1,6 @@
 import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
+import type { PayoutPermissionsDto } from "@/validation/payoutDto";
 import type { PayoutStatus } from "@/validation/payoutValidation";
 import { PAYOUT_CLOSED_STATUSES, PAYOUT_STATUSES } from "@/validation/payoutValidation";
 
@@ -169,6 +170,57 @@ export function canReopenPayout(status: string | null | undefined): ApiResult<nu
     );
   }
   return businessOk();
+}
+
+export interface BuildPayoutPermissionsInput {
+  status: string | null | undefined;
+  outstanding: number;
+  netAmount: number;
+  dutyCount: number;
+}
+
+/** Server-computed payout action flags for the React payouts UI. */
+export function buildPayoutPermissions(
+  input: BuildPayoutPermissionsInput
+): PayoutPermissionsDto {
+  const status = String(input.status || "OPEN");
+  const blockReasons: Record<string, string> = {};
+
+  const adjust = canEditPayout(status);
+  if (!adjust.success) blockReasons.canAdjust = adjust.error || "Cannot adjust";
+
+  const lock =
+    status === "OPEN"
+      ? canLockPayout(status, input.netAmount, input.dutyCount)
+      : businessFailure(
+          status === "LOCKED"
+            ? "Payout is already LOCKED"
+            : `Cannot lock payout in status ${status}`,
+          { status }
+        );
+  if (!lock.success) blockReasons.canLock = lock.error || "Cannot lock";
+
+  const reopen = canReopenPayout(status);
+  if (!reopen.success) blockReasons.canReopen = reopen.error || "Cannot reopen";
+
+  const payFinal = canMarkPayoutPaid(status);
+  if (!payFinal.success) {
+    blockReasons.canPayFinal = payFinal.error || "Cannot mark paid";
+  } else if (Number(input.outstanding || 0) <= 0) {
+    blockReasons.canPayFinal = "Nothing outstanding to disburse";
+  }
+
+  const payAdvance = canPayAdvance(status);
+  if (!payAdvance.success) blockReasons.canPayAdvance = payAdvance.error || "Cannot pay advance";
+
+  return {
+    canAdjust: adjust.success,
+    canLock: lock.success,
+    canReopen: reopen.success,
+    canPayFinal: payFinal.success && Number(input.outstanding || 0) > 0,
+    canPayAdvance: payAdvance.success,
+    blockReasons: Object.keys(blockReasons).length ? blockReasons : undefined
+  };
 }
 
 export function canPayoutTransitionTo(

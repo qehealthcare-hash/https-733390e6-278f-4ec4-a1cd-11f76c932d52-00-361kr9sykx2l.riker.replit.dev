@@ -15,6 +15,7 @@ export * from "@/validation/dutyValidation";
 export * from "@/validation/billingValidation";
 export * from "@/validation/billingDto";
 export * from "@/validation/payoutValidation";
+export * from "@/validation/payoutDto";
 export * from "@/validation/attendanceValidation";
 export * from "@/validation/whatsappValidation";
 export * from "@/validation/aiValidation";
