@@ -115,11 +115,11 @@ function createInitialForm(): PatientFormState {
 
 function deriveAgeFromDob(dob) {
   if (!dob) return 0;
-  var birth = new Date(dob);
+  const birth = new Date(dob);
   if (Number.isNaN(birth.getTime())) return 0;
-  var now = new Date();
-  var age = now.getFullYear() - birth.getFullYear();
-  var m = now.getMonth() - birth.getMonth();
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const m = now.getMonth() - birth.getMonth();
   if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age -= 1;
   return age < 0 ? 0 : age;
 }
@@ -142,17 +142,17 @@ export default function PatientsPage() {
   const canWrite = hasPermission(auth.profile?.role, "patients.write");
   const canClose = roleInList(auth.profile?.role, PATIENT_CLOSE_ROLES);
   const canViewHistory = roleInList(auth.profile?.role, PATIENT_HISTORY_ROLES);
-  var [search, setSearch] = useState("");
-  var [debouncedSearch, setDebouncedSearch] = useState("");
-  var [statusFilter, setStatusFilter] = useState("");
-  var [genderFilter, setGenderFilter] = useState("");
-  var [areaFilter, setAreaFilter] = useState("");
-  var [pinFilter, setPinFilter] = useState("");
-  var [shiftFilter, setShiftFilter] = useState("");
-  var [sortOrder, setSortOrder] = useState("desc");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [genderFilter, setGenderFilter] = useState("");
+  const [areaFilter, setAreaFilter] = useState("");
+  const [pinFilter, setPinFilter] = useState("");
+  const [shiftFilter, setShiftFilter] = useState("");
+  const [sortOrder, setSortOrder] = useState("desc");
   useEffect(
     function () {
-      var handle = setTimeout(function () {
+      const handle = setTimeout(function () {
         setDebouncedSearch(search.trim());
       }, 300);
       return function () { clearTimeout(handle); };
@@ -160,7 +160,7 @@ export default function PatientsPage() {
     [search]
   );
 
-  var listQuery = useMemo(
+  const listQuery = useMemo(
     function () {
       return {
         q: debouncedSearch || undefined,
@@ -174,7 +174,7 @@ export default function PatientsPage() {
     [debouncedSearch, statusFilter, genderFilter, areaFilter, pinFilter, shiftFilter]
   );
 
-  var resource = usePaginatedResource({
+  const resource = usePaginatedResource({
     basePath: patientsClient.basePath,
     table: "hh_patients",
     channel: "hh_patients",
@@ -193,43 +193,43 @@ export default function PatientsPage() {
       shiftFilter,
     pageSize: 50
   });
-  var [employees, setEmployees] = useState([]);
-  var [form, setForm] = useState(createInitialForm());
-  var [formPermissions, setFormPermissions] = useState(null);
+  const [employees, setEmployees] = useState([]);
+  const [form, setForm] = useState(createInitialForm());
+  const [formPermissions, setFormPermissions] = useState(null);
   // P1-36: stable per-form-session resource id for uploads that happen
   // BEFORE the patient is persisted (new-patient flow). Once form.id
   // exists we prefer that; otherwise this draft-id keeps every file
   // attached to a single patient form clustered under the same prefix.
-  var draftIdRef = useRef(
+  const draftIdRef = useRef(
     "draft-" +
       (typeof crypto !== "undefined" && crypto.randomUUID
         ? crypto.randomUUID()
         : Math.random().toString(36).slice(2) + Date.now().toString(36))
   );
-  var [busy, setBusy] = useState(false);
-  var [message, setMessageState] = useState("");
-  var [error, setErrorState] = useState("");
-  var toast = useToast();
-  var setError = useCallback(function (msg) {
-    var text = String(msg || "");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessageState] = useState("");
+  const [error, setErrorState] = useState("");
+  const toast = useToast();
+  const setError = useCallback(function (msg) {
+    const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  var setMessage = useCallback(function (msg) {
-    var text = String(msg || "");
+  const setMessage = useCallback(function (msg) {
+    const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
   }, [toast]);
-  var [conflictPrompt, setConflictPrompt] = useState(null); // { actual, action }
-  var [duplicatePrompt, setDuplicatePrompt] = useState(null); // { message }
+  const [conflictPrompt, setConflictPrompt] = useState(null); // { actual, action }
+  const [duplicatePrompt, setDuplicatePrompt] = useState(null); // { message }
   // Inline modals: close-reason dialog and full patient history viewer.
-  var [closeDialog, setCloseDialog] = useState(null); // { id, name, reason, reason_other }
-  var [reopenDialog, setReopenDialog] = useState(null); // { id, name, note }
-  var [historyDialog, setHistoryDialog] = useState(null); // { id, name }
-  var [cameraOpen, setCameraOpen] = useState(false);
-  var [historyData, setHistoryData] = useState(null);
-  var [historyLoading, setHistoryLoading] = useState(false);
-  var [historyError, setHistoryError] = useState("");
+  const [closeDialog, setCloseDialog] = useState(null); // { id, name, reason, reason_other }
+  const [reopenDialog, setReopenDialog] = useState(null); // { id, name, note }
+  const [historyDialog, setHistoryDialog] = useState(null); // { id, name }
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [historyData, setHistoryData] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
   const isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
 
@@ -263,13 +263,13 @@ export default function PatientsPage() {
     [accessToken, auth.session]
   );
 
-  var rows = useMemo(
+  const rows = useMemo(
     function () {
       return resource.data
         .slice()
         .sort(function (left, right) {
-          var leftTime = new Date(left.registered_at || left.created_at || left.created || 0).getTime();
-          var rightTime = new Date(right.registered_at || right.created_at || right.created || 0).getTime();
+          const leftTime = new Date(left.registered_at || left.created_at || left.created || 0).getTime();
+          const rightTime = new Date(right.registered_at || right.created_at || right.created || 0).getTime();
           return sortOrder === "asc" ? leftTime - rightTime : rightTime - leftTime;
         });
     },
@@ -278,7 +278,7 @@ export default function PatientsPage() {
 
   function caretakerLabel(employeeId) {
     if (!employeeId) return "";
-    var hit = employees.find(function (employee) {
+    const hit = employees.find(function (employee) {
       return employee.id === employeeId;
     });
     return hit ? (hit.full_name || hit.name || employeeId) : employeeId;
@@ -286,7 +286,7 @@ export default function PatientsPage() {
 
   function updateField(name, value) {
     setForm(function (current) {
-      var next = { ...current, [name]: value };
+      const next = { ...current, [name]: value };
       if (name === "dob") {
         next.age = deriveAgeFromDob(value) || current.age;
       }
@@ -296,7 +296,7 @@ export default function PatientsPage() {
 
   function updateContact(index, key, value) {
     setForm(function (current) {
-      var next = current.relative_contacts.slice();
+      const next = current.relative_contacts.slice();
       next[index] = { ...next[index], [key]: value };
       return { ...current, relative_contacts: next };
     });
@@ -334,14 +334,14 @@ export default function PatientsPage() {
   }
 
   async function handleUpload(event) {
-    var files = Array.from(event.target.files || []);
+    const files = Array.from(event.target.files || []);
     if (!files.length) return;
     setBusy(true);
     setError("");
     try {
-      var uploaded = [];
-      var patientResourceId = form.id || draftIdRef.current;
-      for (var i = 0; i < files.length; i += 1) {
+      const uploaded = [];
+      const patientResourceId = form.id || draftIdRef.current;
+      for (let i = 0; i < files.length; i += 1) {
         uploaded.push(
           await uploadDocument({
             bucket: "patient-documents",
@@ -370,7 +370,7 @@ export default function PatientsPage() {
     setBusy(true);
     setError("");
     try {
-      var uploaded = await uploadDocument({
+      const uploaded = await uploadDocument({
         bucket: "patient-documents",
         file: file,
         session: auth.session,
@@ -388,7 +388,7 @@ export default function PatientsPage() {
   }
 
   async function handlePhotoUpload(event) {
-    var file = (event.target.files || [])[0];
+    const file = (event.target.files || [])[0];
     event.target.value = "";
     await uploadPhotoFile(file);
   }
@@ -401,13 +401,13 @@ export default function PatientsPage() {
   function editPatient(row: PatientListRow) {
     setError("");
     setMessage("");
-    var rels = [
+    const rels = [
       { name: row.relname || "", phone: row.relphone || "" },
       { name: row.relname2 || "", phone: row.relphone2 || "" },
       { name: row.relname3 || "", phone: row.relphone3 || "" }
     ];
     if (Array.isArray(row.relative_contacts) && row.relative_contacts.length) {
-      for (var i = 0; i < Math.min(3, row.relative_contacts.length); i += 1) {
+      for (let i = 0; i < Math.min(3, row.relative_contacts.length); i += 1) {
         rels[i] = {
           name: row.relative_contacts[i].name || rels[i].name,
           phone: row.relative_contacts[i].phone || rels[i].phone
@@ -556,7 +556,7 @@ export default function PatientsPage() {
     setBusy(true);
     setError("");
     try {
-      var fresh = await patientsClient.get(auth.session, form.id);
+      const fresh = await patientsClient.get(auth.session, form.id);
       editPatient(fresh);
       setConflictPrompt(null);
       setMessage("Patient reloaded — your previous edits were discarded.");
@@ -680,7 +680,7 @@ export default function PatientsPage() {
     setHistoryError("");
     setHistoryLoading(true);
     try {
-      var bundle = await patientsClient.history(auth.session, row.id);
+      const bundle = await patientsClient.history(auth.session, row.id);
       setHistoryData(bundle);
     } catch (historyErr) {
       setHistoryError(historyErr.message || "Could not load patient history");
@@ -698,11 +698,11 @@ export default function PatientsPage() {
 
   async function resolvePatientDocLinks(docs) {
     if (!Array.isArray(docs) || !docs.length || !auth.session) return [];
-    var resolved = [];
-    for (var i = 0; i < docs.length; i += 1) {
-      var d = docs[i];
+    const resolved = [];
+    for (let i = 0; i < docs.length; i += 1) {
+      const d = docs[i];
       try {
-        var data = await getDocumentSignedUrl(d, auth.session, { expiresIn: 1800 });
+        const data = await getDocumentSignedUrl(d, auth.session, { expiresIn: 1800 });
         resolved.push({ ...d, signedUrl: data && data.signedUrl ? data.signedUrl : "" });
       } catch (_e) {
         resolved.push({ ...d, signedUrl: "" });
@@ -1299,7 +1299,7 @@ export default function PatientsPage() {
                   <select id="patients-reason-29"
                     value={closeDialog.reason}
                     onChange={function (event) {
-                      var value = event.target.value;
+                      const value = event.target.value;
                       setCloseDialog(function (d) {
                         return d ? { ...d, reason: value } : d;
                       });
@@ -1318,7 +1318,7 @@ export default function PatientsPage() {
                     <input id="patients-specify-other-reason-30"
                       value={closeDialog.reason_other}
                       onChange={function (event) {
-                        var value = event.target.value;
+                        const value = event.target.value;
                         setCloseDialog(function (d) {
                           return d ? { ...d, reason_other: value } : d;
                         });
@@ -1365,7 +1365,7 @@ export default function PatientsPage() {
                     rows="2"
                     value={reopenDialog.note}
                     onChange={function (event) {
-                      var value = event.target.value;
+                      const value = event.target.value;
                       setReopenDialog(function (d) {
                         return d ? { ...d, note: value } : d;
                       });

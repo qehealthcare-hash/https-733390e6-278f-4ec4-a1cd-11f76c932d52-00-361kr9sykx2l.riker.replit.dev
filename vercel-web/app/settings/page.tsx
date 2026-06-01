@@ -26,45 +26,45 @@ import {
 } from "@/lib/settingsUi";
 
 function roleInList(role, list) {
-  var normalized = String(role || "").trim().toLowerCase();
+  const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
   });
 }
 
 export default function SettingsPage() {
-  var auth = useAuth();
-  var canRead = roleInList(auth.profile?.role, SETTINGS_READ_ROLES);
-  var canWrite = roleInList(auth.profile?.role, SETTINGS_WRITE_ROLES);
-  var canDelete = roleInList(auth.profile?.role, SETTINGS_DELETE_ROLES);
-  var confirm = useConfirm();
-  var [settings, setSettings] = useState({});
-  var [drafts, setDrafts] = useState({});
-  var [customKey, setCustomKey] = useState("");
-  var [customValue, setCustomValue] = useState("");
-  var [error, setErrorState] = useState("");
-  var [message, setMessageState] = useState("");
-  var toast = useToast();
-  var setError = useCallback(function (msg) {
-    var text = String(msg || "");
+  const auth = useAuth();
+  const canRead = roleInList(auth.profile?.role, SETTINGS_READ_ROLES);
+  const canWrite = roleInList(auth.profile?.role, SETTINGS_WRITE_ROLES);
+  const canDelete = roleInList(auth.profile?.role, SETTINGS_DELETE_ROLES);
+  const confirm = useConfirm();
+  const [settings, setSettings] = useState({});
+  const [drafts, setDrafts] = useState({});
+  const [customKey, setCustomKey] = useState("");
+  const [customValue, setCustomValue] = useState("");
+  const [error, setErrorState] = useState("");
+  const [message, setMessageState] = useState("");
+  const toast = useToast();
+  const setError = useCallback(function (msg) {
+    const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  var setMessage = useCallback(function (msg) {
-    var text = String(msg || "");
+  const setMessage = useCallback(function (msg) {
+    const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
   }, [toast]);
-  var [busy, setBusy] = useState(false);
-  var [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   async function reload() {
     if (!auth.session?.access_token || !canRead) return;
     setLoading(true);
     try {
-      var data = await request("/settings", null, auth.session);
+      const data = await request("/settings", null, auth.session);
       setSettings(data || {});
-      var initialDrafts = {};
+      const initialDrafts = {};
       SETTINGS_KNOWN_KEYS.forEach(function (k) {
         initialDrafts[k.key] = settingsValueToString(data ? data[k.key] : null);
       });
@@ -94,8 +94,8 @@ export default function SettingsPage() {
     setError("");
     setMessage("");
     try {
-      var raw = drafts[keyDef.key] !== undefined ? drafts[keyDef.key] : "";
-      var value = parseSettingsValue(raw, !!keyDef.json);
+      const raw = drafts[keyDef.key] !== undefined ? drafts[keyDef.key] : "";
+      const value = parseSettingsValue(raw, !!keyDef.json);
       await requestWithOfflineFallback(
         "/settings/" + encodeURIComponent(keyDef.key),
         { method: "PUT", body: { value: value } },
@@ -112,7 +112,7 @@ export default function SettingsPage() {
 
   async function deleteKey(key) {
     if (!canDelete) return;
-    var ok = await confirm({
+    const ok = await confirm({
       title: "Delete setting '" + key + "'?",
       description: "Removing a setting may affect downstream modules until it is restored.",
       confirmLabel: "Delete",
@@ -142,8 +142,8 @@ export default function SettingsPage() {
     setError("");
     setMessage("");
     try {
-      var raw = customValue.trim();
-      var parsed;
+      const raw = customValue.trim();
+      let parsed;
       try {
         parsed = raw && raw.startsWith("{") ? JSON.parse(raw) : raw;
       } catch (err) {
@@ -165,7 +165,7 @@ export default function SettingsPage() {
     }
   }
 
-  var customKeys = Object.keys(settings).filter(function (k) {
+  const customKeys = Object.keys(settings).filter(function (k) {
     return !SETTINGS_KNOWN_KEYS.some(function (def) {
       return def.key === k;
     });

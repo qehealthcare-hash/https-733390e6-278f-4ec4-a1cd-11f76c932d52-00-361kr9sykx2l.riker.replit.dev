@@ -4,7 +4,7 @@
 
 import dynamic from "next/dynamic";
 
-var PayoutsInner = dynamic(
+const PayoutsInner = dynamic(
   function () {
     return import("./payouts-inner");
   },

@@ -159,7 +159,7 @@ export default function InquiriesPage() {
 
   useEffect(
     function () {
-      var handle = setTimeout(function () {
+      const handle = setTimeout(function () {
         setDebouncedSearch(search.trim());
       }, 300);
       return function () { clearTimeout(handle); };
@@ -171,7 +171,7 @@ export default function InquiriesPage() {
   // identity. Supabase mints a new session object on every onAuthStateChange
   // fire even when the token is unchanged, which would re-fire this effect
   // unnecessarily and risk a stale-response race.
-  var accessToken = auth.session?.access_token || "";
+  const accessToken = auth.session?.access_token || "";
   useEffect(
     function () {
       if (!accessToken) {
@@ -179,7 +179,7 @@ export default function InquiriesPage() {
         setEmployeesError("");
         return undefined;
       }
-      var cancelled = false;
+      let cancelled = false;
       setEmployeesError("");
       request("/lookups/employees", null, auth.session)
         .then(function (rows) {
@@ -428,7 +428,7 @@ export default function InquiriesPage() {
     }
     setBusy(true);
     try {
-      var fresh = await request("/inquiries/" + form.id, null, auth.session);
+      const fresh = await request("/inquiries/" + form.id, null, auth.session);
       editInquiry(fresh);
       setConflictPrompt(null);
       setMessage("Inquiry reloaded — your previous edits were discarded.");
@@ -445,7 +445,7 @@ export default function InquiriesPage() {
   // the override path on submitForm so we don't wait for a re-render.
   async function confirmExistingPatientAndResubmit() {
     setDuplicatePatientPrompt(null);
-    var next = { ...form, confirm_existing_patient: true };
+    const next = { ...form, confirm_existing_patient: true };
     setForm(next);
     await submitForm(next);
   }
@@ -519,9 +519,9 @@ export default function InquiriesPage() {
     setBusy(true);
     setError("");
     try {
-      var path = "/inquiries/" + deleteDialog.id;
+      let path = "/inquiries/" + deleteDialog.id;
       if (deleteDialog.hard) path += "?hard=1";
-      var result = await requestWithOfflineFallback(
+      const result = await requestWithOfflineFallback(
         path,
         { method: "DELETE", body: { reason: deleteDialog.reason.trim() } },
         auth.session
@@ -554,7 +554,7 @@ export default function InquiriesPage() {
     setBusy(true);
     setError("");
     try {
-      var data = await requestWithOfflineFallback(
+      const data = await requestWithOfflineFallback(
         "/inquiries/" + convertDialog.id + "/convert",
         { method: "POST", body: { notes: convertDialog.notes } },
         auth.session
@@ -655,7 +655,7 @@ export default function InquiriesPage() {
                   <select id="inquiries-assigned-to-9" value={form.assigned_to} onChange={function (event) { updateField("assigned_to", event.target.value); }}>
                     <option value="">Unassigned</option>
                     {employees.map(function (emp) {
-                      var label = emp.full_name || emp.name || emp.id;
+                      const label = emp.full_name || emp.name || emp.id;
                       return <option key={emp.id} value={emp.id}>{label}</option>;
                     })}
                   </select>
@@ -949,7 +949,7 @@ export default function InquiriesPage() {
                   type="date"
                   value={statusDialog.followup_date}
                   onChange={function (e) {
-                    var v = e.target.value;
+                    const v = e.target.value;
                     setStatusDialog(function (c) { return c ? { ...c, followup_date: v } : c; });
                   }}
                 />
@@ -966,7 +966,7 @@ export default function InquiriesPage() {
                 rows={3}
                 value={statusDialog.reason}
                 onChange={function (e) {
-                  var v = e.target.value;
+                  const v = e.target.value;
                   setStatusDialog(function (c) { return c ? { ...c, reason: v } : c; });
                 }}
               />
@@ -998,7 +998,7 @@ export default function InquiriesPage() {
                 rows={3}
                 value={deleteDialog.reason}
                 onChange={function (e) {
-                  var v = e.target.value;
+                  const v = e.target.value;
                   setDeleteDialog(function (c) { return c ? { ...c, reason: v } : c; });
                 }}
               />
@@ -1010,7 +1010,7 @@ export default function InquiriesPage() {
                     type="checkbox"
                     checked={deleteDialog.hard}
                     onChange={function (e) {
-                      var v = e.target.checked;
+                      const v = e.target.checked;
                       setDeleteDialog(function (c) { return c ? { ...c, hard: v } : c; });
                     }}
                   />
@@ -1044,7 +1044,7 @@ export default function InquiriesPage() {
                 rows={3}
                 value={convertDialog.notes}
                 onChange={function (e) {
-                  var v = e.target.value;
+                  const v = e.target.value;
                   setConvertDialog(function (c) { return c ? { ...c, notes: v } : c; });
                 }}
               />

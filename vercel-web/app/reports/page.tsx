@@ -27,47 +27,47 @@ import {
 } from "@/lib/reportUi";
 
 function roleInList(role, list) {
-  var normalized = String(role || "").trim().toLowerCase();
+  const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
   });
 }
 
 export default function ReportsPage() {
-  var auth = useAuth();
-  var canViewReports = roleInList(auth.profile?.role, REPORT_READ_ROLES);
-  var notify = useNotify();
-  var [period, setPeriod] = useState(currentPeriod());
-  var [tab, setTab] = useState("overview");
-  var [billing, setBilling] = useState(null);
-  var [payout, setPayout] = useState(null);
-  var [profitLoss, setProfitLoss] = useState(null);
-  var [payroll, setPayroll] = useState(null);
-  var [error, setErrorState] = useState("");
-  var toast = useToast();
-  var setError = useCallback(function (msg) {
-    var text = String(msg || "");
+  const auth = useAuth();
+  const canViewReports = roleInList(auth.profile?.role, REPORT_READ_ROLES);
+  const notify = useNotify();
+  const [period, setPeriod] = useState(currentPeriod());
+  const [tab, setTab] = useState("overview");
+  const [billing, setBilling] = useState(null);
+  const [payout, setPayout] = useState(null);
+  const [profitLoss, setProfitLoss] = useState(null);
+  const [payroll, setPayroll] = useState(null);
+  const [error, setErrorState] = useState("");
+  const toast = useToast();
+  const setError = useCallback(function (msg) {
+    const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  var [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   // Phase 12: detail tabs are now driven by server-side aggregation endpoints
   // — `/reports/{inquiries,patients,attendance,billings}` — so totals are
   // accurate for the entire period regardless of the paginated row slice.
-  var [inquirySummary, setInquirySummary] = useState(null);
-  var [inquiryRows, setInquiryRows] = useState([]);
-  var [patientSummary, setPatientSummary] = useState(null);
-  var [patientRows, setPatientRows] = useState([]);
-  var [attendanceSummary, setAttendanceSummary] = useState(null);
-  var [attendanceRows, setAttendanceRows] = useState([]);
-  var [billingSummary, setBillingSummary] = useState(null);
-  var [billingRows, setBillingRows] = useState([]);
+  const [inquirySummary, setInquirySummary] = useState(null);
+  const [inquiryRows, setInquiryRows] = useState([]);
+  const [patientSummary, setPatientSummary] = useState(null);
+  const [patientRows, setPatientRows] = useState([]);
+  const [attendanceSummary, setAttendanceSummary] = useState(null);
+  const [attendanceRows, setAttendanceRows] = useState([]);
+  const [billingSummary, setBillingSummary] = useState(null);
+  const [billingRows, setBillingRows] = useState([]);
 
   useEffect(
     function () {
       if (!auth.session?.access_token || !canViewReports) return;
-      var q = "?period=" + encodeURIComponent(periodFromMonthInput(period));
+      const q = "?period=" + encodeURIComponent(periodFromMonthInput(period));
       setLoading(true);
       setError("");
       Promise.all([
@@ -95,9 +95,9 @@ export default function ReportsPage() {
   useEffect(
     function () {
       if (!auth.session?.access_token || !canViewReports) return;
-      var p = periodFromMonthInput(period);
-      var qs = "?period=" + encodeURIComponent(p) + "&limit=200";
-      var datasetErrors = [];
+      const p = periodFromMonthInput(period);
+      const qs = "?period=" + encodeURIComponent(p) + "&limit=200";
+      const datasetErrors = [];
       Promise.all([
         request("/reports/inquiries" + qs, null, auth.session).catch(function (e) {
           datasetErrors.push("inquiries: " + (e.message || "load failed"));
@@ -132,18 +132,18 @@ export default function ReportsPage() {
     [auth.session?.access_token, period, canViewReports]
   );
 
-  var payrollRows = useMemo(function () { return (payroll && payroll.rows) || []; }, [payroll]);
+  const payrollRows = useMemo(function () { return (payroll && payroll.rows) || []; }, [payroll]);
 
   // Server-side totals (always accurate) with safe defaults for the empty
   // state. The page used to compute these from a 100-row sample; now the
   // numbers come from Supabase `count='exact'` aggregates.
-  var inquiryStats = useMemo(
+  const inquiryStats = useMemo(
     function () {
-      var defaults = {
+      const defaults = {
         New: 0, Contacted: 0, FollowUp: 0, Negotiating: 0, Converted: 0, Closed: 0, Lost: 0
       };
-      var by = Object.assign({}, defaults, (inquirySummary && inquirySummary.by_status) || {});
-      var pot = (inquirySummary && inquirySummary.by_potential) || {};
+      const by = Object.assign({}, defaults, (inquirySummary && inquirySummary.by_status) || {});
+      const pot = (inquirySummary && inquirySummary.by_potential) || {};
       return {
         by: by,
         hot: pot.HOT || 0,
@@ -156,11 +156,11 @@ export default function ReportsPage() {
     [inquirySummary]
   );
 
-  var attendanceStats = useMemo(
+  const attendanceStats = useMemo(
     function () {
-      var defaults = { PRESENT: 0, ABSENT: 0, LATE: 0, HALF_DAY: 0, LEAVE: 0, HOLIDAY: 0 };
-      var by = Object.assign({}, defaults, (attendanceSummary && attendanceSummary.by_status) || {});
-      var byEmployee = (attendanceSummary && attendanceSummary.by_employee) || [];
+      const defaults = { PRESENT: 0, ABSENT: 0, LATE: 0, HALF_DAY: 0, LEAVE: 0, HOLIDAY: 0 };
+      const by = Object.assign({}, defaults, (attendanceSummary && attendanceSummary.by_status) || {});
+      const byEmployee = (attendanceSummary && attendanceSummary.by_employee) || [];
       return {
         by: by,
         byEmployee: byEmployee.map(function (e) {
@@ -178,9 +178,9 @@ export default function ReportsPage() {
     [attendanceSummary]
   );
 
-  var patientStats = useMemo(
+  const patientStats = useMemo(
     function () {
-      var byStatus = (patientSummary && patientSummary.by_status) || {};
+      const byStatus = (patientSummary && patientSummary.by_status) || {};
       return {
         byStatus: byStatus,
         total: patientSummary ? patientSummary.total : 0
@@ -199,8 +199,8 @@ export default function ReportsPage() {
       notify({ title: "Nothing to print", description: "There are no rows for the current selection." });
       return;
     }
-    var thead = "<tr>" + columns.map(function (c) { return "<th>" + c.label + "</th>"; }).join("") + "</tr>";
-    var tbody = rows
+    const thead = "<tr>" + columns.map(function (c) { return "<th>" + c.label + "</th>"; }).join("") + "</tr>";
+    const tbody = rows
       .map(function (r) {
         return "<tr>" + columns.map(function (c) { return "<td>" + (c.format ? c.format(r) : (r[c.key] || "")) + "</td>"; }).join("") + "</tr>";
       })

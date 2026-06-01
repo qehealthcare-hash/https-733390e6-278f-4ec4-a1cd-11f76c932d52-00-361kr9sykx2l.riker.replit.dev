@@ -24,7 +24,7 @@ import {
 } from "@/business/rbac";
 
 function roleInList(role, list) {
-  var normalized = String(role || "").trim().toLowerCase();
+  const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
   });
@@ -49,40 +49,40 @@ function emptyRoleForm() {
 }
 
 export default function UsersPage() {
-  var auth = useAuth();
-  var canAdminUsers = roleInList(auth.profile?.role, USER_ADMIN_ROLES);
-  var canCreateUser = roleInList(auth.profile?.role, USER_CREATE_ROLES);
-  var canUpdateUser = roleInList(auth.profile?.role, USER_UPDATE_ROLES);
-  var canDeactivateUser = roleInList(auth.profile?.role, USER_DEACTIVATE_ROLES);
-  var canManageRoles = roleInList(auth.profile?.role, ROLE_ADMIN_ROLES);
-  var confirm = useConfirm();
-  var [users, setUsers] = useState([]);
-  var [roles, setRoles] = useState([]);
-  var [userForm, setUserForm] = useState(emptyUserForm());
-  var [roleForm, setRoleForm] = useState(emptyRoleForm());
-  var [search, setSearch] = useState("");
-  var [error, setErrorState] = useState("");
-  var [message, setMessageState] = useState("");
-  var toast = useToast();
-  var setError = useCallback(function (msg) {
-    var text = String(msg || "");
+  const auth = useAuth();
+  const canAdminUsers = roleInList(auth.profile?.role, USER_ADMIN_ROLES);
+  const canCreateUser = roleInList(auth.profile?.role, USER_CREATE_ROLES);
+  const canUpdateUser = roleInList(auth.profile?.role, USER_UPDATE_ROLES);
+  const canDeactivateUser = roleInList(auth.profile?.role, USER_DEACTIVATE_ROLES);
+  const canManageRoles = roleInList(auth.profile?.role, ROLE_ADMIN_ROLES);
+  const confirm = useConfirm();
+  const [users, setUsers] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [userForm, setUserForm] = useState(emptyUserForm());
+  const [roleForm, setRoleForm] = useState(emptyRoleForm());
+  const [search, setSearch] = useState("");
+  const [error, setErrorState] = useState("");
+  const [message, setMessageState] = useState("");
+  const toast = useToast();
+  const setError = useCallback(function (msg) {
+    const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  var setMessage = useCallback(function (msg) {
-    var text = String(msg || "");
+  const setMessage = useCallback(function (msg) {
+    const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
   }, [toast]);
-  var [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   async function reload() {
     if (!auth.session?.access_token) return;
     try {
-      var qs = new URLSearchParams();
+      const qs = new URLSearchParams();
       qs.set("limit", "500");
       if (search.trim()) qs.set("q", search.trim());
-      var [usersResp, rolesResp] = await Promise.all([
+      const [usersResp, rolesResp] = await Promise.all([
         request("/users?" + qs.toString(), null, auth.session),
         request("/roles", null, auth.session)
       ]);
@@ -101,10 +101,10 @@ export default function UsersPage() {
     [auth.session?.access_token, canAdminUsers]
   );
 
-  var visibleUsers = useMemo(
+  const visibleUsers = useMemo(
     function () {
       if (!search.trim()) return users;
-      var n = search.trim().toLowerCase();
+      const n = search.trim().toLowerCase();
       return users.filter(function (u) {
         return (
           String(u.username || "").toLowerCase().indexOf(n) >= 0 ||
@@ -172,7 +172,7 @@ export default function UsersPage() {
 
   async function deactivateUser(id) {
     if (!canDeactivateUser) return;
-    var ok = await confirm({
+    const ok = await confirm({
       title: "Deactivate this user?",
       description: "They will lose access immediately. The account stays in the system for audit history.",
       confirmLabel: "Deactivate",
@@ -240,7 +240,7 @@ export default function UsersPage() {
 
   async function deleteRole(id) {
     if (!canManageRoles) return;
-    var ok = await confirm({
+    const ok = await confirm({
       title: "Delete this role?",
       description: "The request will fail if any user is currently assigned to it.",
       confirmLabel: "Delete role",
@@ -454,7 +454,7 @@ export default function UsersPage() {
               ) : (
                 <div className="record-list">
                   {roles.map(function (r) {
-                    var isCanonical = CANONICAL_ROLES.indexOf(r.name) >= 0;
+                    const isCanonical = CANONICAL_ROLES.indexOf(r.name) >= 0;
                     return (
                       <div className="record-card" key={r.id}>
                         <div className="button-row" style={{ justifyContent: "space-between" }}>

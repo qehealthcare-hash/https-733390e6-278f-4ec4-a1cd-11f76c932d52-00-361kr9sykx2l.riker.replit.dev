@@ -40,7 +40,7 @@ import {
 } from "@/lib/employeeUi";
 
 function roleInList(role, list) {
-  var normalized = String(role || "").trim().toLowerCase();
+  const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
   });
@@ -106,7 +106,7 @@ function createInitialForm() {
 }
 
 function clampScore(value) {
-  var n = Number(value);
+  const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(10, n));
 }
@@ -118,13 +118,13 @@ function clampScore(value) {
 // values so the form round-trips legacy data faithfully.
 function findOption(options, value) {
   if (value == null) return null;
-  var target = String(value).trim();
+  const target = String(value).trim();
   if (!target) return null;
-  for (var i = 0; i < options.length; i += 1) {
+  for (let i = 0; i < options.length; i += 1) {
     if (options[i].value === target) return options[i];
   }
-  var upper = target.toUpperCase();
-  for (var j = 0; j < options.length; j += 1) {
+  const upper = target.toUpperCase();
+  for (let j = 0; j < options.length; j += 1) {
     if (String(options[j].value).toUpperCase() === upper) return options[j];
   }
   return null;
@@ -132,9 +132,9 @@ function findOption(options, value) {
 
 function normaliseRoleValue(raw) {
   if (!raw) return "NURSE";
-  var match = findOption(employeeRoleOptions, raw);
+  const match = findOption(employeeRoleOptions, raw);
   if (match) return match.value;
-  var lower = String(raw).trim().toLowerCase();
+  const lower = String(raw).trim().toLowerCase();
   if (lower.indexOf("nurse") >= 0) return "NURSE";
   if (lower.indexOf("attend") >= 0) return "ATTENDANT";
   if (lower.indexOf("account") >= 0) return "ACCOUNTANT";
@@ -144,9 +144,9 @@ function normaliseRoleValue(raw) {
 
 function normaliseDeptValue(raw) {
   if (!raw) return "NURSING";
-  var match = findOption(departmentOptions, raw);
+  const match = findOption(departmentOptions, raw);
   if (match) return match.value;
-  var lower = String(raw).trim().toLowerCase();
+  const lower = String(raw).trim().toLowerCase();
   if (lower.indexOf("nurs") >= 0) return "NURSING";
   if (lower.indexOf("attend") >= 0) return "ATTENDANT";
   if (lower.indexOf("admin") >= 0) return "ADMIN";
@@ -157,14 +157,14 @@ function normaliseDeptValue(raw) {
 
 function normaliseEmpTypeValue(raw) {
   if (!raw) return "FULL_TIME";
-  var match = findOption(employeeTypeOptions, raw);
+  const match = findOption(employeeTypeOptions, raw);
   if (match) return match.value;
-  var upper = String(raw).trim().toUpperCase().replace(/[\s-]+/g, "_");
+  const upper = String(raw).trim().toUpperCase().replace(/[\s-]+/g, "_");
   if (upper === "FULLTIME" || upper === "FULL_TIME") return "FULL_TIME";
   if (upper === "PARTTIME" || upper === "PART_TIME") return "PART_TIME";
   if (upper === "CONTRACT") return "CONTRACT";
   if (upper === "INTERN") return "INTERN";
-  var lower = String(raw).trim().toLowerCase();
+  const lower = String(raw).trim().toLowerCase();
   if (lower.indexOf("part") >= 0) return "PART_TIME";
   if (lower.indexOf("contract") >= 0) return "CONTRACT";
   if (lower.indexOf("intern") >= 0) return "INTERN";
@@ -173,13 +173,13 @@ function normaliseEmpTypeValue(raw) {
 
 function normaliseShiftValue(raw) {
   if (!raw) return "DAY";
-  var match = findOption(shiftOptions, raw);
+  const match = findOption(shiftOptions, raw);
   if (match) return match.value;
-  var upper = String(raw).trim().toUpperCase();
+  const upper = String(raw).trim().toUpperCase();
   if (upper === "DAY" || upper === "NIGHT" || upper === "24H" || upper === "ONE_TIME" || upper === "CUSTOM") {
     return upper === "ONE_TIME" || upper === "CUSTOM" || upper === "24H" ? upper : upper;
   }
-  var lower = String(raw).trim().toLowerCase();
+  const lower = String(raw).trim().toLowerCase();
   if (lower.indexOf("24") >= 0) return "24H";
   if (lower.indexOf("night") >= 0) return "NIGHT";
   if (lower.indexOf("day") >= 0) return "DAY";
@@ -190,9 +190,9 @@ function normaliseShiftValue(raw) {
 
 function normaliseEducationValue(raw) {
   if (!raw) return "ILLITERATE";
-  var match = findOption(educationOptions, raw);
+  const match = findOption(educationOptions, raw);
   if (match) return match.value;
-  var lower = String(raw).trim().toLowerCase();
+  const lower = String(raw).trim().toLowerCase();
   if (lower.indexOf("illit") >= 0) return "ILLITERATE";
   if (lower.indexOf("graduate") >= 0) return "GRADUATE";
   if (lower.indexOf("12") >= 0 || lower.indexOf("10") >= 0) return "PASS_10_12";
@@ -201,11 +201,11 @@ function normaliseEducationValue(raw) {
 }
 
 function normaliseStatusValue(raw, active) {
-  var fallback = active === false ? "Inactive" : "Active";
+  const fallback = active === false ? "Inactive" : "Active";
   if (!raw) return fallback;
-  var match = findOption(employeeStatusOptions, raw);
+  const match = findOption(employeeStatusOptions, raw);
   if (match) return match.value;
-  var lower = String(raw).trim().toLowerCase();
+  const lower = String(raw).trim().toLowerCase();
   if (lower.indexOf("inactive") >= 0) return "Inactive";
   if (lower.indexOf("leave") >= 0) return "OnLeave";
   if (lower.indexOf("suspend") >= 0) return "Suspended";
@@ -218,30 +218,30 @@ function normaliseStatusValue(raw, active) {
 // (server still re-normalises on save, but we want the field to display sanely).
 function sanitiseMobileForForm(raw) {
   if (raw == null) return "";
-  var trimmed = String(raw).trim();
+  const trimmed = String(raw).trim();
   if (!trimmed) return "";
   return trimmed.replace(/[^0-9+]/g, "");
 }
 
 function computeScoreTotal(form) {
-  var parts = [form.score_experience, form.score_behaviour, form.score_testimonial]
+  const parts = [form.score_experience, form.score_behaviour, form.score_testimonial]
     .filter(function (v) { return v != null && Number.isFinite(Number(v)); })
     .map(function (v) { return Number(v); });
   if (!parts.length) return null;
-  var avg = parts.reduce(function (a, b) { return a + b; }, 0) / parts.length;
+  const avg = parts.reduce(function (a, b) { return a + b; }, 0) / parts.length;
   return Math.round(avg * 100) / 100;
 }
 
 export default function EmployeesPage() {
-  var auth = useAuth();
-  var isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
-  var canManage = hasPermission(auth.profile?.role, "employees.write");
-  var canViewLinks = roleInList(auth.profile?.role, EMPLOYEE_LINKS_ROLES);
-  var [search, setSearch] = useState("");
-  var [debouncedSearch, setDebouncedSearch] = useState("");
+  const auth = useAuth();
+  const isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
+  const canManage = hasPermission(auth.profile?.role, "employees.write");
+  const canViewLinks = roleInList(auth.profile?.role, EMPLOYEE_LINKS_ROLES);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   useEffect(
     function () {
-      var handle = setTimeout(function () {
+      const handle = setTimeout(function () {
         setDebouncedSearch(search.trim());
       }, 300);
       return function () { clearTimeout(handle); };
@@ -249,52 +249,52 @@ export default function EmployeesPage() {
     [search]
   );
 
-  var [form, setForm] = useState(createInitialForm());
-  var [formPermissions, setFormPermissions] = useState(null);
+  const [form, setForm] = useState(createInitialForm());
+  const [formPermissions, setFormPermissions] = useState(null);
   // P1-36: stable draft id for uploads that fire before the employee row
   // has been persisted. Once form.id exists we prefer that.
-  var employeeDraftIdRef = useRef(
+  const employeeDraftIdRef = useRef(
     "draft-" +
       (typeof crypto !== "undefined" && crypto.randomUUID
         ? crypto.randomUUID()
         : Math.random().toString(36).slice(2) + Date.now().toString(36))
   );
-  var [busy, setBusy] = useState(false);
-  var [roleFilter, setRoleFilter] = useState("");
-  var [statusFilter, setStatusFilter] = useState("");
-  var [deptFilter, setDeptFilter] = useState("");
-  var [typeFilter, setTypeFilter] = useState("");
-  var [genderFilter, setGenderFilter] = useState("");
-  var [eduFilter, setEduFilter] = useState("");
-  var [shiftFilter, setShiftFilter] = useState("");
-  var [scoreFilter, setScoreFilter] = useState("");
-  var [error, setErrorState] = useState("");
-  var [fieldErrors, setFieldErrors] = useState(null);
-  var [message, setMessageState] = useState("");
-  var toast = useToast();
-  var setError = useCallback(function (msg) {
-    var text = String(msg || "");
+  const [busy, setBusy] = useState(false);
+  const [roleFilter, setRoleFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [deptFilter, setDeptFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [genderFilter, setGenderFilter] = useState("");
+  const [eduFilter, setEduFilter] = useState("");
+  const [shiftFilter, setShiftFilter] = useState("");
+  const [scoreFilter, setScoreFilter] = useState("");
+  const [error, setErrorState] = useState("");
+  const [fieldErrors, setFieldErrors] = useState(null);
+  const [message, setMessageState] = useState("");
+  const toast = useToast();
+  const setError = useCallback(function (msg) {
+    const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  var setMessage = useCallback(function (msg) {
-    var text = String(msg || "");
+  const setMessage = useCallback(function (msg) {
+    const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
   }, [toast]);
 
-  var [statusDialog, setStatusDialog] = useState(null);
-  var [activateDialog, setActivateDialog] = useState(null);
-  var [deleteDialog, setDeleteDialog] = useState(null);
-  var [conflictPrompt, setConflictPrompt] = useState(null);
-  var [duplicatePrompt, setDuplicatePrompt] = useState(null);
-  var [historyDialog, setHistoryDialog] = useState(null);
-  var [cameraOpen, setCameraOpen] = useState(false);
-  var [historyData, setHistoryData] = useState(null);
-  var [historyLoading, setHistoryLoading] = useState(false);
-  var [historyError, setHistoryError] = useState("");
+  const [statusDialog, setStatusDialog] = useState(null);
+  const [activateDialog, setActivateDialog] = useState(null);
+  const [deleteDialog, setDeleteDialog] = useState(null);
+  const [conflictPrompt, setConflictPrompt] = useState(null);
+  const [duplicatePrompt, setDuplicatePrompt] = useState(null);
+  const [historyDialog, setHistoryDialog] = useState(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [historyData, setHistoryData] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
-  var listQuery = useMemo(
+  const listQuery = useMemo(
     function () {
       return {
         q: debouncedSearch || undefined,
@@ -305,7 +305,7 @@ export default function EmployeesPage() {
     [debouncedSearch, statusFilter, deptFilter]
   );
 
-  var resource = usePaginatedResource({
+  const resource = usePaginatedResource({
     basePath: "/employees",
     table: "hh_employees",
     channel: "employees",
@@ -315,19 +315,19 @@ export default function EmployeesPage() {
   });
 
   async function openHistory(row) {
-    var name = (row.full_name || row.name || ((row.fn || "") + " " + (row.ln || ""))).trim() || row.id;
+    const name = (row.full_name || row.name || ((row.fn || "") + " " + (row.ln || ""))).trim() || row.id;
     setHistoryDialog({ id: row.id, name: name });
     setHistoryData(null);
     setHistoryError("");
     setHistoryLoading(true);
     try {
-      var results = await Promise.allSettled([
+      const results = await Promise.allSettled([
         request("/employees/" + row.id + "/links", null, auth.session),
         request("/audits?entity_id=" + encodeURIComponent(row.id) + "&limit=20", null, auth.session)
       ]);
-      var linkCounts = results[0].status === "fulfilled" ? (results[0].value || {}) : {};
-      var auditPayload = results[1].status === "fulfilled" ? (results[1].value || {}) : {};
-      var auditRows = Array.isArray(auditPayload)
+      const linkCounts = results[0].status === "fulfilled" ? (results[0].value || {}) : {};
+      const auditPayload = results[1].status === "fulfilled" ? (results[1].value || {}) : {};
+      const auditRows = Array.isArray(auditPayload)
         ? auditPayload
         : auditPayload.rows || auditPayload.data || [];
       setHistoryData({ counts: linkCounts, audit: auditRows });
@@ -341,24 +341,24 @@ export default function EmployeesPage() {
     }
   }
 
-  var filtered = useMemo(
+  const filtered = useMemo(
     function () {
       return resource.data.filter(function (row) {
-        var name = (row.full_name || row.name || (row.fn || "") + " " + (row.ln || "")).trim();
-        var hay = [name, row.mobile || row.phone, row.permaddr || row.addr, row.role || row.desig, row.dept, row.skills]
+        const name = (row.full_name || row.name || (row.fn || "") + " " + (row.ln || "")).trim();
+        const hay = [name, row.mobile || row.phone, row.permaddr || row.addr, row.role || row.desig, row.dept, row.skills]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
-        var matchesRole = !roleFilter || (row.role || row.desig) === roleFilter;
-        var matchesStatus = true;
-        var matchesDept = true;
-        var matchesType = !typeFilter || (row.emp_type || row.etype || row.employee_type) === typeFilter;
-        var matchesGender = !genderFilter || row.gender === genderFilter;
-        var matchesEdu = !eduFilter || (row.education || row.edu) === eduFilter;
-        var matchesShift = !shiftFilter || (row.shift_type || row.shift) === shiftFilter;
-        var matchesScore = true;
+        const matchesRole = !roleFilter || (row.role || row.desig) === roleFilter;
+        const matchesStatus = true;
+        const matchesDept = true;
+        const matchesType = !typeFilter || (row.emp_type || row.etype || row.employee_type) === typeFilter;
+        const matchesGender = !genderFilter || row.gender === genderFilter;
+        const matchesEdu = !eduFilter || (row.education || row.edu) === eduFilter;
+        const matchesShift = !shiftFilter || (row.shift_type || row.shift) === shiftFilter;
+        let matchesScore = true;
         if (scoreFilter) {
-          var s = rowScoreTotal(row);
+          const s = rowScoreTotal(row);
           if (scoreFilter === "8plus") matchesScore = s != null && s >= 8;
           else if (scoreFilter === "6to8") matchesScore = s != null && s >= 6 && s < 8;
           else if (scoreFilter === "lt6") matchesScore = s != null && s < 6;
@@ -381,7 +381,7 @@ export default function EmployeesPage() {
 
   function updateField(name, value) {
     setForm(function (current) {
-      var next = { ...current, [name]: value };
+      const next = { ...current, [name]: value };
       if (name === "score_experience" || name === "score_behaviour" || name === "score_testimonial") {
         next.score_touched = { ...(current.score_touched || {}), [name]: true };
       }
@@ -398,8 +398,8 @@ export default function EmployeesPage() {
   }
 
   function editEmployee(row) {
-    var fullName = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
-    var parts = fullName.split(/\s+/).filter(Boolean);
+    const fullName = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
+    const parts = fullName.split(/\s+/).filter(Boolean);
     setForm({
       id: row.id,
       fn: row.fn || parts[0] || "",
@@ -459,13 +459,13 @@ export default function EmployeesPage() {
   }
 
   async function handleUpload(event) {
-    var files = Array.from(event.target.files || []);
+    const files = Array.from(event.target.files || []);
     if (!files.length) return;
     setBusy(true);
     setError("");
     try {
-      var uploaded = [];
-      for (var i = 0; i < files.length; i += 1) {
+      const uploaded = [];
+      for (let i = 0; i < files.length; i += 1) {
         uploaded.push(
           await uploadDocument({
             bucket: "employee-documents",
@@ -494,7 +494,7 @@ export default function EmployeesPage() {
     setBusy(true);
     setError("");
     try {
-      var uploaded = await uploadDocument({
+      const uploaded = await uploadDocument({
         bucket: "employee-documents",
         file: file,
         session: auth.session,
@@ -512,7 +512,7 @@ export default function EmployeesPage() {
   }
 
   async function handlePhotoUpload(event) {
-    var file = (event.target.files || [])[0];
+    const file = (event.target.files || [])[0];
     event.target.value = "";
     await uploadEmployeePhotoFile(file);
   }
@@ -523,7 +523,7 @@ export default function EmployeesPage() {
   }
 
   async function submitForm(formOverride) {
-    var current = formOverride || form;
+    const current = formOverride || form;
     setBusy(true);
     setError("");
     setFieldErrors(null);
@@ -536,15 +536,15 @@ export default function EmployeesPage() {
         // eslint-disable-next-line no-console
         console.warn("Saving Active employee with no documents on file.");
       }
-      var fullName = [current.fn, current.mn, current.ln].filter(Boolean).join(" ").trim();
-      var cleanMobile = sanitiseMobileForForm(current.mobile);
-      var cleanRole = normaliseRoleValue(current.role);
-      var cleanDept = normaliseDeptValue(current.dept);
-      var cleanEmpType = normaliseEmpTypeValue(current.emp_type);
-      var cleanEducation = normaliseEducationValue(current.education);
-      var cleanShift = normaliseShiftValue(current.shift_type);
-      var cleanStatus = normaliseStatusValue(current.status, current.status !== "Inactive");
-      var payload = {
+      const fullName = [current.fn, current.mn, current.ln].filter(Boolean).join(" ").trim();
+      const cleanMobile = sanitiseMobileForForm(current.mobile);
+      const cleanRole = normaliseRoleValue(current.role);
+      const cleanDept = normaliseDeptValue(current.dept);
+      const cleanEmpType = normaliseEmpTypeValue(current.emp_type);
+      const cleanEducation = normaliseEducationValue(current.education);
+      const cleanShift = normaliseShiftValue(current.shift_type);
+      const cleanStatus = normaliseStatusValue(current.status, current.status !== "Inactive");
+      const payload = {
         fn: current.fn,
         mn: current.mn,
         ln: current.ln,
@@ -595,7 +595,7 @@ export default function EmployeesPage() {
         docs: current.documents,
         documents: current.documents
       };
-      var touched = current.score_touched || {};
+      const touched = current.score_touched || {};
       if (touched.score_experience && current.score_experience != null) {
         payload.score_experience = clampScore(current.score_experience);
       }
@@ -605,7 +605,7 @@ export default function EmployeesPage() {
       if (touched.score_testimonial && current.score_testimonial != null) {
         payload.score_testimonial = clampScore(current.score_testimonial);
       }
-      var maybeTotal = computeScoreTotal(current);
+      const maybeTotal = computeScoreTotal(current);
       if (maybeTotal != null) payload.score_total = maybeTotal;
       if (current.id && current.expected_updated_at) {
         payload.expected_updated_at = current.expected_updated_at;
@@ -613,7 +613,7 @@ export default function EmployeesPage() {
       if (current.confirm_duplicate_name) {
         payload.confirm_duplicate_name = true;
       }
-      var saved = await requestWithOfflineFallback(
+      const saved = await requestWithOfflineFallback(
         current.id ? "/employees/" + current.id : "/employees",
         { method: current.id ? "PUT" : "POST", body: payload },
         auth.session
@@ -627,7 +627,7 @@ export default function EmployeesPage() {
         setMessage("Employee created successfully");
       }
     } catch (submitError) {
-      var code = submitError?.code;
+      const code = submitError?.code;
       if (code === "conflict") {
         setConflictPrompt({
           actual: submitError?.details?.actual_updated_at,
@@ -677,7 +677,7 @@ export default function EmployeesPage() {
     setBusy(true);
     setError("");
     try {
-      var fresh = await request("/employees/" + form.id, null, auth.session);
+      const fresh = await request("/employees/" + form.id, null, auth.session);
       editEmployee(fresh);
       setConflictPrompt(null);
       setMessage("Employee reloaded — your previous edits were discarded.");
@@ -690,7 +690,7 @@ export default function EmployeesPage() {
 
   async function confirmDuplicateAndResubmit() {
     setDuplicatePrompt(null);
-    var next = { ...form, confirm_duplicate_name: true };
+    const next = { ...form, confirm_duplicate_name: true };
     setForm(next);
     await submitForm(next);
   }
@@ -720,7 +720,7 @@ export default function EmployeesPage() {
       setStatusDialog(null);
       setActivateDialog(null);
     } catch (err) {
-      var msg = err && err.message ? err.message : "Unable to change status";
+      const msg = err && err.message ? err.message : "Unable to change status";
       setError(msg);
       setActivateDialog(function (current) { return current ? { ...current, error: msg } : current; });
       setStatusDialog(function (current) { return current ? { ...current, error: msg } : current; });
@@ -731,11 +731,11 @@ export default function EmployeesPage() {
 
   async function resolveDocLinks(docs) {
     if (!Array.isArray(docs) || !docs.length || !auth.session) return [];
-    var resolved = [];
-    for (var i = 0; i < docs.length; i += 1) {
-      var d = docs[i];
+    const resolved = [];
+    for (let i = 0; i < docs.length; i += 1) {
+      const d = docs[i];
       try {
-        var data = await getDocumentSignedUrl(d, auth.session, { expiresIn: 1800 });
+        const data = await getDocumentSignedUrl(d, auth.session, { expiresIn: 1800 });
         resolved.push({ ...d, signedUrl: data && data.signedUrl ? data.signedUrl : "" });
       } catch (_e) {
         resolved.push({ ...d, signedUrl: "" });
@@ -745,18 +745,18 @@ export default function EmployeesPage() {
   }
 
   async function openEmployeePdf(row, hideSensitive) {
-    var preOpened = window.open("about:blank", "_blank", "width=1024,height=820");
+    const preOpened = window.open("about:blank", "_blank", "width=1024,height=820");
     if (preOpened && preOpened.document) {
       try {
         preOpened.document.write("<title>Preparing PDF…</title><body style='font-family:Segoe UI,Arial,sans-serif;padding:32px;color:#475569'>Loading employee profile…</body>");
       } catch (_e) { /* opaque about:blank — ignore */ }
     }
-    var rawDocs = row.employee_documents || row.docs || [];
-    var photoDoc = row.photo && typeof row.photo === "object" && row.photo.path ? row.photo : null;
-    var resolvedDocs = await resolveDocLinks(rawDocs);
-    var resolvedPhoto = photoDoc ? (await resolveDocLinks([photoDoc]))[0] : null;
-    var body = buildEmployeePdfBody(row, hideSensitive, resolvedDocs, resolvedPhoto);
-    var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
+    const rawDocs = row.employee_documents || row.docs || [];
+    const photoDoc = row.photo && typeof row.photo === "object" && row.photo.path ? row.photo : null;
+    const resolvedDocs = await resolveDocLinks(rawDocs);
+    const resolvedPhoto = photoDoc ? (await resolveDocLinks([photoDoc]))[0] : null;
+    const body = buildEmployeePdfBody(row, hideSensitive, resolvedDocs, resolvedPhoto);
+    const name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
     openPrintWindow(
       hideSensitive ? "Employee Profile (sanitised)" : "Employee Profile - " + name,
       body,
@@ -781,7 +781,7 @@ export default function EmployeesPage() {
     setBusy(true);
     setError("");
     try {
-      var result = await requestWithOfflineFallback(
+      const result = await requestWithOfflineFallback(
         "/employees/" + deleteDialog.id,
         { method: "DELETE", body: { reason: deleteDialog.reason.trim() } },
         auth.session
@@ -989,10 +989,10 @@ export default function EmployeesPage() {
               <strong>Performance score (0-10)</strong>
               <div className="grid-3">
                 {["score_experience", "score_behaviour", "score_testimonial"].map(function (key) {
-                  var label = key === "score_experience" ? "Experience" : key === "score_behaviour" ? "Behaviour" : "Testimonial";
-                  var raw = form[key];
-                  var touched = !!(form.score_touched && form.score_touched[key]);
-                  var displayValue = raw == null ? 5 : Number(raw);
+                  const label = key === "score_experience" ? "Experience" : key === "score_behaviour" ? "Behaviour" : "Testimonial";
+                  const raw = form[key];
+                  const touched = !!(form.score_touched && form.score_touched[key]);
+                  const displayValue = raw == null ? 5 : Number(raw);
                   return (
                     <div className="field" key={key}>
                       <label htmlFor="employees-label-27">{label}</label>
@@ -1040,7 +1040,7 @@ export default function EmployeesPage() {
               <div className="helper-box">
                 <strong>Total score:</strong>{" "}
                 {(function () {
-                  var t = computeScoreTotal(form);
+                  const t = computeScoreTotal(form);
                   return t == null ? "Not rated" : t.toFixed(2) + " / 10";
                 })()}
               </div>
@@ -1223,8 +1223,8 @@ export default function EmployeesPage() {
                         return <li key={"f" + idx}>{msg}</li>;
                       })}
                       {Object.entries(fieldErrors.fields || {}).map(function (entry) {
-                        var field = entry[0];
-                        var msgs = entry[1] || [];
+                        const field = entry[0];
+                        const msgs = entry[1] || [];
                         if (!msgs.length) return null;
                         return (
                           <li key={field}>
@@ -1392,11 +1392,11 @@ export default function EmployeesPage() {
               ) : (
                 <div className="record-list">
                   {filtered.map(function (row, index) {
-                    var rowNum = employeeListPosition(resource.page, resource.pageSize, index);
-                    var name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
-                    var isActive = row.status ? row.status === "Active" : row.active !== false;
-                    var score = rowScoreTotal(row);
-                    var scoreClass = score == null ? "muted" : score >= 8 ? "high" : score >= 6 ? "mid" : "low";
+                    const rowNum = employeeListPosition(resource.page, resource.pageSize, index);
+                    const name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
+                    const isActive = row.status ? row.status === "Active" : row.active !== false;
+                    const score = rowScoreTotal(row);
+                    const scoreClass = score == null ? "muted" : score >= 8 ? "high" : score >= 6 ? "mid" : "low";
                     return (
                       <div className="record-card" key={row.id}>
                         <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -1511,7 +1511,7 @@ export default function EmployeesPage() {
                 rows="3"
                 value={activateDialog.note}
                 onChange={function (e) {
-                  var value = e.target.value;
+                  const value = e.target.value;
                   setActivateDialog(function (current) { return current ? { ...current, note: value } : current; });
                 }}
                 placeholder="Why is this employee being reactivated?"
@@ -1546,7 +1546,7 @@ export default function EmployeesPage() {
                 rows="3"
                 value={deleteDialog.reason}
                 onChange={function (e) {
-                  var value = e.target.value;
+                  const value = e.target.value;
                   setDeleteDialog(function (current) { return current ? { ...current, reason: value } : current; });
                 }}
                 placeholder="Why is this employee being removed?"
@@ -1585,7 +1585,7 @@ export default function EmployeesPage() {
                 rows="3"
                 value={statusDialog.reason}
                 onChange={function (e) {
-                  var value = e.target.value;
+                  const value = e.target.value;
                   setStatusDialog(function (current) { return current ? { ...current, reason: value } : current; });
                 }}
                 placeholder={"Why is this employee being marked " + statusDialog.nextStatus + "?"}

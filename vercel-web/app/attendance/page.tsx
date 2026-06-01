@@ -32,69 +32,69 @@ import {
 } from "@/lib/attendanceUi";
 
 function roleInList(role, list) {
-  var normalized = String(role || "").trim().toLowerCase();
+  const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
   });
 }
 
 export default function AttendancePage() {
-  var auth = useAuth();
-  var canWrite = roleInList(auth.profile?.role, ATTENDANCE_WRITE_ROLES);
-  var canDelete = roleInList(auth.profile?.role, ATTENDANCE_DELETE_ROLES);
-  var [rows, setRows] = useState([]);
-  var [loading, setLoading] = useState(true);
-  var [employees, setEmployees] = useState([]);
-  var [patients, setPatients] = useState([]);
-  var [error, setErrorState] = useState("");
-  var [message, setMessageState] = useState("");
+  const auth = useAuth();
+  const canWrite = roleInList(auth.profile?.role, ATTENDANCE_WRITE_ROLES);
+  const canDelete = roleInList(auth.profile?.role, ATTENDANCE_DELETE_ROLES);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [employees, setEmployees] = useState([]);
+  const [patients, setPatients] = useState([]);
+  const [error, setErrorState] = useState("");
+  const [message, setMessageState] = useState("");
   // Mirror local banner state into the centralized toast layer so users see
   // success/error feedback even when the inline banner is offscreen.
-  var toast = useToast();
-  var setError = useCallback(function (msg) {
-    var text = String(msg || "");
+  const toast = useToast();
+  const setError = useCallback(function (msg) {
+    const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  var setMessage = useCallback(function (msg) {
-    var text = String(msg || "");
+  const setMessage = useCallback(function (msg) {
+    const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
   }, [toast]);
-  var [from, setFrom] = useState(startOfWeek());
-  var [to, setTo] = useState(todayDate());
-  var [statusFilter, setStatusFilter] = useState("");
-  var [employeeFilter, setEmployeeFilter] = useState("");
-  var [logSummary, setLogSummary] = useState(null);
-  var [missing, setMissing] = useState([]);
-  var [missingFor, setMissingFor] = useState("");
-  var [form, setForm] = useState(emptyMarkForm());
-  var [editingId, setEditingId] = useState("");
-  var [busy, setBusy] = useState(false);
+  const [from, setFrom] = useState(startOfWeek());
+  const [to, setTo] = useState(todayDate());
+  const [statusFilter, setStatusFilter] = useState("");
+  const [employeeFilter, setEmployeeFilter] = useState("");
+  const [logSummary, setLogSummary] = useState(null);
+  const [missing, setMissing] = useState([]);
+  const [missingFor, setMissingFor] = useState("");
+  const [form, setForm] = useState(emptyMarkForm());
+  const [editingId, setEditingId] = useState("");
+  const [busy, setBusy] = useState(false);
 
   // Day board — "all staff attendance for one day" synchronised with the
   // duty calendar. Defaults to today (IST). One PATCH/POST mark from this
   // panel both writes attendance and flips the underlying SCHEDULED duty to
   // IN_PROGRESS.
-  var [boardDate, setBoardDate] = useState(crmTodayIso());
-  var [boardData, setBoardData] = useState(null);
-  var [boardLoading, setBoardLoading] = useState(false);
-  var [boardEmpFilter, setBoardEmpFilter] = useState("");
-  var [boardPatientFilter, setBoardPatientFilter] = useState("");
-  var [boardError, setBoardError] = useState("");
-  var [boardBusyKey, setBoardBusyKey] = useState("");
+  const [boardDate, setBoardDate] = useState(crmTodayIso());
+  const [boardData, setBoardData] = useState(null);
+  const [boardLoading, setBoardLoading] = useState(false);
+  const [boardEmpFilter, setBoardEmpFilter] = useState("");
+  const [boardPatientFilter, setBoardPatientFilter] = useState("");
+  const [boardError, setBoardError] = useState("");
+  const [boardBusyKey, setBoardBusyKey] = useState("");
 
-  var loadBoard = useCallback(
+  const loadBoard = useCallback(
     async function () {
       if (!auth.session?.access_token) return;
       setBoardLoading(true);
       setBoardError("");
       try {
-        var qs = new URLSearchParams();
+        const qs = new URLSearchParams();
         if (boardDate) qs.set("date", boardDate);
         if (boardEmpFilter) qs.set("employee_id", boardEmpFilter);
         if (boardPatientFilter) qs.set("patient_id", boardPatientFilter);
-        var data = await request("/attendance/day?" + qs.toString(), null, auth.session);
+        const data = await request("/attendance/day?" + qs.toString(), null, auth.session);
         setBoardData(data || null);
       } catch (err) {
         setBoardData(null);
@@ -119,7 +119,7 @@ export default function AttendancePage() {
   useEffect(
     function () {
       if (!auth.session?.access_token || !auth.supabase) return undefined;
-      var debounce = null;
+      let debounce = null;
       function scheduleRefresh() {
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(function () {
@@ -127,7 +127,7 @@ export default function AttendancePage() {
           loadBoard();
         }, 300);
       }
-      var channel = auth.supabase.channel("crm-attendance_day_board");
+      const channel = auth.supabase.channel("crm-attendance_day_board");
       ["hh_attendance", "hh_duties"].forEach(function (table) {
         channel.on(
           "postgres_changes",
@@ -152,7 +152,7 @@ export default function AttendancePage() {
     setBoardBusyKey(row.key);
     setBoardError("");
     try {
-      var payload = {
+      const payload = {
         date: boardData?.date || boardDate,
         employee_id: row.employee_id,
         duty_id: row.duty_id || undefined,
@@ -172,7 +172,7 @@ export default function AttendancePage() {
       // so a fast double-click cannot interleave with stale rows.
       await reload();
     } catch (err) {
-      var msg = err.message || "Could not mark";
+      const msg = err.message || "Could not mark";
       setBoardError(msg);
       toast.error(msg);
     } finally {
@@ -184,12 +184,12 @@ export default function AttendancePage() {
     if (!auth.session?.access_token) return;
     setLoading(true);
     try {
-      var qs = new URLSearchParams();
+      const qs = new URLSearchParams();
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
       if (statusFilter) qs.set("status", statusFilter);
       if (employeeFilter) qs.set("employee_id", employeeFilter);
-      var data = await request("/attendance/range?" + qs.toString(), null, auth.session);
+      const data = await request("/attendance/range?" + qs.toString(), null, auth.session);
       setRows(Array.isArray(data?.rows) ? data.rows : []);
       setLogSummary(data?.summary || null);
       setError("");
@@ -204,17 +204,17 @@ export default function AttendancePage() {
 
   function downloadLogPdf() {
     if (!rows.length) return;
-    var employeeLabel = "All staff";
+    let employeeLabel = "All staff";
     if (employeeFilter) {
-      var emp = employees.find(function (e) {
+      const emp = employees.find(function (e) {
         return e.id === employeeFilter;
       });
       employeeLabel = (emp && (emp.full_name || emp.name)) || employeeFilter;
     }
-    var summary = logSummary || stats;
-    var totalHours = Number(summary.total_hours || summary.TOTAL_HOURS || 0);
-    var totalPayout = Number(summary.total_payout || summary.TOTAL_PAYOUT || 0);
-    var counts = {
+    const summary = logSummary || stats;
+    const totalHours = Number(summary.total_hours || summary.TOTAL_HOURS || 0);
+    const totalPayout = Number(summary.total_payout || summary.TOTAL_PAYOUT || 0);
+    const counts = {
       Present:
         (summary.present || 0) +
         (summary.in_progress || 0) +
@@ -234,7 +234,7 @@ export default function AttendancePage() {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
     }
-    var rowsHtml = rows
+    const rowsHtml = rows
       .map(function (r, idx) {
         return (
           "<tr>" +
@@ -262,12 +262,12 @@ export default function AttendancePage() {
         );
       })
       .join("");
-    var summaryRows = Object.entries(counts)
+    const summaryRows = Object.entries(counts)
       .map(function (entry) {
         return "<span><strong>" + entry[0] + ":</strong> " + entry[1] + "</span>";
       })
       .join(" · ");
-    var html =
+    const html =
       "<!doctype html><html><head><meta charset='utf-8'>" +
       "<title>Attendance — " + escapeHtml(employeeLabel) + " (" + escapeHtml(from) + " to " + escapeHtml(to) + ")</title>" +
       "<style>" +
@@ -318,7 +318,7 @@ export default function AttendancePage() {
       "</div>" +
       "<script>window.onload=function(){setTimeout(function(){window.print();},250);};</script>" +
       "</body></html>";
-    var win = window.open("", "_blank");
+    const win = window.open("", "_blank");
     if (!win) {
       setError("Pop-up blocked — allow pop-ups to download the PDF");
       return;
@@ -335,8 +335,8 @@ export default function AttendancePage() {
       return;
     }
     try {
-      var qs = new URLSearchParams({ employee_id: missingFor, from: from, to: to });
-      var data = await request("/attendance/missing?" + qs.toString(), null, auth.session);
+      const qs = new URLSearchParams({ employee_id: missingFor, from: from, to: to });
+      const data = await request("/attendance/missing?" + qs.toString(), null, auth.session);
       setMissing(Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : []);
     } catch (err) {
       setMissing([]);
@@ -370,7 +370,7 @@ export default function AttendancePage() {
     [missingFor, from, to, auth.session?.access_token]
   );
 
-  var stats = useMemo(
+  const stats = useMemo(
     function () {
       if (logSummary) {
         return {
@@ -386,7 +386,7 @@ export default function AttendancePage() {
           TOTAL_PAYOUT: logSummary.total_payout || 0
         };
       }
-      var counts = {
+      const counts = {
         PRESENT: 0,
         ABSENT: 0,
         LATE: 0,
@@ -399,7 +399,7 @@ export default function AttendancePage() {
         TOTAL_PAYOUT: 0
       };
       rows.forEach(function (r) {
-        var s = String(r.derived_status || r.status || "").toUpperCase();
+        const s = String(r.derived_status || r.status || "").toUpperCase();
         if (counts[s] !== undefined) counts[s] += 1;
         counts.TOTAL_HOURS += Number(r.hours || 0);
         counts.TOTAL_CHARGE += Number(r.charge || 0);
@@ -411,7 +411,7 @@ export default function AttendancePage() {
   );
 
   function buildPayload() {
-    var payload = {
+    const payload = {
       employee_id: form.employee_id,
       status: form.status,
       shift_type: form.shift_type || undefined,
@@ -419,7 +419,7 @@ export default function AttendancePage() {
       duty_id: form.duty_id || undefined,
       notes: form.notes || ""
     };
-    var noTime = form.status === "ABSENT" || form.status === "LEAVE" || form.status === "HOLIDAY";
+    const noTime = form.status === "ABSENT" || form.status === "LEAVE" || form.status === "HOLIDAY";
     if (!noTime) {
       payload.check_in_at = isoDateTime(form.work_date, form.check_in_time);
       if (form.check_out_time) {
@@ -479,12 +479,12 @@ export default function AttendancePage() {
     // Prefer the persisted IST work_date when available, otherwise derive
     // the IST date from the check-in timestamp. UTC-slicing check_in_at
     // misreports the calendar day for any check-in after 18:30 UTC.
-    var date =
+    const date =
       String(row.work_date || "").slice(0, 10) ||
       istDayKey(row.check_in_at) ||
       todayDate();
-    var checkIn = String(row.check_in_at || "").slice(11, 16) || "";
-    var checkOut = String(row.check_out_at || "").slice(11, 16) || "";
+    const checkIn = String(row.check_in_at || "").slice(11, 16) || "";
+    const checkOut = String(row.check_out_at || "").slice(11, 16) || "";
     setForm({
       duty_id: row.duty_id || "",
       employee_id: row.employee_id || "",
@@ -511,8 +511,8 @@ export default function AttendancePage() {
     try {
       // IST date for the duty (or today). Stripping the UTC ISO with
       // slice(0,10) misattributes late-evening duties to the prior day.
-      var date = istDayKey(dutyRow.start_at) || String(dutyRow.date || "").slice(0, 10) || todayDate();
-      var payload = {
+      const date = istDayKey(dutyRow.start_at) || String(dutyRow.date || "").slice(0, 10) || todayDate();
+      const payload = {
         employee_id: dutyRow.employee_id,
         duty_id: dutyRow.id,
         patient_id: dutyRow.patient_id || undefined,
@@ -560,8 +560,8 @@ export default function AttendancePage() {
     }
   }
 
-  var boardSummary = boardData?.summary || {};
-  var boardRows = Array.isArray(boardData?.rows) ? boardData.rows : [];
+  const boardSummary = boardData?.summary || {};
+  const boardRows = Array.isArray(boardData?.rows) ? boardData.rows : [];
 
   return (
     <AuthGuard permission="attendance.read">
@@ -679,12 +679,12 @@ export default function AttendancePage() {
                 </thead>
                 <tbody>
                   {boardRows.map(function (row) {
-                    var style =
+                    const style =
                       DERIVED_STATUS_STYLES[row.derived_status] || DERIVED_STATUS_STYLES.UNMARKED;
-                    var busyKey = boardBusyKey === row.key;
-                    var checkIn = row.check_in_at ? String(row.check_in_at).slice(11, 16) : "";
-                    var checkOut = row.check_out_at ? String(row.check_out_at).slice(11, 16) : "";
-                    var times = "";
+                    const busyKey = boardBusyKey === row.key;
+                    const checkIn = row.check_in_at ? String(row.check_in_at).slice(11, 16) : "";
+                    const checkOut = row.check_out_at ? String(row.check_out_at).slice(11, 16) : "";
+                    let times = "";
                     if (checkIn && checkOut) times = checkIn + " → " + checkOut;
                     else if (checkIn) times = "in " + checkIn;
                     else times = "—";
@@ -914,8 +914,8 @@ export default function AttendancePage() {
                 </thead>
                 <tbody>
                   {rows.map(function (r) {
-                    var derived = String(r.derived_status || r.status || "UNMARKED").toUpperCase();
-                    var style = DERIVED_STATUS_STYLES[derived] || DERIVED_STATUS_STYLES.UNMARKED;
+                    const derived = String(r.derived_status || r.status || "UNMARKED").toUpperCase();
+                    const style = DERIVED_STATUS_STYLES[derived] || DERIVED_STATUS_STYLES.UNMARKED;
                     return (
                       <tr key={r.key || r.id}>
                         <td>{r.date || (r.check_in_at ? String(r.check_in_at).slice(0, 10) : "—")}</td>
