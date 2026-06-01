@@ -7,6 +7,7 @@
 
 import { appConfig } from "@/lib/config";
 import { formatDate } from "@/lib/formatters";
+import type { InquiryPermissionsDto } from "@/validation/inquiryDto";
 
 /** Row shape returned by `inquiryToApi` (includes legacy SPA aliases). */
 export interface InquiryListRow {
@@ -34,6 +35,7 @@ export interface InquiryListRow {
   remarks?: string;
   created_at?: string | null;
   updated_at?: string | null;
+  permissions?: InquiryPermissionsDto;
 }
 
 export function escapeHtml(value: unknown): string {

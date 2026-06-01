@@ -5,14 +5,17 @@
     "src/**/*.ts",
     "lib/**/*.ts",
     "app/api/**/*.ts",
+    "components/ui/status-banner.tsx",
     "app/login/page.tsx",
     "app/reset-password/page.tsx",
-    "app/dashboard/page.tsx"
+    "app/dashboard/page.tsx",
+    "app/inquiries/page.tsx"
   ],
   "exclude": [
     "node_modules",
     "src/**/__tests__/**",
     "src/**/*.test.ts",
-    "src/integration/**"
+    "src/integration/**",
+    "app/attendance/page.tsx"
   ]
 }

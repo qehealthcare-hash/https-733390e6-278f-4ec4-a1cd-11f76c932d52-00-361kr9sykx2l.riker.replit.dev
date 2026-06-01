@@ -38,11 +38,12 @@ import {
   INQUIRY_CLOSED_STATUSES,
   type InquiryStatus
 } from "@/validation/inquiryValidation";
+import type { InquiryPermissionsDto } from "@/validation/inquiryDto";
 import { isOverdueFollowup as inquiryIsOverdueFollowup } from "@/business/inquiryRules";
 
 const OPEN_STATUSES = INQUIRY_OPEN_STATUSES;
 
-function inquiryRowPermissions(row) {
+function inquiryRowPermissions(row: InquiryListRow) {
   return (
     (row && row.permissions) || {
       canEdit: false,
@@ -228,7 +229,7 @@ export default function InquiriesPage() {
     pageSize: 50
   });
   const [form, setForm] = useState<InquiryFormState>(createInitialForm);
-  const [formPermissions, setFormPermissions] = useState(null);
+  const [formPermissions, setFormPermissions] = useState<InquiryPermissionsDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setErrorState] = useState("");
   const [message, setMessageState] = useState("");
@@ -750,10 +751,10 @@ export default function InquiriesPage() {
                 <button
                   className="button primary"
                   type="submit"
-                  disabled={
+                  disabled={Boolean(
                     busy ||
-                    (form.id && formPermissions && !formPermissions.canEdit)
-                  }
+                      (form.id && formPermissions && !formPermissions.canEdit)
+                  )}
                   title={
                     formPermissions && formPermissions.blockReasons
                       ? formPermissions.blockReasons.canEdit
