@@ -1,5 +1,6 @@
 import type { EmployeeInput, EmployeeStatus } from "@/validation/employeeValidation";
 import { EMPLOYEE_STATUSES } from "@/validation/employeeValidation";
+import type { EmployeePermissionsDto } from "@/validation/employeeDto";
 import { findPhoneDuplicate, phoneDigitsKey } from "@/business/phoneRules";
 import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
@@ -369,5 +370,67 @@ export function statusPatch(status: EmployeeStatus, actorEmail: string, _reason 
     status,
     leave_date: leaveDateForStatus(status),
     updated_by: actorEmail
+  };
+}
+
+export interface BuildEmployeePermissionsInput {
+  status: string | null | undefined;
+  /** Optional pre-fetched link counts — when supplied, `canHardDelete`
+   *  reflects the linked-row guard; otherwise it falls back to status-only. */
+  linkCounts?: EmployeeLinkCounts;
+}
+
+/**
+ * Server-computed employee action flags for the React UI.
+ *
+ * Pure: encodes state-machine truth (Active vs Inactive vs OnLeave vs
+ * Suspended). RBAC is still enforced at the API edge by `requireRole`;
+ * the UI should also gate button *visibility* by the operator's role.
+ */
+export function buildEmployeePermissions(
+  input: BuildEmployeePermissionsInput
+): EmployeePermissionsDto {
+  const status = String(input.status || "Active") as EmployeeStatus;
+  const blockReasons: Record<string, string> = {};
+
+  const editGuard = canEditEmployee(status);
+  if (!editGuard.success) blockReasons.canEdit = editGuard.error || "Cannot edit";
+
+  // Deactivate only meaningful when currently active.
+  const canDeactivate = status === "Active";
+  if (!canDeactivate) {
+    blockReasons.canDeactivate = `Employee is already ${status}`;
+  }
+
+  // Activate only meaningful when currently non-active.
+  const canActivate = status !== "Active";
+  if (!canActivate) {
+    blockReasons.canActivate = "Employee is already active";
+  }
+
+  // Status change endpoint accepts any of the four statuses; the API
+  // refuses no-op transitions but every state allows *some* move.
+  const canChangeStatus = true;
+
+  // Hard delete: status-gated AND link-count-gated when counts are supplied.
+  let canHardDelete = status !== "Active";
+  if (!canHardDelete) {
+    blockReasons.canHardDelete =
+      "Active employees cannot be permanently deleted — deactivate first";
+  } else if (input.linkCounts) {
+    const guard = ensureNoHistoricalLinks(input.linkCounts);
+    if (!guard.success) {
+      canHardDelete = false;
+      blockReasons.canHardDelete = guard.error || "Cannot delete";
+    }
+  }
+
+  return {
+    canEdit: editGuard.success,
+    canDeactivate,
+    canActivate,
+    canChangeStatus,
+    canHardDelete,
+    blockReasons: Object.keys(blockReasons).length ? blockReasons : undefined
   };
 }

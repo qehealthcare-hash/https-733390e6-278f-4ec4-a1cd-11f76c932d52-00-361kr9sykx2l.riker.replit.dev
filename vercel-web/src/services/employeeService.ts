@@ -26,6 +26,7 @@ import {
 } from "@/validation/employeeValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
+  buildEmployeePermissions,
   employeeToRow,
   employeeToApi,
   canEditEmployee,
@@ -248,7 +249,14 @@ export const employeeService = {
     const result = await employeeRepository.findById(id, dbAccess(ctx));
     if (!result.success) return passFailure(result);
     if (!result.data) return notFoundFailure("Employee", id);
-    return success(employeeToApi(result.data));
+    const apiRow = employeeToApi(result.data);
+    // Decorate with server-computed action flags so the UI never re-derives
+    // employee policy from status / leave_date. Link counts are skipped
+    // here — the dedicated remove() flow still enforces them server-side.
+    const permissions = buildEmployeePermissions({
+      status: String(apiRow.status || "Active")
+    });
+    return success({ ...apiRow, permissions } as EmployeeApiRow);
   },
 
   async create(rawInput: unknown, ctx: EmployeeServiceContext): Promise<ApiResult<EmployeeApiRow>> {
