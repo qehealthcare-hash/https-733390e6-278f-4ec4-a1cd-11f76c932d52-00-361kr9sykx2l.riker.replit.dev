@@ -1,6 +1,7 @@
 import "./globals.css";
 import { AuthProvider } from "@/components/providers/auth-provider";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+import { ToastProvider } from "@/components/ui/toast";
 
 export const metadata = {
   title: "Hominal Healthcare CRM",
@@ -22,7 +23,9 @@ export default function RootLayout({ children }) {
       <body>
         <a href="#crm-main-content" className="skip-link">Skip to main content</a>
         <AuthProvider>
-          <ConfirmProvider>{children}</ConfirmProvider>
+          <ConfirmProvider>
+            <ToastProvider>{children}</ToastProvider>
+          </ConfirmProvider>
         </AuthProvider>
       </body>
     </html>
