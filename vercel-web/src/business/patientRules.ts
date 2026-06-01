@@ -1,6 +1,7 @@
 import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
 import type { PatientInput } from "@/validation/patientValidation";
+import type { PatientPermissionsDto } from "@/validation/patientDto";
 import { findPhoneDuplicate, phoneDigitsKey } from "@/business/phoneRules";
 
 export function patientToRow(input: PatientInput) {
@@ -228,5 +229,78 @@ export function patientAssignPatch(caretakerId: string, shift: string, actorEmai
     caretaker_id: caretakerId,
     shift,
     updated_by: actorEmail
+  };
+}
+
+export interface BuildPatientPermissionsInput {
+  status: string | null | undefined;
+  /** Pass `undefined` when counts are not pre-fetched — canHardDelete will
+   *  fall back to "Admin can attempt"; the service still enforces counts. */
+  linkedBillings?: number;
+  linkedDuties?: number;
+  linkedReceipts?: number;
+}
+
+/**
+ * Server-computed patient action flags for the React UI.
+ *
+ * Pure: no I/O. The caller (service) supplies pre-fetched `linkedX` counts
+ * when it wants `canHardDelete` to reflect linked rows. RBAC is enforced at
+ * the API edge; this function is about state-machine truth.
+ */
+export function buildPatientPermissions(
+  input: BuildPatientPermissionsInput
+): PatientPermissionsDto {
+  const status = String(input.status || "Active");
+  const blockReasons: Record<string, string> = {};
+
+  const editGuard = canEditPatient(status);
+  if (!editGuard.success) blockReasons.canEdit = editGuard.error || "Cannot edit";
+
+  const assignGuard = canAssignCaretaker(status);
+  if (!assignGuard.success) {
+    blockReasons.canAssignCaretaker = assignGuard.error || "Cannot assign";
+  }
+
+  // Close is a no-op on already-Closed; treat as already-done.
+  const canClose = !isRegistryClosedPatient(status);
+  if (!canClose) {
+    blockReasons.canClose = "Patient is already closed";
+  }
+
+  const reopenGuard = canReopenPatient(status);
+  if (!reopenGuard.success) {
+    blockReasons.canReopen = reopenGuard.error || "Cannot reopen";
+  }
+
+  // Hard delete is gated by status AND linked-row counts when counts are known.
+  let canHardDelete = !isActivePatient(status);
+  if (!canHardDelete) {
+    blockReasons.canHardDelete =
+      "Active patients cannot be permanently deleted — close first";
+  } else if (
+    input.linkedBillings !== undefined ||
+    input.linkedDuties !== undefined ||
+    input.linkedReceipts !== undefined
+  ) {
+    const counts = {
+      billings: Number(input.linkedBillings || 0),
+      duties: Number(input.linkedDuties || 0),
+      receipts: Number(input.linkedReceipts || 0)
+    };
+    const hardGuard = canHardDeletePatient(status, counts);
+    if (!hardGuard.success) {
+      canHardDelete = false;
+      blockReasons.canHardDelete = hardGuard.error || "Cannot delete";
+    }
+  }
+
+  return {
+    canEdit: editGuard.success,
+    canAssignCaretaker: assignGuard.success,
+    canClose,
+    canReopen: reopenGuard.success,
+    canHardDelete,
+    blockReasons: Object.keys(blockReasons).length ? blockReasons : undefined
   };
 }

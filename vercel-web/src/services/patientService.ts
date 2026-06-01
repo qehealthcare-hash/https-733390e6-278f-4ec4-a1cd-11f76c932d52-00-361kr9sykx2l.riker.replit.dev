@@ -33,6 +33,7 @@ import {
 } from "@/validation/patientValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
+  buildPatientPermissions,
   canAssignCaretaker,
   canEditPatient,
   canHardDeletePatient,
@@ -214,12 +215,22 @@ export const patientService = {
   async getById(
     id: string,
     ctx: PatientServiceContext
-  ): Promise<ApiResult<ReturnType<typeof patientToApi>>> {
+  ): Promise<
+    ApiResult<ReturnType<typeof patientToApi> & { permissions: ReturnType<typeof buildPatientPermissions> }>
+  > {
     const loaded = await loadPatient(id, ctx);
     if (!loaded.success) {
       return failure(loaded.error || "Patient not found", loaded.code, loaded.details);
     }
-    return success(patientToApi(loaded.data));
+    const apiRow = patientToApi(loaded.data);
+    // Decorate with server-computed action flags. We deliberately skip the
+    // expensive linked-row counts here — the patient *list* and *detail*
+    // views never enable hard-delete, and the dedicated remove() flow
+    // re-runs canHardDeletePatient() with the live counts.
+    const permissions = buildPatientPermissions({
+      status: String(loaded.data.status || "Active")
+    });
+    return success({ ...apiRow, permissions });
   },
 
   async create(
