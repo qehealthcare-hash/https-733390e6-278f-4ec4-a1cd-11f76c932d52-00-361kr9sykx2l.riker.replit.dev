@@ -15,5 +15,11 @@ export default defineConfig({
     trace: "on-first-retry",
     screenshot: "only-on-failure"
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }]
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // Mobile viewport project — exercises responsive CSS + toast stack on a
+    // real phone-sized window. Run with `npm run test:e2e:mobile` or pass
+    // `--project=mobile` to any of the existing E2E scripts.
+    { name: "mobile", use: { ...devices["iPhone 13"] } }
+  ]
 });
