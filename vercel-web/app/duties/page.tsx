@@ -22,6 +22,7 @@ import { useToast } from "@/components/ui/toast";
 import { useBusyGuard } from "@/hooks/use-busy-guard";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { ModalDialog } from "@/components/ui/modal-dialog";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useAuth } from "@/components/providers/auth-provider";
 import { billingsClient, dutiesClient, lookupsClient } from "@/lib/clients";
 import { formatCurrency, formatDate } from "@/lib/formatters";
@@ -942,6 +943,26 @@ export default function DutiesPage() {
     [employees]
   );
 
+  const patientFilterOptions = useMemo(
+    function () {
+      return patients.map(function (p) {
+        const name = p.name || p.full_name || p.id;
+        return { id: p.id, label: name + " (" + p.id + ")", hint: p.id };
+      });
+    },
+    [patients]
+  );
+
+  const caretakerFilterOptions = useMemo(
+    function () {
+      return employees.map(function (e) {
+        const name = e.full_name || e.name || e.id;
+        return { id: e.id, label: name + " (" + e.id + ")", hint: e.id };
+      });
+    },
+    [employees]
+  );
+
   const dayDuties = useMemo(
     function () {
       if (!selectedDay) return [];
@@ -1769,40 +1790,25 @@ export default function DutiesPage() {
             <div className="toolbar" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <div className="field">
                 <label htmlFor="duties-filter-patient-patients--14">Filter patient ({patients.length})</label>
-                <select id="duties-filter-patient-patients--14"
+                <SearchableSelect
+                  id="duties-filter-patient-patients--14"
                   value={filterPatient}
-                  onChange={function (event) {
-                    setFilterPatient(event.target.value);
-                  }}
-                >
-                  <option value="">All patients</option>
-                  {patients.map(function (p) {
-                    const label = p.name || p.full_name || p.id;
-                    return (
-                      <option key={p.id} value={p.id}>
-                        {label} ({p.id})
-                      </option>
-                    );
-                  })}
-                </select>
+                  onChange={setFilterPatient}
+                  options={patientFilterOptions}
+                  allLabel="All patients"
+                  placeholder="Search patient by name or ID…"
+                />
               </div>
               <div className="field">
                 <label htmlFor="duties-filter-caretaker-employe-15">Filter caretaker ({employees.length})</label>
-                <select id="duties-filter-caretaker-employe-15"
+                <SearchableSelect
+                  id="duties-filter-caretaker-employe-15"
                   value={filterEmployee}
-                  onChange={function (event) {
-                    setFilterEmployee(event.target.value);
-                  }}
-                >
-                  <option value="">All staff</option>
-                  {employees.map(function (e) {
-                    return (
-                      <option key={e.id} value={e.id}>
-                        {(e.full_name || e.name) + " (" + e.id + ")"}
-                      </option>
-                    );
-                  })}
-                </select>
+                  onChange={setFilterEmployee}
+                  options={caretakerFilterOptions}
+                  allLabel="All staff"
+                  placeholder="Search caretaker by name or ID…"
+                />
               </div>
               <div className="field">
                 <label htmlFor="duties-status-16">Status</label>
