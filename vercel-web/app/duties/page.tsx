@@ -197,6 +197,12 @@ interface CalendarTotalsStripeProps {
   patientId: string;
   employeeId: string;
   period: string;
+  // Month-scoped charge total for the selected patient, summed from the
+  // calendar diary rows currently rendered. Matches the Billing page's
+  // single-month figure (same svc rows), unlike `totals.patient.*` which
+  // sums every bill across all months. `null` while diaries are still loading.
+  monthBilled?: number | null;
+  monthLoading?: boolean;
 }
 
 interface FinancialBifurcationProps {
@@ -348,10 +354,21 @@ function CalendarTotalsStripe(props: CalendarTotalsStripeProps) {
   };
 
   const pills = [];
+  if (patientFilter) {
+    pills.push(
+      pill(
+        "This month (calendar)" + (period ? " · " + period : ""),
+        props.monthLoading && props.monthBilled == null
+          ? "…"
+          : formatCurrency(props.monthBilled ?? 0),
+        "ok"
+      )
+    );
+  }
   if (patientFilter && totals && totals.patient) {
     pills.push(
       pill(
-        "Patient outstanding",
+        "Patient outstanding (all bills)",
         formatCurrency(totals.patient.outstanding),
         (totals.patient.outstanding ?? 0) > 0 ? "danger" : "ok"
       )
@@ -439,7 +456,7 @@ function FinancialBifurcation(props: FinancialBifurcationProps) {
       <div style={{ fontWeight: 600, marginBottom: 6 }}>Outstanding & payout</div>
       {props.patientId && totals && totals.patient ? (
         <div>
-          <span className="mini-muted">Patient · </span>
+          <span className="mini-muted">Patient · all bills, all months · </span>
           billed {formatCurrency(totals.patient.billed)} · received{" "}
           {formatCurrency(totals.patient.received)} ·{" "}
           <strong style={{ color: (totals.patient.outstanding ?? 0) > 0 ? "#b91c1c" : "#15803d" }}>
@@ -941,6 +958,39 @@ export default function DutiesPage() {
       return map;
     },
     [employees]
+  );
+
+  // Month-scoped patient charge total, summed from the diary rows currently
+  // rendered on the calendar. This is the apples-to-apples counterpart of the
+  // Billing page's single-month figure (both derive from the same hh_svc_entries
+  // rows), so the two screens stop "disagreeing". It is intentionally NOT the
+  // all-bills `totals.patient.billed`. `monthBilled` is null until at least one
+  // diary for a visible duty has loaded.
+  const monthBilledInfo = useMemo(
+    function () {
+      if (!filterPatient) return { value: null as number | null, loading: false };
+      let sum = 0;
+      let anyLoaded = false;
+      let anyPending = false;
+      rows.forEach(function (row) {
+        const entries = diaryByDuty[row.id];
+        if (!entries) {
+          anyPending = true;
+          return;
+        }
+        anyLoaded = true;
+        entries.forEach(function (e) {
+          if (typeof e.date === "string" && e.date.indexOf(viewMonth) === 0) {
+            sum += Number(e.charge || 0);
+          }
+        });
+      });
+      return {
+        value: anyLoaded ? sum : null,
+        loading: anyPending || loading
+      };
+    },
+    [filterPatient, rows, diaryByDuty, viewMonth, loading]
   );
 
   const patientFilterOptions = useMemo(
@@ -1785,6 +1835,8 @@ export default function DutiesPage() {
               employeeId={filterEmployee}
               totals={filterTotals}
               period={viewMonth}
+              monthBilled={monthBilledInfo.value}
+              monthLoading={monthBilledInfo.loading}
             />
 
             <div className="toolbar" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
@@ -1830,7 +1882,50 @@ export default function DutiesPage() {
               </div>
             </div>
 
-            <div className="calendar-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
+            {loading ? (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 12px",
+                  marginBottom: 8,
+                  fontSize: 13,
+                  color: "#1d4ed8",
+                  background: "#eff6ff",
+                  border: "1px solid #bfdbfe",
+                  borderRadius: 8
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: "50%",
+                    border: "2px solid #93c5fd",
+                    borderTopColor: "#1d4ed8",
+                    display: "inline-block",
+                    animation: "spin 0.7s linear infinite"
+                  }}
+                />
+                Loading {viewMonth} duties — days fill in as they load; don&apos;t treat empty cells as missing yet.
+                <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+              </div>
+            ) : null}
+            <div
+              className="calendar-grid"
+              aria-busy={loading}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(7, 1fr)",
+                gap: 6,
+                opacity: loading ? 0.5 : 1,
+                transition: "opacity 120ms ease"
+              }}
+            >
               {WEEKDAYS.map(function (w) {
                 return (
                   <div key={w} className="mini-muted" style={{ textAlign: "center", fontWeight: 600 }}>
