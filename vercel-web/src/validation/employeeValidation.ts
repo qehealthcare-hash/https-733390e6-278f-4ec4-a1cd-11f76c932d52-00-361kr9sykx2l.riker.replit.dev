@@ -3,8 +3,7 @@ import {
   idSchema,
   normaliseShiftType,
   optionalEmail,
-  optionalShiftType,
-  optionalText
+  optionalShiftType
 } from "@/validation/commonValidation";
 
 /**

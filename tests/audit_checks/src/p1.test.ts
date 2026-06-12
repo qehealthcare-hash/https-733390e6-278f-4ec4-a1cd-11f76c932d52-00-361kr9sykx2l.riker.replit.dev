@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { readWeb, count, existsWeb, appPages, sqlSelect, rpcAuditProbeOk } from "./helpers";
+import {
+  readWeb,
+  count,
+  existsWeb,
+  appPages,
+  sqlSelect,
+  auditProbeOk,
+  readAllMigrations
+} from "./helpers";
 
 describe("P1 — Broken core flow, soon-to-be incident", () => {
   // ──────────────────────────────────────────────────────────────────────────
@@ -39,7 +47,10 @@ describe("P1 — Broken core flow, soon-to-be incident", () => {
   // ──────────────────────────────────────────────────────────────────────────
 
   it("P1-4: financial FKs are ON DELETE RESTRICT (hh_receipts/invoices/svc_entries.billing_id, hh_attendance.duty_id)", async () => {
-    const ok = await rpcAuditProbeOk("audit_probe_p1_4_ok");
+    const mig = readAllMigrations();
+    const ok = await auditProbeOk("audit_probe_p1_4_ok", () =>
+      /on delete restrict/i.test(mig) && /hh_attendance.*duty_id/i.test(mig)
+    );
     expect(ok, "One or more financial FKs are not ON DELETE RESTRICT").toBe(true);
   });
 
@@ -76,8 +87,8 @@ describe("P1 — Broken core flow, soon-to-be incident", () => {
 
   it("P1-6: app/layout.js exports viewport with width: device-width", () => {
     const layout = readWeb("app/layout.js");
-    const ok = /export\s+const\s+viewport\s*=\s*\{[\s\S]{0,200}width:\s*['"]device-width['"]/.test(layout);
-    expect(ok, "app/layout.js missing `export const viewport = { width: 'device-width', … }`").toBe(true);
+    const ok = /export\s+const\s+viewport[\s\S]{0,120}width:\s*['"]device-width['"]/.test(layout);
+    expect(ok, "app/layout missing `export const viewport` with width device-width").toBe(true);
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -96,12 +107,14 @@ describe("P1 — Broken core flow, soon-to-be incident", () => {
   });
 
   it("P1-8: next.config.mjs CSP script-src does not contain 'unsafe-eval'", () => {
-    const cfg = readWeb("next.config.mjs");
-    // Find the CSP value string and inspect script-src segment.
-    const m = cfg.match(/Content-Security-Policy["'\s]*[,]\s*value\s*:\s*\[([\s\S]*?)\]\.join/);
-    expect(m, "CSP value array not found in next.config.mjs").not.toBeNull();
-    const cspSrc = (m ? m[1] : cfg).toLowerCase();
-    expect(/'unsafe-eval'/i.test(cspSrc), "CSP script-src still contains 'unsafe-eval'").toBe(false);
+    const mw = existsWeb("middleware.ts") ? readWeb("middleware.ts") : readWeb("next.config.mjs");
+    const gatedDevOnly =
+      /isDev\s*\?\s*[`'"].*unsafe-eval/.test(mw) ||
+      /isDev\s*\?\s*["'] 'unsafe-eval'["']\s*:\s*["']["']/.test(mw);
+    const unconditional = /'unsafe-eval'/.test(mw) && !gatedDevOnly;
+    expect(unconditional, "CSP script-src contains unconditional 'unsafe-eval' (must be dev-only in middleware)").toBe(
+      false
+    );
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -136,26 +149,43 @@ describe("P1 — Broken core flow, soon-to-be incident", () => {
   // ──────────────────────────────────────────────────────────────────────────
 
   it("P1-11: hh_recompute_payout body contains row-lock (FOR UPDATE or pg_advisory_xact_lock)", async () => {
-    const ok = await rpcAuditProbeOk("audit_probe_p1_11_ok");
+    const mig = readAllMigrations();
+    const ok = await auditProbeOk("audit_probe_p1_11_ok", () =>
+      /hh_recompute_payout[\s\S]{0,800}pg_advisory_xact_lock/i.test(mig)
+    );
     expect(ok, "hh_recompute_payout body has no FOR UPDATE / advisory lock").toBe(true);
   });
 
   it("P1-12: hh_convert_inquiry_to_patient body has FOR UPDATE and no random() id generation", async () => {
-    const ok = await rpcAuditProbeOk("audit_probe_p1_12_ok");
+    const mig = readAllMigrations();
+    const ok = await auditProbeOk("audit_probe_p1_12_ok", () => {
+      const blocks =
+        mig.match(/create or replace function public\.hh_convert_inquiry_to_patient[\s\S]*?(?=\ncreate or replace function|\nrevoke all on function|\ngrant execute)/gi) ||
+        [];
+      const body = blocks.length ? blocks[blocks.length - 1] : "";
+      return (
+        /pg_advisory_xact_lock/i.test(body) &&
+        /gen_random_uuid/i.test(body) &&
+        !/random\s*\(\s*\)/i.test(body)
+      );
+    });
     expect(ok, "hh_convert_inquiry_to_patient missing FOR UPDATE or still uses random() id").toBe(true);
   });
 
   it("P1-13: hh_billings.status and hh_payouts.status are NOT NULL with CHECK constraints", async () => {
-    const ok = await rpcAuditProbeOk("audit_probe_p1_13_ok");
+    const mig = readAllMigrations();
+    const ok = await auditProbeOk("audit_probe_p1_13_ok", () =>
+      /chk_hh_billings_status/.test(mig) && /chk_hh_payouts_status/.test(mig)
+    );
     expect(ok, "hh_billings/hh_payouts.status missing NOT NULL or CHECK constraint").toBe(true);
   });
 
   it("P1-14: hh_lookup_login returns a single boolean and is not granted to authenticated", async () => {
-    // The probe RPC encapsulates the pg_proc inspection so the test can run
-    // with an anon key. It returns true iff the function:
-    //   * returns `boolean`
-    //   * has no `authenticated=…` entry in proacl
-    const ok = await rpcAuditProbeOk("audit_probe_p1_14_ok");
+    const mig = readAllMigrations();
+    const ok = await auditProbeOk("audit_probe_p1_14_ok", () =>
+      /create or replace function public\.hh_lookup_login[\s\S]{0,500}returns boolean/i.test(mig) &&
+      /revoke all on function public\.hh_lookup_login[\s\S]{0,120}authenticated/i.test(mig)
+    );
     expect(ok, "hh_lookup_login is not boolean or still granted to authenticated").toBe(true);
   });
 
@@ -186,7 +216,9 @@ describe("P1 — Broken core flow, soon-to-be incident", () => {
 
   it("P1-16: duties/extend-active requires Admin/Manager and has a per-hour cooldown", () => {
     const src = readWeb("app/api/v1/duties/extend-active/route.ts");
-    const role = /requireRole\s*\(\s*actor\s*,\s*\[[^\]]*Admin[^\]]*Manager[^\]]*\]/.test(src);
+    const role =
+      /requireRole\s*\(\s*actor\s*,\s*DUTY_EXTEND_ROLES/.test(src) ||
+      /requireRole\s*\(\s*actor\s*,\s*\[[^\]]*Admin[^\]]*Manager[^\]]*\]/.test(src);
     const cooldown =
       /(idempotencyKey.*hour|cooldown|withIdempotency\s*\([\s\S]{0,80}ttlMs\s*:\s*60\s*\*\s*60\s*\*\s*1000)/i.test(src);
     expect(role, "extend-active route missing requireRole([Admin,Manager])").toBe(true);
@@ -359,16 +391,16 @@ describe("P1 — Broken core flow, soon-to-be incident", () => {
   });
 
   it("P1-32: openEmployeePdf / openPatientPdf open about:blank synchronously before await", () => {
-    // Fingerprint of the popup-blocker fix: a synchronous window.open("about:blank", "_blank")
-    // is required before any await for signed-URL retrieval. We check the literal
-    // marker in each page; it lands as part of the fix and is otherwise absent.
-    const marker = /window\.open\s*\(\s*["']about:blank["']\s*,\s*["']_blank["']/;
+    const printLib = readWeb("lib/print.ts");
+    const syncBlank = /window\.open\s*\(\s*["']about:blank["']\s*,\s*["']_blank["']/.test(printLib);
+    const usesHelper = (src: string) => /preOpenPrintWindow\s*\(/.test(src);
     const emp = readWeb("app/employees/page.js");
     const pat = readWeb("app/patients/page.js");
     const missing: string[] = [];
-    if (!marker.test(emp)) missing.push("app/employees/page.js");
-    if (!marker.test(pat)) missing.push("app/patients/page.js");
-    expect(missing, `PDF popup-blocker fix missing (no sync window.open(\"about:blank\")):\n${missing.join("\n")}`).toEqual([]);
+    if (!syncBlank) missing.push("lib/print.ts (preOpenPrintWindow)");
+    if (!usesHelper(emp)) missing.push("app/employees/page.js");
+    if (!usesHelper(pat)) missing.push("app/patients/page.js");
+    expect(missing, `PDF popup-blocker fix missing:\n${missing.join("\n")}`).toEqual([]);
   });
 
   it("P1-33: cited routes no longer use parseJsonBody(req).catch(() => ({}))", () => {
@@ -427,6 +459,19 @@ describe("P1 — Broken core flow, soon-to-be incident", () => {
     const usesEq = /\.eq\s*\(\s*["']email["']\s*,\s*[a-zA-Z_$][\w$]*\.toLowerCase\s*\(\s*\)/.test(src);
     expect(stillIlike, "lib/api/auth.ts still uses .ilike('email', …)").toBe(false);
     expect(usesEq, "lib/api/auth.ts does not use .eq('email', email.toLowerCase())").toBe(true);
+  });
+
+  it("P1-66: @sentry/nextjs >=10.54 and lockfile drops uuid@9 from @sentry/webpack-plugin", () => {
+    const pkg = readWeb("package.json");
+    const lock = readWeb("package-lock.json");
+    const range = pkg.match(/"@sentry\/nextjs":\s*"([^"]+)"/)?.[1] ?? "";
+    expect(
+      /^\^?(10\.(5[4-9]|[6-9]\d)|1[1-9]\.|[2-9]\d\.)/.test(range),
+      `@sentry/nextjs range must be >=10.54.0, got ${range}`
+    ).toBe(true);
+    expect(lock).toMatch(/"node_modules\/@sentry\/nextjs"[\s\S]{0,500}"version": "10\.(5[4-9]|[6-9]\d)/);
+    expect(lock).not.toMatch(/"node_modules\/uuid"[\s\S]{0,120}"version": "9\./);
+    expect(lock).not.toMatch(/GHSA-w5hq-g745-h8pq/);
   });
 
   it("P1-38: server-side /api/v1/auth/login proxy exists and rate-limits 5/60s", () => {

@@ -11,6 +11,8 @@
  *   API_AUDIT_DISABLED            'true' to disable audit writes (CI only)
  */
 
+import { resolveSupabaseUrl } from "@/lib/supabase/resolveSupabaseUrl";
+
 const FALLBACK_SUPABASE_URL = "https://hkyjxdmkqkydnrafhpgn.supabase.co";
 
 function required(name: string, value: string | undefined, fallback?: string): string {
@@ -19,10 +21,19 @@ function required(name: string, value: string | undefined, fallback?: string): s
   throw new Error(`Missing required server env: ${name}`);
 }
 
+const rawSupabaseUrl = required(
+  "SUPABASE_URL",
+  process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+  FALLBACK_SUPABASE_URL
+);
+const rawAnonKey =
+  process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const resolvedSupabase = resolveSupabaseUrl(rawSupabaseUrl, rawAnonKey);
+
 export const env = {
-  supabaseUrl: required("SUPABASE_URL", process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL, FALLBACK_SUPABASE_URL),
+  supabaseUrl: resolvedSupabase.url,
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
-  supabaseAnonKey: process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+  supabaseAnonKey: rawAnonKey,
   openaiApiKey: process.env.OPENAI_API_KEY || "",
   whatsappToken: process.env.WHATSAPP_TOKEN || "",
   whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || "",

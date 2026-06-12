@@ -41,7 +41,7 @@ import {
   deactivatePatch,
   type EmployeeLinkCounts
 } from "@/business/employeeRules";
-import { assertNotStale } from "@/business/concurrencyRules";
+import { assertNotStale, requireExpectedVersion } from "@/business/concurrencyRules";
 import { phoneDigitsKey, phoneSuffix } from "@/business/phoneRules";
 import { newId } from "@/business/idRules";
 import { crmTodayIso } from "@/utils/crmToday";
@@ -320,6 +320,9 @@ export const employeeService = {
     const parsed = parseInput(employeeSchema, { ...(rawInput as object), id });
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as EmployeeInput;
+
+    const versionRequired = requireExpectedVersion("Employee", input.expected_updated_at);
+    if (!versionRequired.success) return passFailure(versionRequired);
 
     const stale = assertNotStale("Employee", existing.data.updated_at, input.expected_updated_at);
     if (!stale.success) return passFailure(stale);

@@ -5,25 +5,40 @@
  * Calendar date helpers: `@/lib/dutyUi`. All writes via `/api/v1/duties/*`.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent
+} from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
+import { useBusyGuard } from "@/hooks/use-busy-guard";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { ModalDialog } from "@/components/ui/modal-dialog";
 import { useAuth } from "@/components/providers/auth-provider";
-import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { billingsClient, dutiesClient, lookupsClient } from "@/lib/clients";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { crmDayStartIso, crmDayEndIso } from "@/src/utils/crmToday";
 import {
   DUTY_STATUSES,
   daysInMonthGrid,
+  dutyTouchesDay,
   isOpenEndedIso,
   istDayKey,
   monthKey,
-  partnerDisplayName
+  partnerDisplayName,
+  type DutyDiaryEntry,
+  type DutyListRow
 } from "@/lib/dutyUi";
+import type { DutyPermissionsDto } from "@/validation/dutyDto";
+import type { Role } from "@/business/rbac";
 import {
   DUTY_CANCEL_ROLES,
   DUTY_CHECK_IN_ROLES,
@@ -35,7 +50,166 @@ import {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function roleInList(role, list) {
+type DutiesAuth = {
+  session?: { access_token?: string } | null;
+  profile?: { role?: string } | null;
+  supabase?: {
+    channel: (name: string) => {
+      on: (event: string, filter: object, handler: () => void) => { on: (...args: unknown[]) => unknown };
+      subscribe: () => void;
+    };
+    removeChannel: (channel: unknown) => void;
+  };
+};
+
+interface LookupRow {
+  id: string;
+  name?: string;
+  full_name?: string;
+}
+
+interface ServiceOption {
+  id?: string;
+  name?: string;
+  service_name?: string;
+  label?: string;
+}
+
+interface DutyFormExtraPartner {
+  row_id: string;
+  employee_id: string;
+  charge_per_day: string;
+  payout_per_day: string;
+  payout_term: string;
+}
+
+function newExtraPartnerRowId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "partner-" + String(Date.now()) + "-" + Math.random().toString(36).slice(2, 9);
+}
+
+function emptyExtraPartner(): DutyFormExtraPartner {
+  return {
+    row_id: newExtraPartnerRowId(),
+    employee_id: "",
+    charge_per_day: "",
+    payout_per_day: "",
+    payout_term: "Daily"
+  };
+}
+
+interface DutyFormState {
+  id: string;
+  patient_id: string;
+  employee_id: string;
+  service_name: string;
+  shift_type: string;
+  start_at: string;
+  end_at: string;
+  open_ended: boolean;
+  status: string;
+  charge_per_day: string;
+  payout_per_day: string;
+  payout_term: string;
+  extra_partners: DutyFormExtraPartner[];
+  materialize: boolean;
+  notes: string;
+  expected_updated_at: string;
+}
+
+interface CancelDialogState {
+  id: string;
+  reason: string;
+}
+
+interface DeleteDialogState {
+  id: string;
+  reason?: string;
+  patient?: string;
+  employee?: string;
+  range?: string;
+}
+
+interface OverlapDialogState {
+  kind: "patient" | "staff";
+  message: string;
+}
+
+interface MaterializePreviewLine {
+  date?: string;
+  employee_name?: string;
+  charge?: number;
+  payout?: number;
+  svc_action?: string;
+  payout_action?: string;
+}
+
+interface MaterializePreviewData {
+  would_create_svc?: number;
+  would_update_svc?: number;
+  would_create_payout?: number;
+  would_update_payout?: number;
+  would_delete_svc?: number;
+  would_delete_payout?: number;
+  preview?: MaterializePreviewLine[];
+}
+
+interface PreviewDialogState {
+  dutyId: string;
+  data: MaterializePreviewData;
+}
+
+interface DiaryEditDraft {
+  charge?: string;
+  payout?: string;
+  employee_id?: string;
+}
+
+interface DutyPatientTotals {
+  billed?: number;
+  received?: number;
+  outstanding?: number;
+  sec_dep?: number;
+  bills?: number;
+}
+
+interface DutyPartnerTotals {
+  charged?: number;
+  paid?: number;
+  pending?: number;
+}
+
+interface DutyTotalsBundle {
+  patient?: DutyPatientTotals;
+  partner?: DutyPartnerTotals;
+}
+
+interface OutstandingState {
+  billing_id: string;
+  totals?: { outstanding?: number } | null;
+}
+
+interface CalendarTotalsStripeProps {
+  totals: DutyTotalsBundle | null;
+  patientId: string;
+  employeeId: string;
+  period: string;
+}
+
+interface FinancialBifurcationProps {
+  totals: DutyTotalsBundle | null;
+  outstanding: OutstandingState | null;
+  patientId: string;
+  employeeId: string;
+}
+
+function sessionOrNull(auth: DutiesAuth) {
+  return (auth.session ?? null) as import("@supabase/supabase-js").Session | null;
+}
+
+function roleInList(role: unknown, list: readonly Role[]): boolean {
   const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
@@ -43,9 +217,9 @@ function roleInList(role, list) {
 }
 
 /** Server-computed flags from GET/list; deny-all when missing (legacy rows). */
-function dutyRowPermissions(row) {
+function dutyRowPermissions(row: DutyListRow): DutyPermissionsDto {
   return (
-    (row && row.permissions) || {
+    row.permissions || {
       canEdit: false,
       canCancel: false,
       canCheckIn: false,
@@ -56,10 +230,10 @@ function dutyRowPermissions(row) {
   );
 }
 
-function createInitialForm() {
+function createInitialForm(): DutyFormState {
   const start = new Date();
   start.setHours(8, 0, 0, 0);
-  const pad = function (n) {
+  const pad = function (n: number) {
     return String(n).padStart(2, "0");
   };
   const localDefault =
@@ -92,17 +266,17 @@ function createInitialForm() {
   };
 }
 
-function toIsoFromLocal(local) {
+function toIsoFromLocal(local: string): string {
   if (!local) return "";
   const d = new Date(local);
   return Number.isNaN(d.getTime()) ? local : d.toISOString();
 }
 
-function toLocalDatetimeValue(iso) {
+function toLocalDatetimeValue(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const pad = function (n) {
+  const pad = function (n: number) {
     return String(n).padStart(2, "0");
   };
   return (
@@ -118,37 +292,24 @@ function toLocalDatetimeValue(iso) {
   );
 }
 
-function crmTodayIso() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
-}
-
-function dutyTouchesDay(row, isoDay) {
-  if (!row.start_at || !isoDay) return false;
-  const start = istDayKey(row.start_at);
-  const rawEnd = istDayKey(row.end_at || row.start_at);
-  const today = crmTodayIso();
-  const end = isOpenEndedIso(row.end_at) ? today : rawEnd;
-  return isoDay >= start && isoDay <= end;
-}
-
-const SHIFT_CHIP_STYLES = {
+const SHIFT_CHIP_STYLES: Record<string, { bg: string; border: string; text: string }> = {
   DAY: { bg: "#dbeafe", border: "#3b82f6", text: "#1e3a8a" },
   NIGHT: { bg: "#ede9fe", border: "#7c3aed", text: "#4c1d95" },
   "24H": { bg: "#ffedd5", border: "#ea580c", text: "#9a3412" },
   FULL: { bg: "#dcfce7", border: "#16a34a", text: "#14532d" }
 };
 
-function shiftChipStyle(shift) {
-  return SHIFT_CHIP_STYLES[String(shift || "DAY").toUpperCase()] || SHIFT_CHIP_STYLES.DAY;
+function shiftChipStyle(shift: unknown) {
+  return SHIFT_CHIP_STYLES[String(shift || "DAY").toUpperCase()] || SHIFT_CHIP_STYLES.DAY!;
 }
 
-function shortLabel(name, id) {
+function shortLabel(name: unknown, id: unknown) {
   const n = String(name || id || "").trim();
   if (n.length <= 14) return n;
   return n.slice(0, 12) + "…";
 }
 
-function dutyMatchesEmployee(row, employeeId) {
+function dutyMatchesEmployee(row: DutyListRow, employeeId: string): boolean {
   if (!employeeId) return true;
   if (row.employee_id === employeeId) return true;
   const extras = row.extra_partners;
@@ -158,12 +319,12 @@ function dutyMatchesEmployee(row, employeeId) {
   });
 }
 
-function CalendarTotalsStripe(props) {
+function CalendarTotalsStripe(props: CalendarTotalsStripeProps) {
   const totals = props.totals;
   const patientFilter = props.patientId;
   const employeeFilter = props.employeeId;
   const period = props.period;
-  const pill = function (label, amount, tone) {
+  const pill = function (label: string, amount: string, tone: string) {
     const color = tone === "danger" ? "#b91c1c" : tone === "warn" ? "#b45309" : "#15803d";
     return (
       <span
@@ -191,7 +352,7 @@ function CalendarTotalsStripe(props) {
       pill(
         "Patient outstanding",
         formatCurrency(totals.patient.outstanding),
-        totals.patient.outstanding > 0 ? "danger" : "ok"
+        (totals.patient.outstanding ?? 0) > 0 ? "danger" : "ok"
       )
     );
     if (totals.patient.sec_dep) {
@@ -203,7 +364,7 @@ function CalendarTotalsStripe(props) {
       pill(
         "Partner pending" + (period ? " (" + period + ")" : ""),
         formatCurrency(totals.partner.pending),
-        totals.partner.pending > 0 ? "warn" : "ok"
+        (totals.partner.pending ?? 0) > 0 ? "warn" : "ok"
       )
     );
     if (period) {
@@ -227,7 +388,7 @@ function CalendarTotalsStripe(props) {
 
   if (!pills.length && (patientFilter || employeeFilter)) {
     pills.push(
-      <span key="loading" className="mini-muted" style={{ fontSize: 13 }}>
+      <span key="loading" className="mini-muted" style={{ fontSize: 13 }} role="status" aria-live="polite">
         Loading totals…
       </span>
     );
@@ -260,7 +421,7 @@ function CalendarTotalsStripe(props) {
   );
 }
 
-function FinancialBifurcation(props) {
+function FinancialBifurcation(props: FinancialBifurcationProps) {
   const totals = props.totals;
   const outstanding = props.outstanding;
   if (!props.patientId && !props.employeeId) return null;
@@ -280,7 +441,7 @@ function FinancialBifurcation(props) {
           <span className="mini-muted">Patient · </span>
           billed {formatCurrency(totals.patient.billed)} · received{" "}
           {formatCurrency(totals.patient.received)} ·{" "}
-          <strong style={{ color: totals.patient.outstanding > 0 ? "#b91c1c" : "#15803d" }}>
+          <strong style={{ color: (totals.patient.outstanding ?? 0) > 0 ? "#b91c1c" : "#15803d" }}>
             outstanding {formatCurrency(totals.patient.outstanding)}
           </strong>
           {totals.patient.sec_dep ? " · sec.dep " + formatCurrency(totals.patient.sec_dep) : ""}
@@ -299,12 +460,12 @@ function FinancialBifurcation(props) {
           <span className="mini-muted">Partner · </span>
           earned {formatCurrency(totals.partner.charged)} · paid{" "}
           {formatCurrency(totals.partner.paid)} ·{" "}
-          <strong style={{ color: totals.partner.pending > 0 ? "#b45309" : "#15803d" }}>
+          <strong style={{ color: (totals.partner.pending ?? 0) > 0 ? "#b45309" : "#15803d" }}>
             net pending payout {formatCurrency(totals.partner.pending)}
           </strong>
         </div>
       ) : props.employeeId ? (
-        <div className="mini-muted" style={{ marginTop: 6 }}>
+        <div className="mini-muted" style={{ marginTop: 6 }} role="status" aria-live="polite">
           Loading partner payout…
         </div>
       ) : null}
@@ -313,8 +474,14 @@ function FinancialBifurcation(props) {
 }
 
 export default function DutiesPage() {
-  const auth = useAuth();
-  const accessToken = auth.session?.access_token ?? "";
+  const auth = useAuth() as unknown as DutiesAuth;
+  const accessToken = sessionOrNull(auth)?.access_token ?? "";
+  // P1-B: pin latest session/supabase so memoized loaders never close over
+  // stale auth after onAuthStateChange re-renders the provider.
+  const sessionRef = useRef(sessionOrNull(auth));
+  sessionRef.current = sessionOrNull(auth);
+  const supabaseRef = useRef(auth.supabase);
+  supabaseRef.current = auth.supabase;
   const canWrite = roleInList(auth.profile?.role, DUTY_WRITE_ROLES);
   const canCancel = roleInList(auth.profile?.role, DUTY_CANCEL_ROLES);
   const canCheckIn = roleInList(auth.profile?.role, DUTY_CHECK_IN_ROLES);
@@ -322,7 +489,7 @@ export default function DutiesPage() {
   const canDiaryEdit = roleInList(auth.profile?.role, DUTY_DIARY_WRITE_ROLES);
   const canHardDelete = roleInList(auth.profile?.role, DUTY_DELETE_ROLES);
   const [viewMonth, setViewMonth] = useState(monthKey(new Date()));
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState<DutyListRow[]>([]);
   // P1-28: track API limit + server total for the "Showing first N of M"
   // truncation banner. The duties calendar capped the month view at 150
   // duties; high-volume care managers couldn't tell when the second half of
@@ -330,45 +497,56 @@ export default function DutiesPage() {
   const DUTIES_LIMIT = 150;
   const [rowsTotal, setRowsTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [patients, setPatients] = useState([]);
-  const [employees, setEmployees] = useState([]);
-  const [services, setServices] = useState([]);
+  const [patients, setPatients] = useState<LookupRow[]>([]);
+  const [employees, setEmployees] = useState<LookupRow[]>([]);
+  const [services, setServices] = useState<ServiceOption[]>([]);
   const [filterPatient, setFilterPatient] = useState("");
   const [filterEmployee, setFilterEmployee] = useState("");
-  const [form, setForm] = useState(createInitialForm());
-  const [formPermissions, setFormPermissions] = useState(null);
+  const [form, setForm] = useState<DutyFormState>(createInitialForm);
+  const [formPermissions, setFormPermissions] = useState<DutyPermissionsDto | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, tryBegin, end } = useBusyGuard();
   const [error, setErrorState] = useState("");
   const [message, setMessageState] = useState("");
   const toast = useToast();
-  const setError = useCallback(function (msg) {
-    const text = String(msg || "");
+  const confirm = useConfirm();
+  const lastErrorToastRef = useRef({ message: "", at: 0 });
+  const setError = useCallback(function (msg: string) {
+    let text = String(msg || "").trim();
+    if (text.includes("auth/v1/user") || text.includes("supabase.co/auth")) {
+      text =
+        "Supabase connection failed — check NEXT_PUBLIC_SUPABASE_URL on Vercel matches project hkyjxdmkqkydnrafhpgn.";
+    }
     setErrorState(text);
-    if (text) toast.error(text);
+    if (!text) return;
+    const now = Date.now();
+    const prev = lastErrorToastRef.current;
+    if (prev.message === text && now - prev.at < 4000) return;
+    lastErrorToastRef.current = { message: text, at: now };
+    toast.error(text);
   }, [toast]);
-  const setMessage = useCallback(function (msg) {
+  const setMessage = useCallback(function (msg: string) {
     const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
   }, [toast]);
-  const [cancelDialog, setCancelDialog] = useState(null);
-  const [deleteDialog, setDeleteDialog] = useState(null);
-  const [overlapDialog, setOverlapDialog] = useState(null);
+  const [cancelDialog, setCancelDialog] = useState<CancelDialogState | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
+  const [overlapDialog, setOverlapDialog] = useState<OverlapDialogState | null>(null);
   const [conflictBanner, setConflictBanner] = useState("");
-  const [outstanding, setOutstanding] = useState(null);
-  const [totals, setTotals] = useState(null);
+  const [outstanding, setOutstanding] = useState<OutstandingState | null>(null);
+  const [totals, setTotals] = useState<DutyTotalsBundle | null>(null);
   const [selectedDay, setSelectedDay] = useState("");
-  const [previewDialog, setPreviewDialog] = useState(null);
-  const [filterTotals, setFilterTotals] = useState(null);
-  const [diaryByDuty, setDiaryByDuty] = useState({});
-  const [diaryEdits, setDiaryEdits] = useState({});
-  const [diaryBusy, setDiaryBusy] = useState({});
+  const [previewDialog, setPreviewDialog] = useState<PreviewDialogState | null>(null);
+  const [filterTotals, setFilterTotals] = useState<DutyTotalsBundle | null>(null);
+  const [diaryByDuty, setDiaryByDuty] = useState<Record<string, DutyDiaryEntry[]>>({});
+  const [diaryEdits, setDiaryEdits] = useState<Record<string, DiaryEditDraft>>({});
+  const [diaryBusy, setDiaryBusy] = useState<Record<string, boolean>>({});
 
   const ym = useMemo(
     function () {
       const p = viewMonth.split("-");
-      return { year: parseInt(p[0], 10), monthIndex: parseInt(p[1], 10) - 1 };
+      return { year: parseInt(p[0] || "", 10), monthIndex: parseInt(p[1] || "1", 10) - 1 };
     },
     [viewMonth]
   );
@@ -398,36 +576,41 @@ export default function DutiesPage() {
   );
 
   const loadDiaryFor = useCallback(
-    async function loadDiaryFor(dutyId) {
-      if (!dutyId || !auth.session?.access_token) return;
+    async function loadDiaryFor(dutyId: string) {
+      if (!dutyId || !accessToken) return;
+      const session = sessionRef.current;
+      if (!session) return;
       try {
-        const data = await request("/duties/" + encodeURIComponent(dutyId) + "/diary", null, auth.session);
+        const data = (await dutiesClient.diary(session, dutyId)) as {
+          entries?: DutyDiaryEntry[];
+        };
         setDiaryByDuty(function (cur) {
           const next = { ...cur };
           next[dutyId] = Array.isArray(data?.entries) ? data.entries : [];
           return next;
         });
-      } catch (err) {
-        setError(err.message || "Unable to load day-wise entries");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Unable to load day-wise entries");
       }
     },
-    [auth.session]
+    [accessToken, setError]
   );
 
   const loadDiariesForVisible = useCallback(
-    async function loadDiariesForVisible(rowList) {
-      if (!auth.session?.access_token || !rowList || !rowList.length) return;
+    async function loadDiariesForVisible(rowList: DutyListRow[]) {
+      if (!accessToken || !rowList || !rowList.length) return;
+      const session = sessionRef.current;
+      if (!session) return;
       const ids = rowList.map(function (r) {
         return r.id;
       }).filter(Boolean);
       if (!ids.length) return;
       try {
-        const data = await request(
-          "/duties/diary/batch",
-          { method: "POST", body: { duty_ids: ids } },
-          auth.session
-        );
-        const map = data && typeof data === "object" ? data : {};
+        const data = await dutiesClient.diaryBatch(session, ids);
+        const map =
+          data && typeof data === "object"
+            ? (data as Record<string, { entries?: DutyDiaryEntry[] }>)
+            : {};
         setDiaryByDuty(function (cur) {
           const next = { ...cur };
           ids.forEach(function (id) {
@@ -444,7 +627,7 @@ export default function DutiesPage() {
         const pairs = await Promise.all(
           ids.map(async function (id) {
             try {
-              const d = await request("/duties/" + encodeURIComponent(id) + "/diary", null, auth.session);
+              const d = await dutiesClient.diary(session, id);
               return [id, Array.isArray(d?.entries) ? d.entries : []];
             } catch (_err) {
               return [id, []];
@@ -460,21 +643,23 @@ export default function DutiesPage() {
         });
       }
     },
-    [auth.session]
+    [accessToken]
   );
 
   const loadOutstanding = useCallback(
-    async function loadOutstanding(patientId) {
-      if (!patientId || !auth.session?.access_token) {
+    async function loadOutstanding(patientId: string) {
+      if (!patientId || !accessToken) {
         setOutstanding(null);
         return;
       }
+      const session = sessionRef.current;
+      if (!session) return;
       try {
-        const list = await request(
-          "/billings?limit=20&patient_id=" + encodeURIComponent(patientId) + "&status=Active",
-          null,
-          auth.session
-        );
+        const list = (await billingsClient.list(session, {
+          limit: 20,
+          patient_id: patientId,
+          status: "Active"
+        })) as { rows?: Array<{ id: string; status?: string }> };
         const billRows = Array.isArray(list?.rows) ? list.rows : [];
         const active = billRows.find(function (b) {
           return b.status === "Active";
@@ -483,7 +668,9 @@ export default function DutiesPage() {
           setOutstanding(null);
           return;
         }
-        const bundle = await request("/billings/" + encodeURIComponent(active.id), null, auth.session);
+        const bundle = (await billingsClient.get(session, active.id)) as {
+          totals?: OutstandingState["totals"];
+        };
         setOutstanding({
           billing_id: active.id,
           totals: bundle.totals || null
@@ -492,34 +679,49 @@ export default function DutiesPage() {
         setOutstanding(null);
       }
     },
-    [auth.session]
+    [accessToken]
   );
 
   const loadTotals = useCallback(
-    async function loadTotals(patientId, employeeId, period) {
-      if (!auth.session?.access_token) {
+    async function loadTotals(
+      patientId: string,
+      employeeId: string,
+      period: string
+    ): Promise<DutyTotalsBundle | null> {
+      if (!accessToken) {
         return null;
       }
       if (!patientId && !employeeId) {
         return null;
       }
-      const qs = [];
-      if (patientId) qs.push("patient_id=" + encodeURIComponent(patientId));
-      if (employeeId) qs.push("employee_id=" + encodeURIComponent(employeeId));
-      if (employeeId && period) qs.push("period=" + encodeURIComponent(period));
+      const session = sessionRef.current;
+      if (!session) return null;
       try {
-        return await request("/duties/totals?" + qs.join("&"), null, auth.session);
+        return (await dutiesClient.totals(session, {
+          patient_id: patientId || undefined,
+          employee_id: employeeId || undefined,
+          period: employeeId && period ? period : undefined
+        })) as DutyTotalsBundle;
       } catch (_e) {
         return null;
       }
     },
-    [auth.session]
+    [accessToken]
   );
 
   const reload = useCallback(async function reload() {
-    if (!auth.session?.access_token) return;
+    if (!accessToken) return;
+    const session = sessionRef.current;
+    if (!session) return;
     setLoading(true);
     try {
+      if (filterPatient) {
+        try {
+          await billingsClient.syncDutyLedger(session, filterPatient);
+        } catch (syncErr) {
+          console.warn("[duties] duty→billing ledger sync failed", syncErr);
+        }
+      }
       // P1-20: bound the month window in IST (+05:30), not UTC. With a
       // UTC bound, queries near month-end on India time were returning
       // duties from the *next* month — e.g. a 31-Aug 11pm IST duty
@@ -530,12 +732,18 @@ export default function DutiesPage() {
       const endDate = new Date(ym.year, ym.monthIndex + 1, 0);
       const endKey = endDate.getFullYear() + "-" + String(endDate.getMonth() + 1).padStart(2, "0") + "-" + String(endDate.getDate()).padStart(2, "0");
       const to = crmDayEndIso(endKey);
-      let path = "/duties?limit=" + DUTIES_LIMIT + "&from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to);
-      if (statusFilter) path += "&status=" + encodeURIComponent(statusFilter);
-      if (filterPatient) path += "&patient_id=" + encodeURIComponent(filterPatient);
-      if (filterEmployee) path += "&employee_id=" + encodeURIComponent(filterEmployee);
-      const data = await request(path, null, auth.session);
-      let list = Array.isArray(data && data.rows) ? data.rows : [];
+      const data = (await dutiesClient.list(session, {
+        limit: DUTIES_LIMIT,
+        from,
+        to,
+        status: statusFilter || undefined,
+        patient_id: filterPatient || undefined,
+        employee_id: filterEmployee || undefined
+      })) as {
+        rows?: DutyListRow[];
+        total?: number;
+      };
+      let list = Array.isArray(data?.rows) ? data.rows : [];
       const serverTotal = Number(data && data.total != null ? data.total : list.length) || list.length;
       if (filterEmployee) {
         list = list.filter(function (r) {
@@ -546,20 +754,21 @@ export default function DutiesPage() {
       setRowsTotal(serverTotal);
       setError("");
       loadDiariesForVisible(list);
-    } catch (err) {
-      setError(err.message || "Unable to load duties");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to load duties");
     } finally {
       setLoading(false);
     }
   }, [
-    auth.session,
+    accessToken,
     viewMonth,
     ym.year,
     ym.monthIndex,
     statusFilter,
     filterPatient,
     filterEmployee,
-    loadDiariesForVisible
+    loadDiariesForVisible,
+    setError
   ]);
 
   useEffect(function () {
@@ -573,10 +782,10 @@ export default function DutiesPage() {
 
   useEffect(
     function () {
-      if (!auth.session?.access_token) return;
+      if (!accessToken) return;
       reload();
     },
-    [auth.session, reload]
+    [accessToken, reload]
   );
 
   // Realtime — when billing closes, duties cap, or diary rows change in
@@ -597,13 +806,19 @@ export default function DutiesPage() {
   );
   useEffect(
     function () {
-      if (!auth.session?.access_token || !auth.supabase) return undefined;
-      let debounce = null;
+      const supabase = supabaseRef.current;
+      if (!accessToken || !supabase) return undefined;
+      let debounce: ReturnType<typeof setTimeout> | null = null;
+      let refreshInFlight = false;
       function scheduleRefresh() {
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(function () {
           debounce = null;
-          reloadRef.current();
+          if (refreshInFlight) return;
+          refreshInFlight = true;
+          Promise.resolve(reloadRef.current()).finally(function () {
+            refreshInFlight = false;
+          });
           const fp = filterPatientRef.current;
           const fe = filterEmployeeRef.current;
           if (fp || fe) {
@@ -614,7 +829,14 @@ export default function DutiesPage() {
           if (fp) loadOutstanding(fp);
         }, 300);
       }
-      const channel = auth.supabase.channel("crm-hh_duties_calendar");
+      const channel = supabase.channel("crm-hh_duties_calendar") as {
+        on: (
+          event: string,
+          filter: object,
+          handler: () => void
+        ) => { on: (event: string, filter: object, handler: () => void) => unknown; subscribe: () => void };
+        subscribe: () => void;
+      };
       ["hh_duties", "hh_billings", "hh_svc_entries", "hh_payout_charges", "hh_attendance"].forEach(
         function (tableName) {
           channel.on(
@@ -627,39 +849,42 @@ export default function DutiesPage() {
       channel.subscribe();
       return function cleanup() {
         if (debounce) clearTimeout(debounce);
-        auth.supabase.removeChannel(channel);
+        const sb = supabaseRef.current;
+        if (sb) sb.removeChannel(channel);
       };
-      // P1-27: see deps array below — depend on the access_token, not the
-      // full session object. Supabase rebuilds the session record on every
-      // token refresh (~1h) which would tear down & re-subscribe the channel
-      // for ~300 ms and double-count realtime quota.
+      // P1-27: depend on access_token only; supabase client is read via ref.
     },
-    [auth.session?.access_token, auth.supabase, loadOutstanding, loadTotals]
+    [accessToken, loadOutstanding, loadTotals]
   );
 
   useEffect(
     function () {
-      if (!auth.session?.access_token) return;
-      request("/lookups/patients", null, auth.session)
+      if (!accessToken) return;
+      const session = sessionRef.current;
+      if (!session) return;
+      lookupsClient
+        .patients(session)
         .then(function (rows) {
           const arr = Array.isArray(rows) ? rows : rows?.rows || rows?.data || [];
           setPatients(arr);
         })
         .catch(function () { setPatients([]); });
-      request("/lookups/employees", null, auth.session)
+      lookupsClient
+        .employees(session)
         .then(function (rows) {
           const arr = Array.isArray(rows) ? rows : rows?.rows || rows?.data || [];
           setEmployees(arr);
         })
         .catch(function () { setEmployees([]); });
-      request("/lookups/services", null, auth.session)
+      lookupsClient
+        .services(session)
         .then(function (rows) {
           const arr = Array.isArray(rows) ? rows : rows?.rows || rows?.data || [];
           setServices(arr);
         })
         .catch(function () { setServices([]); });
     },
-    [accessToken, auth.session]
+    [accessToken]
   );
 
   useEffect(
@@ -697,7 +922,7 @@ export default function DutiesPage() {
 
   const patientNameById = useMemo(
     function () {
-      const map = {};
+      const map: Record<string, string> = {};
       patients.forEach(function (p) {
         map[p.id] = p.name || p.full_name || p.id;
       });
@@ -708,7 +933,7 @@ export default function DutiesPage() {
 
   const employeeNameById = useMemo(
     function () {
-      const map = {};
+      const map: Record<string, string> = {};
       employees.forEach(function (e) {
         map[e.id] = e.full_name || e.name || e.id;
       });
@@ -737,7 +962,7 @@ export default function DutiesPage() {
     [selectedDay, dayDuties, loadDiaryFor]
   );
 
-  function updateField(name, value) {
+  function updateField<K extends keyof DutyFormState>(name: K, value: DutyFormState[K]) {
     setForm(function (current) {
       return { ...current, [name]: value };
     });
@@ -751,7 +976,7 @@ export default function DutiesPage() {
     setMessage("");
   }
 
-  function editDuty(row) {
+  function editDuty(row: DutyListRow) {
     const openEnded = isOpenEndedIso(row.end_at);
     setForm({
       id: row.id,
@@ -766,7 +991,17 @@ export default function DutiesPage() {
       charge_per_day: row.charge_per_day != null ? String(row.charge_per_day) : "",
       payout_per_day: row.payout_per_day != null ? String(row.payout_per_day) : "",
       payout_term: row.payout_term || "Daily",
-      extra_partners: Array.isArray(row.extra_partners) ? row.extra_partners : [],
+      extra_partners: Array.isArray(row.extra_partners)
+        ? row.extra_partners.map(function (p) {
+            return {
+              row_id: newExtraPartnerRowId(),
+              employee_id: p.employee_id || "",
+              charge_per_day: p.charge_per_day != null ? String(p.charge_per_day) : "",
+              payout_per_day: p.payout_per_day != null ? String(p.payout_per_day) : "",
+              payout_term: p.payout_term || "Daily"
+            };
+          })
+        : [],
       materialize: true,
       notes: row.notes || "",
       expected_updated_at: row.updated_at || ""
@@ -784,22 +1019,24 @@ export default function DutiesPage() {
     setForm(function (current) {
       return {
         ...current,
-        extra_partners: current.extra_partners.concat([
-          { employee_id: "", charge_per_day: "", payout_per_day: "", payout_term: "Daily" }
-        ])
+        extra_partners: current.extra_partners.concat([emptyExtraPartner()])
       };
     });
   }
 
-  function updateExtraPartner(index, key, value) {
+  function updateExtraPartner(
+    index: number,
+    key: keyof DutyFormExtraPartner,
+    value: string
+  ) {
     setForm(function (current) {
       const list = current.extra_partners.slice();
-      list[index] = { ...list[index], [key]: value };
+      list[index] = { ...(list[index] || emptyExtraPartner()), [key]: value };
       return { ...current, extra_partners: list };
     });
   }
 
-  function removeExtraPartner(index) {
+  function removeExtraPartner(index: number) {
     setForm(function (current) {
       const list = current.extra_partners.slice();
       list.splice(index, 1);
@@ -807,9 +1044,9 @@ export default function DutiesPage() {
     });
   }
 
-  function buildPayload(confirm) {
+  function buildPayload(confirm?: { staff?: boolean; patient?: boolean }) {
     const confirmObj = confirm || {};
-    const payload = {
+    const payload: Record<string, unknown> = {
       patient_id: form.patient_id,
       employee_id: form.employee_id,
       service_name: form.service_name,
@@ -844,16 +1081,8 @@ export default function DutiesPage() {
     return payload;
   }
 
-  async function submitPayload(payload) {
-    if (form.id) {
-      await requestWithOfflineFallback(
-        "/duties/" + encodeURIComponent(form.id),
-        { method: "PATCH", body: payload },
-        auth.session
-      );
-    } else {
-      await requestWithOfflineFallback("/duties", { method: "POST", body: payload }, auth.session);
-    }
+  async function submitPayload(payload: Record<string, unknown>) {
+    await dutiesClient.save(sessionOrNull(auth), form.id || undefined, payload);
     await reload();
     await loadOutstanding(form.patient_id);
     await refreshFormTotals();
@@ -861,27 +1090,32 @@ export default function DutiesPage() {
     setMessage(form.id ? "Duty updated — diary rows synced when materialize is on" : "Duty created");
   }
 
-  async function handleSubmit(event) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!canWrite) {
       setError("You do not have permission to create or edit duties.");
       return;
     }
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     setMessage("");
     setConflictBanner("");
     try {
       await submitPayload(buildPayload({}));
-    } catch (submitError) {
-      const msg = String(submitError.message || "").toLowerCase();
-      const code = submitError.code || "";
-      const details = submitError.details || {};
+    } catch (submitError: unknown) {
+      const err = submitError as {
+        message?: string;
+        code?: string;
+        details?: { field?: string };
+      };
+      const msg = String(err.message || "").toLowerCase();
+      const code = err.code || "";
+      const details = err.details || {};
       const field = String(details.field || "");
       if (field === "patient_window" || msg.indexOf("patient already has another duty") >= 0) {
         setOverlapDialog({
           kind: "patient",
-          message: submitError.message || "Patient already has another duty overlapping this time"
+          message: err.message || "Patient already has another duty overlapping this time"
         });
       } else if (
         field === "employee_window" ||
@@ -891,60 +1125,62 @@ export default function DutiesPage() {
       ) {
         setOverlapDialog({
           kind: "staff",
-          message: submitError.message || "Staff has another overlapping duty"
+          message: err.message || "Staff has another overlapping duty"
         });
-      } else if (code === "CONFLICT" || msg.indexOf("stale") >= 0) {
-        setConflictBanner(submitError.message || "Record changed elsewhere — reload and retry");
-        setError(submitError.message || "Unable to save duty");
+      } else if (code === "conflict" || msg.indexOf("stale") >= 0 || msg.indexOf("modified by another") >= 0) {
+        setConflictBanner(err.message || "Record changed elsewhere — reload and retry");
+        setError(err.message || "Unable to save duty");
       } else {
-        setError(submitError.message || "Unable to save duty");
+        setError(err.message || "Unable to save duty");
       }
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
   async function confirmOverlapAndSave() {
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
       const kind = (overlapDialog && overlapDialog.kind) || "staff";
       const confirmFlags = kind === "patient" ? { patient: true } : { staff: true };
       await submitPayload(buildPayload(confirmFlags));
       setOverlapDialog(null);
-    } catch (err) {
-      setError(err.message || "Save failed");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Save failed");
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
-  async function runMaterialize(dutyId, skipPreview) {
+  async function runMaterialize(dutyId: string, skipPreview?: boolean) {
     if (!skipPreview) {
-      setBusy(true);
+      if (!tryBegin()) return;
       setError("");
       try {
-        const preview = await request(
-          "/duties/" + encodeURIComponent(dutyId) + "/materialize",
-          { method: "POST", body: { dry_run: true } },
-          auth.session
-        );
-        setPreviewDialog({ dutyId: dutyId, data: preview });
-      } catch (err) {
-        setError(err.message || "Preview failed");
+        const preview = await dutiesClient.materialize(sessionOrNull(auth), dutyId, { dry_run: true });
+        setPreviewDialog({
+          dutyId: dutyId,
+          data: (preview || {}) as MaterializePreviewData
+        });
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Preview failed");
       } finally {
-        setBusy(false);
+        end();
       }
       return;
     }
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
-      const data = await request(
-        "/duties/" + encodeURIComponent(dutyId) + "/materialize",
-        { method: "POST", body: {} },
-        auth.session
-      );
+      const data = (await dutiesClient.materialize(sessionOrNull(auth), dutyId)) as {
+        created_svc?: number;
+        created_payout?: number;
+        updated_svc?: number;
+        updated_payout?: number;
+        deleted_svc?: number;
+        deleted_payout?: number;
+      };
       setPreviewDialog(null);
       setMessage(
         "Diary synced: +" +
@@ -968,57 +1204,51 @@ export default function DutiesPage() {
         const ft = await loadTotals(filterPatient, filterEmployee, viewMonth);
         setFilterTotals(ft || null);
       }
-    } catch (err) {
-      setError(err.message || "Materialize failed");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Materialize failed");
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
   async function confirmCancel() {
     if (!cancelDialog) return;
-    setBusy(true);
+    if (!tryBegin()) return;
     try {
-      await request(
-        "/duties/" + encodeURIComponent(cancelDialog.id) + "/cancel",
-        { method: "POST", body: { reason: cancelDialog.reason || "" } },
-        auth.session
-      );
+      await dutiesClient.cancel(sessionOrNull(auth), cancelDialog.id, {
+        reason: cancelDialog.reason || ""
+      });
       setCancelDialog(null);
       await reload();
       setMessage("Duty cancelled — diary rows removed when safe");
-    } catch (err) {
-      setError(err.message || "Cancel failed");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Cancel failed");
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
   async function confirmHardDelete() {
     if (!deleteDialog) return;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
-      await request(
-        "/duties/" + encodeURIComponent(deleteDialog.id) + "?hard=1",
-        { method: "DELETE" },
-        auth.session
-      );
+      await dutiesClient.hardDelete(sessionOrNull(auth), deleteDialog.id);
       setDeleteDialog(null);
       await reload();
       setMessage("Duty deleted — diary rows removed");
-    } catch (err) {
-      setError(err.message || "Delete failed");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Delete failed");
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
-  function diaryKey(dutyId, isoDate, employeeId) {
+  function diaryKey(dutyId: string, isoDate: string, employeeId: string) {
     return dutyId + "|" + isoDate + "|" + employeeId;
   }
 
-  function startEditDay(dutyId, entry) {
+  function startEditDay(dutyId: string, entry: DutyDiaryEntry) {
     const k = diaryKey(dutyId, entry.date, entry.employee_id);
     setDiaryEdits(function (cur) {
       const next = { ...cur };
@@ -1031,7 +1261,7 @@ export default function DutiesPage() {
     });
   }
 
-  function cancelEditDay(dutyId, entry) {
+  function cancelEditDay(dutyId: string, entry: DutyDiaryEntry) {
     const k = diaryKey(dutyId, entry.date, entry.employee_id);
     setDiaryEdits(function (cur) {
       const next = { ...cur };
@@ -1040,7 +1270,12 @@ export default function DutiesPage() {
     });
   }
 
-  function updateDayField(dutyId, entry, field, value) {
+  function updateDayField(
+    dutyId: string,
+    entry: DutyDiaryEntry,
+    field: keyof DiaryEditDraft,
+    value: string
+  ) {
     const k = diaryKey(dutyId, entry.date, entry.employee_id);
     setDiaryEdits(function (cur) {
       const next = { ...cur };
@@ -1049,27 +1284,20 @@ export default function DutiesPage() {
     });
   }
 
-  async function saveDayEdit(dutyId, entry) {
+  async function saveDayEdit(dutyId: string, entry: DutyDiaryEntry) {
     const k = diaryKey(dutyId, entry.date, entry.employee_id);
     const draft = diaryEdits[k] || {};
     const newEmp = draft.employee_id && draft.employee_id !== entry.employee_id ? draft.employee_id : undefined;
     setDiaryBusy(function (cur) { const n = { ...cur }; n[k] = true; return n; });
     try {
-      await request(
-        "/duties/" + encodeURIComponent(dutyId) + "/diary/" + encodeURIComponent(entry.date),
-        {
-          method: "PATCH",
-          body: {
-            employee_id: entry.employee_id,
-            new_employee_id: newEmp,
-            charge: draft.charge === "" ? undefined : Number(draft.charge),
-            payout: draft.payout === "" ? undefined : Number(draft.payout),
-            svc_updated_at: entry.svc_updated_at || undefined,
-            payout_updated_at: entry.payout_updated_at || undefined
-          }
-        },
-        auth.session
-      );
+      await dutiesClient.patchDiaryDay(sessionOrNull(auth), dutyId, entry.date, {
+        employee_id: entry.employee_id,
+        new_employee_id: newEmp,
+        charge: draft.charge === "" ? undefined : Number(draft.charge),
+        payout: draft.payout === "" ? undefined : Number(draft.payout),
+        svc_updated_at: entry.svc_updated_at || undefined,
+        payout_updated_at: entry.payout_updated_at || undefined
+      });
       cancelEditDay(dutyId, entry);
       await loadDiaryFor(dutyId);
       // If we reassigned a partner the server promotes the target into
@@ -1083,78 +1311,83 @@ export default function DutiesPage() {
         setFilterTotals(ft || null);
       }
       setMessage(newEmp ? "Day entry reassigned and saved (marked manual)" : "Day entry saved (marked manual — will resist next sync)");
-    } catch (err) {
-      setError(err.message || "Could not save day entry");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not save day entry");
     } finally {
       setDiaryBusy(function (cur) { const n = { ...cur }; delete n[k]; return n; });
     }
   }
 
-  async function clearDayManual(dutyId, entry) {
+  async function clearDayManual(dutyId: string, entry: DutyDiaryEntry) {
     const k = diaryKey(dutyId, entry.date, entry.employee_id);
     setDiaryBusy(function (cur) { const n = { ...cur }; n[k] = true; return n; });
     try {
-      await request(
-        "/duties/" + encodeURIComponent(dutyId) + "/diary/" + encodeURIComponent(entry.date),
-        {
-          method: "PATCH",
-          body: { employee_id: entry.employee_id, clear_manual: true }
-        },
-        auth.session
-      );
+      await dutiesClient.patchDiaryDay(sessionOrNull(auth), dutyId, entry.date, {
+        employee_id: entry.employee_id,
+        clear_manual: true
+      });
       await loadDiaryFor(dutyId);
       setMessage("Manual lock removed — next sync will reconcile this day");
-    } catch (err) {
-      setError(err.message || "Could not unlock day entry");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not unlock day entry");
     } finally {
       setDiaryBusy(function (cur) { const n = { ...cur }; delete n[k]; return n; });
     }
   }
 
-  async function deleteDay(dutyId, entry) {
-    if (!window.confirm("Remove diary entry for " + entry.date + "? The next sync will recreate it unless you shrink the duty's date range.")) return;
+  async function deleteDay(dutyId: string, entry: DutyDiaryEntry) {
+    const ok = await confirm({
+      title: "Remove diary entry?",
+      description:
+        "Remove diary entry for " +
+        entry.date +
+        "? This day will stay excluded from billing and payout until you edit the duty window.",
+      confirmLabel: "Remove",
+      tone: "danger"
+    });
+    if (!ok) return;
     const k = diaryKey(dutyId, entry.date, entry.employee_id);
     setDiaryBusy(function (cur) { const n = { ...cur }; n[k] = true; return n; });
     try {
-      await request(
-        "/duties/" + encodeURIComponent(dutyId) + "/diary/" + encodeURIComponent(entry.date) +
-          "?employee_id=" + encodeURIComponent(entry.employee_id),
-        { method: "DELETE" },
-        auth.session
+      await dutiesClient.deleteDiaryDay(
+        sessionOrNull(auth),
+        dutyId,
+        entry.date,
+        entry.employee_id
       );
       await loadDiaryFor(dutyId);
       if (filterPatient || filterEmployee) {
         const ft = await loadTotals(filterPatient, filterEmployee, viewMonth);
         setFilterTotals(ft || null);
       }
-      setMessage("Day entry removed");
-    } catch (err) {
-      setError(err.message || "Could not delete day entry");
+      setMessage("Day excluded — sync will not recreate this entry");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not delete day entry");
     } finally {
       setDiaryBusy(function (cur) { const n = { ...cur }; delete n[k]; return n; });
     }
   }
 
-  async function runDutyAction(id, action) {
-    setBusy(true);
+  async function runDutyAction(id: string, action: string) {
+    if (!tryBegin()) return;
     setError("");
     try {
-      await request("/duties/" + encodeURIComponent(id) + "/" + action, { method: "POST", body: {} }, auth.session);
+      await dutiesClient.runAction(sessionOrNull(auth), id, action);
       await reload();
       setMessage("Duty " + action.replace("-", " "));
-    } catch (actionError) {
-      setError(actionError.message || "Action failed");
+    } catch (actionError: unknown) {
+      setError(actionError instanceof Error ? actionError.message : "Action failed");
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
-  function shiftMonth(delta) {
+  function shiftMonth(delta: number) {
     const d = new Date(ym.year, ym.monthIndex + delta, 1);
     setViewMonth(monthKey(d));
   }
 
-  function dutiesOnDay(isoDay) {
+  function dutiesOnDay(isoDay: string) {
     return rows.filter(function (r) {
       return dutyTouchesDay(r, isoDay);
     });
@@ -1166,31 +1399,42 @@ export default function DutiesPage() {
    * partners show up), and falls back to the duty's primary employee
    * when nothing has been materialized yet.
    */
-  function partnersForDutyDay(row, isoDay) {
+  function partnersForDutyDay(
+    row: DutyListRow,
+    isoDay: string
+  ): Array<{ employee_id: string; partner: string; manual: boolean }> {
     const entries = diaryByDuty[row.id] || [];
     const dayEntries = entries.filter(function (e) { return e.date === isoDay; });
     // Always prefer the lookup name — older diary rows persisted the
     // employee_id in the `partner` column (server-side fn/mn/ln bug),
     // so we'd otherwise render "EMP640207047" forever on those rows.
-    function displayFor(empId, storedPartner) {
+    function displayFor(empId: string, storedPartner: string | undefined) {
       return partnerDisplayName(empId, storedPartner, employeeNameById);
     }
     if (dayEntries.length) {
       return dayEntries.map(function (e) {
+        const empId = e.employee_id || "";
         return {
-          employee_id: e.employee_id,
-          partner: displayFor(e.employee_id, e.partner),
+          employee_id: empId,
+          partner: displayFor(empId, e.partner),
           manual: !!e.manual
         };
       });
     }
     return [
       {
-        employee_id: row.employee_id,
-        partner: displayFor(row.employee_id, ""),
+        employee_id: row.employee_id || "",
+        partner: displayFor(row.employee_id || "", ""),
         manual: false
       }
     ];
+  }
+
+  function filterPartnersForActiveCaretaker<T extends { employee_id: string }>(items: T[]): T[] {
+    if (!filterEmployee) return items;
+    return items.filter(function (item) {
+      return item.employee_id === filterEmployee;
+    });
   }
 
   return (
@@ -1209,9 +1453,9 @@ export default function DutiesPage() {
             <fieldset
               className="stack"
               style={{ border: 0, padding: 0, margin: 0 }}
-              disabled={
+              disabled={Boolean(
                 !canWrite || (form.id && formPermissions && !formPermissions.canEdit)
-              }
+              )}
             >
             <form className="stack" onSubmit={handleSubmit}>
               <div className="grid-2">
@@ -1382,11 +1626,15 @@ export default function DutiesPage() {
                   </div>
                 ) : (
                   form.extra_partners.map(function (p, idx) {
+                    const partnerId = "duties-partner-" + p.row_id;
+                    const chargeId = "duties-partner-charge-" + p.row_id;
+                    const payoutId = "duties-partner-payout-" + p.row_id;
                     return (
-                      <div className="grid-2" key={idx} style={{ marginTop: 12 }}>
+                      <div className="grid-2" key={p.row_id} style={{ marginTop: 12 }}>
                         <div className="field">
-                          <label htmlFor="duties-partner-11">Partner</label>
-                          <select id="duties-partner-11"
+                          <label htmlFor={partnerId}>Partner</label>
+                          <select
+                            id={partnerId}
                             value={p.employee_id}
                             onChange={function (event) {
                               updateExtraPartner(idx, "employee_id", event.target.value);
@@ -1403,9 +1651,11 @@ export default function DutiesPage() {
                           </select>
                         </div>
                         <div className="field">
-                          <label htmlFor="duties-charge-payout-12">Charge / payout (₹)</label>
                           <div className="grid-2">
-                            <input id="duties-charge-payout-12"
+                            <div className="field">
+                              <label htmlFor={chargeId}>Charge (₹)</label>
+                            <input
+                              id={chargeId}
                               type="number"
                               placeholder="Charge"
                               value={p.charge_per_day}
@@ -1413,7 +1663,11 @@ export default function DutiesPage() {
                                 updateExtraPartner(idx, "charge_per_day", event.target.value);
                               }}
                             />
+                            </div>
+                            <div className="field">
+                              <label htmlFor={payoutId}>Payout (₹)</label>
                             <input
+                              id={payoutId}
                               type="number"
                               placeholder="Payout"
                               value={p.payout_per_day}
@@ -1421,6 +1675,7 @@ export default function DutiesPage() {
                                 updateExtraPartner(idx, "payout_per_day", event.target.value);
                               }}
                             />
+                            </div>
                           </div>
                         </div>
                         <button
@@ -1450,7 +1705,7 @@ export default function DutiesPage() {
               </label>
 
               <textarea
-                rows="2"
+                rows={2}
                 value={form.notes}
                 onChange={function (event) {
                   updateField("notes", event.target.value);
@@ -1466,11 +1721,11 @@ export default function DutiesPage() {
                 <button
                   className="button primary"
                   type="submit"
-                  disabled={
+                  disabled={Boolean(
                     busy ||
                     !canWrite ||
                     (form.id && formPermissions && !formPermissions.canEdit)
-                  }
+                  )}
                   title={
                     formPermissions && formPermissions.blockReasons
                       ? formPermissions.blockReasons.canEdit
@@ -1603,9 +1858,15 @@ export default function DutiesPage() {
                   >
                     <div style={{ fontWeight: 600 }}>{isoDay.slice(8)}</div>
                     {dayRows.length ? (() => {
-                      const chips = [];
+                      type DayChip = {
+                        row: DutyListRow;
+                        partner: { employee_id: string; partner: string; manual: boolean };
+                      };
+                      const chips: DayChip[] = [];
                       dayRows.forEach(function (row) {
-                        const partners = partnersForDutyDay(row, isoDay);
+                        const partners = filterPartnersForActiveCaretaker(
+                          partnersForDutyDay(row, isoDay)
+                        );
                         partners.forEach(function (p) {
                           chips.push({ row: row, partner: p });
                         });
@@ -1613,10 +1874,15 @@ export default function DutiesPage() {
                       // Dedupe chips so the same (patient, partner) pair only
                       // shows once per day even if both filters somehow overlap
                       // with extra_partners reassignments.
-                      const seen = {};
-                      const unique = [];
+                      const seen: Record<string, boolean> = {};
+                      const unique: DayChip[] = [];
                       chips.forEach(function (c) {
-                        const k = c.row.patient_id + "|" + c.partner.employee_id + "|" + c.row.shift_type;
+                        const k =
+                          (c.row.patient_id || "") +
+                          "|" +
+                          c.partner.employee_id +
+                          "|" +
+                          (c.row.shift_type || "");
                         if (seen[k]) return;
                         seen[k] = true;
                         unique.push(c);
@@ -1628,7 +1894,8 @@ export default function DutiesPage() {
                           {visible.map(function (c, ix) {
                             const chip = shiftChipStyle(c.row.shift_type);
                             const partnerName = c.partner.partner;
-                            const patientName = patientNameById[c.row.patient_id] || c.row.patient_id;
+                            const patientName =
+                              patientNameById[c.row.patient_id || ""] || c.row.patient_id || "";
                             // Chip text adapts to the active filter so the
                             // unique-per-day dimension is always emphasised.
                             let primary;
@@ -1705,7 +1972,9 @@ export default function DutiesPage() {
                   <div className="record-list">
                     {dayDuties.map(function (row) {
                       const allEntries = diaryByDuty[row.id] || [];
-                      const entriesForDay = allEntries.filter(function (e) { return e.date === selectedDay; });
+                      const entriesForDay = filterPartnersForActiveCaretaker(
+                        allEntries.filter(function (e) { return e.date === selectedDay; })
+                      );
                       // Use the same display fallback as the chips so old
                       // diary rows (with partner = employee_id) still render
                       // as the staff's real name.
@@ -1718,12 +1987,16 @@ export default function DutiesPage() {
                               );
                             })
                             .join(" + ")
-                        : partnerDisplayName(row.employee_id, "", employeeNameById);
+                        : filterEmployee
+                          ? partnerDisplayName(filterEmployee, "", employeeNameById)
+                          : partnerDisplayName(row.employee_id || "", "", employeeNameById);
                       return (
                         <div className="record-card" key={row.id}>
                           <div className="button-row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
                             <div>
-                              <h3>{patientNameById[row.patient_id] || row.patient_id}</h3>
+                              <h3>
+                                {patientNameById[row.patient_id || ""] || row.patient_id}
+                              </h3>
                               <div className="record-meta">
                                 <span>{dayPartnerNames}</span>
                                 <span>{row.service_name || row.service_type}</span>
@@ -1781,8 +2054,14 @@ export default function DutiesPage() {
                                       : "open-ended";
                                     setDeleteDialog({
                                       id: row.id,
-                                      patient: patientNameById[row.patient_id] || row.patient_id,
-                                      employee: employeeNameById[row.employee_id] || row.employee_id || "—",
+                                      patient:
+                                        patientNameById[row.patient_id || ""] ||
+                                        row.patient_id ||
+                                        "",
+                                      employee:
+                                        employeeNameById[row.employee_id || ""] ||
+                                        row.employee_id ||
+                                        "—",
                                       range: istDayKey(row.start_at) + " → " + endLabel
                                     });
                                   }}
@@ -1983,15 +2262,22 @@ export default function DutiesPage() {
                 )}
               </div>
             ) : loading ? (
-              <div className="mini-muted" style={{ marginTop: 16 }}>Loading…</div>
+              <div className="mini-muted" style={{ marginTop: 16 }} role="status" aria-live="polite">
+                Loading…
+              </div>
             ) : null}
           </ModuleShell>
         </div>
 
         {previewDialog && previewDialog.data ? (
-          <div className="modal-backdrop" role="presentation">
-            <div className="modal-card" style={{ maxWidth: 720, width: "95%" }}>
-              <h3>Sync diary preview</h3>
+          <ModalDialog
+            open
+            onClose={function () { setPreviewDialog(null); }}
+            lockClose={busy}
+            className="modal-card"
+            title="Sync diary preview"
+            style={{ maxWidth: 720, width: "95%" }}
+          >
               <p className="mini-muted">
                 Create {previewDialog.data.would_create_svc || 0} / update{" "}
                 {previewDialog.data.would_update_svc || 0} patient charge(s) · create{" "}
@@ -2045,18 +2331,21 @@ export default function DutiesPage() {
                   Cancel
                 </button>
               </div>
-            </div>
-          </div>
+          </ModalDialog>
         ) : null}
 
         {overlapDialog ? (
-          <div className="modal-backdrop" role="presentation">
-            <div className="modal-card">
-              <h3>
-                {overlapDialog.kind === "patient"
-                  ? "Patient has overlapping duty"
-                  : "Staff has overlapping duty"}
-              </h3>
+          <ModalDialog
+            open
+            onClose={function () { setOverlapDialog(null); }}
+            lockClose={busy}
+            className="modal-card"
+            title={
+              overlapDialog.kind === "patient"
+                ? "Patient has overlapping duty"
+                : "Staff has overlapping duty"
+            }
+          >
               <p>{overlapDialog.message}</p>
               <p className="mini-muted">
                 {overlapDialog.kind === "patient"
@@ -2071,14 +2360,31 @@ export default function DutiesPage() {
                   Back
                 </button>
               </div>
-            </div>
-          </div>
+          </ModalDialog>
         ) : null}
 
         {cancelDialog ? (
-          <div className="modal-backdrop" role="presentation">
-            <div className="modal-card">
-              <h3>Cancel duty</h3>
+          <ModalDialog
+            open
+            onClose={function () { setCancelDialog(null); }}
+            onRequestClose={function () {
+              if (cancelDialog.reason.trim()) {
+                void confirm({
+                  title: "Discard reason?",
+                  description: "Closing will lose the cancel reason you typed.",
+                  confirmLabel: "Discard",
+                  tone: "danger"
+                }).then(function (ok) {
+                  if (ok) setCancelDialog(null);
+                });
+                return;
+              }
+              setCancelDialog(null);
+            }}
+            lockClose={busy}
+            className="modal-card"
+            title="Cancel duty"
+          >
               <div className="field">
                 <label htmlFor="duties-reason-optional-17">Reason (optional)</label>
                 <input id="duties-reason-optional-17"
@@ -2096,14 +2402,17 @@ export default function DutiesPage() {
                   Back
                 </button>
               </div>
-            </div>
-          </div>
+          </ModalDialog>
         ) : null}
 
         {deleteDialog ? (
-          <div className="modal-backdrop" role="presentation">
-            <div className="modal-card">
-              <h3>Delete duty permanently?</h3>
+          <ModalDialog
+            open
+            onClose={function () { setDeleteDialog(null); }}
+            lockClose={busy}
+            className="modal-card"
+            title="Delete duty permanently?"
+          >
               <p>
                 <strong>{deleteDialog.patient}</strong> · {deleteDialog.employee}
               </p>
@@ -2120,8 +2429,7 @@ export default function DutiesPage() {
                   Back
                 </button>
               </div>
-            </div>
-          </div>
+          </ModalDialog>
         ) : null}
       </AppShell>
     </AuthGuard>

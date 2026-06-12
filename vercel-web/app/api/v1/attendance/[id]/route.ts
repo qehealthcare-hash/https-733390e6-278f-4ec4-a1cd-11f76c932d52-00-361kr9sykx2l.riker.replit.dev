@@ -29,8 +29,9 @@ export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }
 
 export const PUT = PATCH;
 
-export const DELETE = withAuth<Params>(async (_req, { params, actor }) => {
+export const DELETE = withAuth<Params>(async (req, { params, actor }) => {
   requireRole(actor, [...ATTENDANCE_DELETE_ROLES]);
-  const result = await attendanceService.remove(params.id, { actor });
+  const body = await parseJsonBody(req).catch(() => ({}));
+  const result = await attendanceService.remove(params.id, { actor }, body);
   return respond(result);
 });

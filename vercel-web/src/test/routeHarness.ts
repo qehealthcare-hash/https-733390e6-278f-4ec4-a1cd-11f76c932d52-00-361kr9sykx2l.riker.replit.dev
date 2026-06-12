@@ -255,11 +255,13 @@ export function buildSupabaseMock(): {
     // the handler runs and is later UPDATEd with the final response/status.
     // The chain tracks filter state across .select/.eq/.gt so findCached,
     // tryReservePending and completePending all share one mock.
-    let mode: "select" | "update" | null = null;
+    let mode: "select" | "update" | "delete" | null = null;
     let pendingKey: string | null = null;
     let pendingActor: string | null = null;
     let statusEq: number | null = null;
     let statusGt: number | null = null;
+    let responseIsNull = false;
+    let createdBefore: string | null = null;
     let updateValues: Record<string, unknown> = {};
 
     const chain: Record<string, unknown> = {
@@ -278,6 +280,18 @@ export function buildSupabaseMock(): {
         return chain;
       },
       gte: () => chain,
+      lt: (column: string, value: unknown) => {
+        if (column === "created_at") createdBefore = String(value);
+        return chain;
+      },
+      is: (column: string, value: unknown) => {
+        if (column === "response" && value === null) responseIsNull = true;
+        return chain;
+      },
+      delete: () => {
+        mode = "delete";
+        return chain;
+      },
       maybeSingle: async () => {
         if (!pendingKey || !pendingActor) return { data: null, error: null };
         const hit = idempotencyStore.get(`${pendingKey}|${pendingActor}`);
@@ -322,6 +336,14 @@ export function buildSupabaseMock(): {
         return chain;
       },
       then: (resolve: (v: unknown) => unknown) => {
+        if (mode === "delete") {
+          for (const [storeKey, entry] of idempotencyStore.entries()) {
+            if (statusEq !== null && entry.status !== statusEq) continue;
+            if (responseIsNull && entry.response !== null) continue;
+            if (createdBefore && entry.createdAt >= createdBefore) continue;
+            idempotencyStore.delete(storeKey);
+          }
+        }
         // Awaiting the chain after .update().eq().eq().eq() applies the update
         // if the (key, actor, status?) filter matches the stored entry.
         if (mode === "update" && pendingKey && pendingActor) {

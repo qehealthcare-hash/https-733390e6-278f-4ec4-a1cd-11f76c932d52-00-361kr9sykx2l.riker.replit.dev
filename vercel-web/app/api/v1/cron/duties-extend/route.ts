@@ -1,10 +1,13 @@
 import type { NextRequest } from "next/server";
 import { withoutAuth } from "@/lib/api/handler";
 import { timingSafeEqualString } from "@/lib/api/security";
+import { withIdempotency } from "@/lib/api/idempotency";
+import type { ActorContext } from "@/lib/api/auth";
 import { dutyService } from "@/services/dutyService";
 import { respond } from "@/lib/api/apiResultBridge";
 import { failure, success } from "@/utils/apiResponse";
 import { ErrorCodes } from "@/types/common";
+import { crmTodayIso } from "@/utils/crmToday";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,25 +20,11 @@ export const dynamic = "force-dynamic";
  * payouts for every SCHEDULED / IN_PROGRESS duty whose patient still has
  * an Active bill, so open-ended duties keep accruing without operator
  * action. Closed bills are skipped by the materializer itself.
- *
- * Auth: Vercel sets the `Authorization: Bearer <CRON_SECRET>` header on
- * cron invocations. We accept either:
- *   - that header (when CRON_SECRET is set), or
- *   - the legacy `x-cron-secret` header used by manual calls in staging.
- *
- * Returns the canonical `{ success, data?, error?, code? }` envelope via
- * `respond()` so cron monitoring sees a uniform shape (no thrown
- * exceptions surfacing as bare HTTP 500s).
  */
 export const GET = withoutAuth(async (req: NextRequest) => {
   const ranAt = new Date().toISOString();
   const secret = process.env.CRON_SECRET || process.env.DUTY_CRON_SECRET || "";
 
-  // Refuse to run unauthenticated in EVERY environment. Previously, when the
-  // secret was missing outside production the route ran anonymously with a
-  // synthetic Admin actor (RLS-bypassing service-role client) — anyone able
-  // to hit a preview deployment URL could trigger payout / duty-day writes
-  // against the shared Supabase project. Fail-closed everywhere.
   if (!secret) {
     return respond(
       failure(
@@ -46,24 +35,12 @@ export const GET = withoutAuth(async (req: NextRequest) => {
     );
   }
 
-  // Only accept the Vercel-standard Authorization: Bearer header. The legacy
-  // x-cron-secret header has been removed: it doubled the attack surface and
-  // is easier to leak in proxy logs.
   const header = req.headers.get("authorization") || "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
   if (!bearer || !timingSafeEqualString(bearer, secret)) {
     return respond(failure("Cron token missing or invalid", ErrorCodes.forbidden));
   }
 
-  // P1-9: bind the cron actor to a real service-account JWT. The previous
-  // empty accessToken made resolveClient() silently fall back to the service-
-  // role client — an *implicit* bypass that was impossible to audit. We now
-  // explicitly load SUPABASE_SERVICE_ROLE_KEY (which is itself a signed JWT
-  // issued by Supabase Auth for the service_role); resolveClient() pipes that
-  // straight through to userClient(token), so PostgREST sees a real Bearer
-  // service-role JWT, log lines show `role=service_role`, and every RPC
-  // _hh_require_role() gate runs against an attributable principal instead
-  // of "no header at all". If the JWT is missing we fail-closed.
   const serviceJwt =
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
     process.env.SUPABASE_SERVICE_KEY ||
@@ -77,32 +54,71 @@ export const GET = withoutAuth(async (req: NextRequest) => {
       )
     );
   }
-  const actor = {
+
+  const actor: ActorContext = {
+    userId: "cron",
     email: "cron@hominal.system",
+    username: "cron",
     role: "Admin",
     accessToken: serviceJwt
   };
-  const result = await dutyService.extendActive({ actor });
-  if (!result.success) {
-    return respond(
-      failure(result.error || result.code || "extendActive failed", ErrorCodes.internal, {
-        ranAt,
-        ...(typeof result.details === "object" && result.details !== null
-          ? (result.details as Record<string, unknown>)
-          : {})
-      })
-    );
-  }
 
-  const errCount = result.data?.errors?.length ?? 0;
-  if (errCount > 0) {
-    return respond(
-      failure(`extendActive finished with ${errCount} duty error(s)`, ErrorCodes.internal, {
+  return withIdempotency(
+    req,
+    actor,
+    {
+      route: `cron/duties-extend:${crmTodayIso()}:${ranAt.slice(0, 13)}:${req.nextUrl.searchParams.get("limit") || 500}`,
+      ttlMs: 5 * 60 * 1000
+    },
+    async function runCronExtend() {
+      const limit = Math.max(
+        1,
+        Math.min(1000, Number(req.nextUrl.searchParams.get("limit") || 500) || 500)
+      );
+      const from = crmTodayIso();
+      const to = crmTodayIso();
+      const result = await dutyService.bulkExtendDue(
+        { actor },
+        { from, to, limit }
+      );
+      if (!result.success) {
+        return respond(
+          failure(result.error || result.code || "extendActive failed", ErrorCodes.internal, {
+            ranAt,
+            ...(typeof result.details === "object" && result.details !== null
+              ? (result.details as Record<string, unknown>)
+              : {})
+          })
+        );
+      }
+
+      const ledger = await dutyService.syncDutyAttendancePayoutLedger(
+        { actor },
+        { from, to }
+      );
+      if (!ledger.success) {
+        return respond(
+          failure(
+            ledger.error || ledger.code || "duty ledger reconciliation failed",
+            ErrorCodes.internal,
+            {
+              ranAt,
+              materialized: result.data,
+              ...(typeof ledger.details === "object" && ledger.details !== null
+                ? (ledger.details as Record<string, unknown>)
+                : {})
+            }
+          )
+        );
+      }
+
+      return respond(success({
+        ok: true,
         summary: result.data,
+        ledger: ledger.data,
+        error: null,
         ranAt
-      })
-    );
-  }
-
-  return respond(success({ ok: true, summary: result.data, error: null, ranAt }));
+      }));
+    }
+  );
 });

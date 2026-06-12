@@ -7,7 +7,12 @@ import {
   buildSvcEntryRow,
   parseDutyDiaryRemarks,
   expectedDiarySlotKeys,
-  diarySlotKey
+  diarySlotKey,
+  findDutyLedgerRows,
+  normalizeExcludedDays,
+  addExcludedDaySlot,
+  excludedDaySet,
+  isDayExcluded
 } from "@/business/dutyDiaryRules";
 
 describe("dutyDiaryRules", () => {
@@ -83,6 +88,28 @@ describe("dutyDiaryRules", () => {
     expect(parseDutyDiaryRemarks("legacy")).toBeNull();
   });
 
+  it("flags duty-calendar rows that Billing/Payout must not replace", () => {
+    const rows = [
+      { remarks: "duty:D1:2026-05-01:EMP1" },
+      { remarks: "" },
+      { remarks: "manual adjustment" },
+      { remarks: "duty:D2:2026-05-02:EMP2:m" },
+      { remarks: null }
+    ];
+    const flagged = findDutyLedgerRows(rows);
+    expect(flagged).toHaveLength(2);
+    expect(flagged.map((r) => r.remarks)).toEqual([
+      "duty:D1:2026-05-01:EMP1",
+      "duty:D2:2026-05-02:EMP2:m"
+    ]);
+  });
+
+  it("returns no duty rows for empty / non-duty input", () => {
+    expect(findDutyLedgerRows([])).toEqual([]);
+    expect(findDutyLedgerRows(null)).toEqual([]);
+    expect(findDutyLedgerRows([{ remarks: "legacy" }, { remarks: "" }])).toEqual([]);
+  });
+
   it("builds expected slot keys for window (IST)", () => {
     // 10:00 UTC May 1 = 15:30 IST May 1; 10:00 UTC May 2 = 15:30 IST May 2.
     const keys = expectedDiarySlotKeys(
@@ -93,5 +120,27 @@ describe("dutyDiaryRules", () => {
     expect(keys.has(diarySlotKey("2026-05-01", "EMP1"))).toBe(true);
     expect(keys.has(diarySlotKey("2026-05-02", "EMP2"))).toBe(true);
     expect(keys.size).toBe(4);
+  });
+
+  it("omits operator-excluded slots from expected keys", () => {
+    const excluded = excludedDaySet(normalizeExcludedDays([{ date: "2026-05-01", employee_id: "EMP1" }]));
+    const keys = expectedDiarySlotKeys(
+      "2026-05-01T10:00:00Z",
+      "2026-05-02T10:00:00Z",
+      [{ employee_id: "EMP1" }],
+      { excluded }
+    );
+    expect(keys.has(diarySlotKey("2026-05-01", "EMP1"))).toBe(false);
+    expect(keys.has(diarySlotKey("2026-05-02", "EMP1"))).toBe(true);
+    expect(isDayExcluded(excluded, "2026-05-01", "EMP1")).toBe(true);
+  });
+
+  it("dedupes excluded day slots on normalize/add", () => {
+    const slots = addExcludedDaySlot(
+      normalizeExcludedDays([{ date: "2026-05-26", employee_id: "EMP9" }]),
+      "2026-05-26",
+      "EMP9"
+    );
+    expect(slots).toEqual([{ date: "2026-05-26", employee_id: "EMP9" }]);
   });
 });

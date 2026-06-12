@@ -6,15 +6,18 @@ import {
   insertRow,
   updateRow,
   deleteRow,
-  resolveClient
+  resolveClient,
+  callRpc
 } from "@/database/baseRepository";
 import { runListQuery, runQuery } from "@/database/supabaseClient";
 import { sanitizeSearchTerm } from "@/utils/searchTerm";
+import { DUTY_INACTIVE_STATUS_FILTER } from "@/business/dutyRules";
 
 const TABLE = "hh_duties";
 const SVC = "hh_svc_entries";
 const PAYOUT_CHARGES = "hh_payout_charges";
 const RECEIPTS = "hh_receipts";
+const BILLINGS = "hh_billings";
 const SCOPE = "dutyRepository";
 
 export interface DutyListFilters extends ListQuery {
@@ -24,6 +27,71 @@ export interface DutyListFilters extends ListQuery {
   from?: string;
   to?: string;
   status?: string;
+}
+
+export interface BulkDutyMaterializeResult {
+  ok: boolean;
+  from: string;
+  to: string;
+  candidate_rows: number;
+  created_svc: number;
+  created_payout: number;
+}
+
+export interface DutyLedgerSyncResult {
+  ok: boolean;
+  attendance?: {
+    ok?: boolean;
+    from?: string;
+    to?: string;
+    inserted_attendance?: number;
+  };
+  payout?: {
+    ok?: boolean;
+    from?: string;
+    to?: string;
+    updated_payouts?: number;
+    inserted_payouts?: number;
+    payout_gross_mismatch_groups?: number;
+    attendance_charge_gap_groups?: number;
+    attendance_duplicate_groups?: number;
+  };
+}
+
+export interface DutyMasterReconciliationReport {
+  ok: boolean;
+  from: string;
+  to: string;
+  rules: string[];
+  summary: {
+    expected_duty_day_rows: number;
+    expected_bill_amount: number;
+    expected_payout_amount: number;
+    service_rows: number;
+    service_amount: number;
+    payout_rows: number;
+    payout_amount: number;
+    missing_service_rows: number;
+    missing_payout_rows: number;
+    duplicate_service_groups: number;
+    duplicate_payout_groups: number;
+    orphan_service_rows: number;
+    orphan_payout_rows: number;
+    patient_billing_mismatch_groups: number;
+    employee_payout_mismatch_groups: number;
+  };
+  patient_billing_mismatches: Array<{
+    patient_id: string;
+    expected_amount: number;
+    actual_amount: number;
+    difference: number;
+  }>;
+  employee_payout_mismatches: Array<{
+    employee_id: string;
+    expected_amount: number;
+    actual_amount: number;
+    difference: number;
+  }>;
 }
 
 export const dutyRepository = {
@@ -55,7 +123,12 @@ export const dutyRepository = {
         // so they keep appearing on every month after their start.
         if (filters.to) query = query.lte("start_at", filters.to);
         if (filters.from) query = query.gte("end_at", filters.from);
-        if (filters.status) query = query.eq("status", filters.status);
+        if (filters.status) {
+          query = query.eq("status", filters.status);
+        } else {
+          // Calendar default: hide soft-deleted duties unless explicitly requested.
+          query = query.neq("status", "DELETED");
+        }
         if (filters.q) {
           const term = sanitizeSearchTerm(filters.q);
           if (term) {
@@ -87,7 +160,7 @@ export const dutyRepository = {
           .from(TABLE)
           .select("id, employee_id, patient_id, start_at, end_at, status")
           .eq("employee_id", employeeId)
-          .not("status", "in", "(CANCELLED,NO_SHOW)")
+          .not("status", "in", DUTY_INACTIVE_STATUS_FILTER)
           .lt("start_at", endAt)
           .gt("end_at", startAt),
       `${SCOPE}.findOverlapping`
@@ -112,7 +185,7 @@ export const dutyRepository = {
           .from(TABLE)
           .select("id, employee_id, patient_id, start_at, end_at, status")
           .eq("patient_id", patientId)
-          .not("status", "in", "(CANCELLED,NO_SHOW)")
+          .not("status", "in", DUTY_INACTIVE_STATUS_FILTER)
           .lt("start_at", endAt)
           .gt("end_at", startAt),
       `${SCOPE}.findOverlappingForPatient`
@@ -136,6 +209,28 @@ export const dutyRepository = {
     );
   },
 
+  /**
+   * Every non-cancelled duty for a patient — used when reconciling the
+   * billing ledger to the duty calendar. Includes COMPLETED duties so a
+   * backfill can create svc_entries for days the calendar already paints
+   * (the nightly cron only walks SCHEDULED / IN_PROGRESS duties).
+   */
+  async findMaterializableByPatient(
+    patientId: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const db = resolveClient(opts);
+    return runListQuery(
+      () =>
+        db
+          .from(TABLE)
+          .select("*")
+          .eq("patient_id", patientId)
+          .not("status", "in", DUTY_INACTIVE_STATUS_FILTER),
+      `${SCOPE}.findMaterializableByPatient`
+    );
+  },
+
   /** Scheduled / in-progress duties across all patients — used by daily extend cron. */
   async findActive(opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
     const db = resolveClient(opts);
@@ -146,6 +241,142 @@ export const dutyRepository = {
           .select("*")
           .in("status", ["SCHEDULED", "IN_PROGRESS"]),
       `${SCOPE}.findActive`
+    );
+  },
+
+  /**
+   * Active duties that still need a ledger row for `today` (YYYY-MM-DD).
+   * Cron uses this instead of scanning every active duty, which kept the
+   * production sync request open too long on busy days.
+   */
+  async findActiveNeedingExtension(
+    today: string,
+    limit: number,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(today) ? today : new Date().toISOString().slice(0, 10);
+    const capped = Math.max(1, Math.min(50, Math.floor(Number(limit) || 20)));
+    const nowIso = `${day}T23:59:59.999Z`;
+    const db = resolveClient(opts);
+    const activeBills = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(BILLINGS)
+          .select("patient_id")
+          .eq("status", "Active")
+          .limit(1000),
+      `${SCOPE}.findActiveNeedingExtension.activeBills`
+    );
+    if (!activeBills.success) return activeBills;
+    const activePatientIds = Array.from(
+      new Set(
+        (activeBills.data || [])
+          .map((row) => String(row.patient_id || "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (activePatientIds.length === 0) {
+      return { success: true, data: [] };
+    }
+
+    const active = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(TABLE)
+          .select("*")
+          .in("status", ["SCHEDULED", "IN_PROGRESS"])
+          .in("patient_id", activePatientIds)
+          .lte("start_at", nowIso)
+          .order("start_at", { ascending: true })
+          .limit(250),
+      `${SCOPE}.findActiveNeedingExtension.active`
+    );
+    if (!active.success) return active;
+
+    const todayRows = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(SVC)
+          .select("remarks")
+          .like("remarks", `duty:%:${day}:%`)
+          .limit(1000),
+      `${SCOPE}.findActiveNeedingExtension.todayRows`
+    );
+    if (!todayRows.success) return todayRows;
+
+    const materializedIds = new Set(
+      (todayRows.data || [])
+        .map((row) => String(row.remarks || "").split(":")[1] || "")
+        .filter(Boolean)
+    );
+    return {
+      success: true,
+      data: (active.data || [])
+        .filter((row) => !materializedIds.has(String(row.id || "")))
+        .slice(0, capped)
+    };
+  },
+
+  bulkMaterializeDueDutyDays(
+    from: string,
+    to: string,
+    limit: number,
+    actor: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<BulkDutyMaterializeResult | null>> {
+    const fromDay = /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : new Date().toISOString().slice(0, 10);
+    const toDay = /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : fromDay;
+    const capped = Math.max(1, Math.min(1000, Math.floor(Number(limit) || 500)));
+    return callRpc<BulkDutyMaterializeResult>(
+      "hominal_materialize_due_duty_days",
+      {
+        p_from: fromDay,
+        p_to: toDay,
+        p_limit: capped,
+        p_actor: actor || "cron@hominal.system"
+      },
+      SCOPE,
+      opts
+    );
+  },
+
+  syncDutyAttendancePayoutLedger(
+    from: string,
+    to: string,
+    actor: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<DutyLedgerSyncResult | null>> {
+    const fromDay = /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : new Date().toISOString().slice(0, 10);
+    const toDay = /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : fromDay;
+    return callRpc<DutyLedgerSyncResult>(
+      "hominal_sync_duty_attendance_payout",
+      {
+        p_from: fromDay,
+        p_to: toDay,
+        p_actor: actor || "cron@hominal.system"
+      },
+      SCOPE,
+      opts
+    );
+  },
+
+  dutyMasterReconciliationReport(
+    from: string,
+    to: string,
+    actor: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<DutyMasterReconciliationReport | null>> {
+    const fromDay = /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : new Date().toISOString().slice(0, 10);
+    const toDay = /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : fromDay;
+    return callRpc<DutyMasterReconciliationReport>(
+      "hominal_duty_reconciliation_report",
+      {
+        p_from: fromDay,
+        p_to: toDay,
+        p_actor: actor || "reconciliation@hominal.system"
+      },
+      SCOPE,
+      opts
     );
   },
 
@@ -167,7 +398,7 @@ export const dutyRepository = {
     if (!employeeId || !/^\d{4}-\d{2}$/.test(period)) {
       return { success: true, data: [] };
     }
-    const [y, mo] = period.split("-").map((n) => parseInt(n, 10));
+    const [y = 0, mo = 1] = period.split("-").map((n) => parseInt(n, 10));
     const startIso = `${period}-01T00:00:00.000Z`;
     const lastDate = new Date(Date.UTC(y, mo, 0)).getUTCDate();
     const endIso = `${period}-${String(lastDate).padStart(2, "0")}T23:59:59.999Z`;
@@ -180,7 +411,7 @@ export const dutyRepository = {
             "id, employee_id, patient_id, service_name, start_at, end_at, status, charge_per_day, payout_per_day"
           )
           .eq("employee_id", employeeId)
-          .not("status", "in", "(CANCELLED,NO_SHOW)")
+          .not("status", "in", DUTY_INACTIVE_STATUS_FILTER)
           .lte("start_at", endIso)
           .gte("end_at", startIso)
           .or("payout_per_day.is.null,payout_per_day.eq.0"),

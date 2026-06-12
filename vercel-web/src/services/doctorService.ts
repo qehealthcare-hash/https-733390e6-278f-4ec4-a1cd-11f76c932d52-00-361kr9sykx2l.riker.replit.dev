@@ -21,6 +21,7 @@ import {
   type DoctorCreateInput,
   type DoctorPatchInput
 } from "@/validation/doctorValidation";
+import { assertNotStale, requireExpectedVersion } from "@/business/concurrencyRules";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 
 const ALLOWED_FIELDS = [
@@ -81,7 +82,7 @@ function nextDoctorId(rows: { id: string }[]): string {
   rows.forEach((r) => {
     const m = String(r.id || "").match(/^DOC(\d+)$/);
     if (m) {
-      const n = parseInt(m[1], 10);
+      const n = parseInt(m[1] || "", 10);
       if (n > max) max = n;
     }
   });
@@ -153,13 +154,28 @@ export const doctorService = {
     input: unknown,
     ctx: ServiceContext
   ): Promise<ApiResult<DoctorRecord>> {
+    const existing = await doctorRepository.findById(id, { accessToken: ctx.accessToken });
+    if (!existing.success) return passFailure(existing);
+    if (!existing.data) return notFoundFailure("Doctor", id);
+
     const parsed = doctorPatchSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
+
+    const versionRequired = requireExpectedVersion("Doctor", parsed.data.expected_updated_at);
+    if (!versionRequired.success) return passFailure(versionRequired);
+
+    const stale = assertNotStale(
+      "Doctor",
+      existing.data.updated_at,
+      parsed.data.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
+
     const payload = buildPayload(parsed.data);
     if (Object.keys(payload).length === 0) {
       return failure("No editable fields supplied", ErrorCodes.badRequest);
     }
-    const before = await doctorRepository.findById(id, { accessToken: ctx.accessToken });
+    const before = existing;
     const updated = await doctorRepository.update(id, payload, { accessToken: ctx.accessToken });
     if (!updated.success) return passFailure(updated);
     const row = decorate(updated.data);

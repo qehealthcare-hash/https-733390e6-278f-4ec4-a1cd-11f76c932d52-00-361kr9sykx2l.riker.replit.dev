@@ -30,13 +30,8 @@ const ALLOWED_BUCKETS = new Set([
   "payout-proofs"
 ]);
 
-/**
- * Roles allowed to mint download URLs. Mirrors patient/employee read RBAC.
- *
- * `Accountant` is included so payout-proof images / PDFs (which only the
- * Accountant + Admin tier create) can also be opened back for audit.
- */
-const READ_ROLES = new Set([
+/** Roles allowed to mint signed upload URLs (patient/employee docs). */
+const UPLOAD_ROLES = new Set([
   "Admin",
   "Manager",
   "Accountant",
@@ -44,6 +39,17 @@ const READ_ROLES = new Set([
   "Executive",
   "Nurse"
 ]);
+
+/** Per-bucket download allow-list — Nurses must not fetch payout-proofs (P1-43). */
+const BUCKET_READ_ROLES: Record<string, Set<string>> = {
+  "patient-documents": UPLOAD_ROLES,
+  "employee-documents": UPLOAD_ROLES,
+  "payout-proofs": new Set(["Admin", "Manager", "Accountant"])
+};
+
+function getBucketReadRoles(bucket: string): Set<string> | undefined {
+  return BUCKET_READ_ROLES[bucket];
+}
 
 // P1-35: explicit MIME allow-list. Before this, callers could attach any
 // Content-Type to the signed upload — including text/html or
@@ -117,10 +123,7 @@ function buildObjectPath(
   fileName: string
 ): string {
   const today = crmTodayIso();
-  const uniq = (typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2) + Date.now().toString(36)
-  ).slice(0, 12);
+  const uniq = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
   // P1-36: <Resource>/<id>/<YYYY-MM-DD>/<uniq>-<safeName>. The prefix lets
   // future bucket policies grant read on `Patients/<thisPatient>/*` only.
   return `${resource}/${resourceId}/${today}/${uniq}-${sanitizeFileName(fileName)}`;
@@ -142,7 +145,7 @@ export const storageService = {
     ctx: ServiceContext
   ): Promise<ApiResult<SignedUploadUrl>> {
     const role = ctx.actor.role || "";
-    if (!READ_ROLES.has(role)) {
+    if (!UPLOAD_ROLES.has(role)) {
       return failure("Role not allowed to upload documents", ErrorCodes.forbidden);
     }
     const parsed = uploadSchema.safeParse(input);
@@ -179,13 +182,17 @@ export const storageService = {
     ctx: ServiceContext
   ): Promise<ApiResult<SignedDownloadUrl>> {
     const role = ctx.actor.role || "";
-    if (!READ_ROLES.has(role)) {
-      return failure("Role not allowed to download documents", ErrorCodes.forbidden);
-    }
-
     const parsed = downloadSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
     const { bucket, path, expires_in, download_as } = parsed.data;
+
+    const bucketRoles = getBucketReadRoles(bucket);
+    if (!bucketRoles || !bucketRoles.has(role)) {
+      return failure(
+        `Role '${role}' is not allowed to download from bucket '${bucket}'`,
+        ErrorCodes.forbidden
+      );
+    }
 
     if (!ALLOWED_BUCKETS.has(bucket)) {
       return failure(`Bucket '${bucket}' is not allowed`, ErrorCodes.badRequest);

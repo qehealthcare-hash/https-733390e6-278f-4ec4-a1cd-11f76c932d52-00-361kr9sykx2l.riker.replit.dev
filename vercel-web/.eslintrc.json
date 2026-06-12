@@ -131,7 +131,7 @@
             "paths": [
               {
                 "name": "@supabase/supabase-js",
-                "message": "Import Supabase only from `@/database/*` (server) or `lib/supabase/browser.js` (browser). UI and services must use repositories / API routes."
+                "message": "Import Supabase only from `@/database/*` (server) or `lib/supabase/browser` (browser). UI and services must use repositories / API routes."
               }
             ]
           }
@@ -139,9 +139,53 @@
       }
     },
     {
-      "files": ["lib/supabase/browser.js"],
+      "files": ["lib/supabase/browser.ts"],
       "rules": {
         "no-restricted-imports": "off"
+      }
+    },
+    {
+      "files": [
+        "app/**/*.{js,jsx,ts,tsx}",
+        "components/**/*.{js,jsx,ts,tsx}",
+        "lib/**/*.{js,jsx,ts,tsx}"
+      ],
+      "excludedFiles": [
+        "lib/clients/**",
+        "lib/api-client.ts",
+        "lib/uploads.ts",
+        "lib/offline-queue.ts",
+        "hooks/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@/lib/api-client",
+                "importNames": ["request", "requestWithOfflineFallback"],
+                "message": "Call domain APIs through `@/lib/clients` (e.g. patientsClient.save). Low-level HTTP belongs in lib/clients/* and hooks/use-realtime-resource.ts only."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["components/providers/auth-provider.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@supabase/supabase-js",
+                "message": "Import Supabase only from `@/database/*` (server) or `lib/supabase/browser` (browser). UI and services must use repositories / API routes."
+              }
+            ]
+          }
+        ]
       }
     }
   ]

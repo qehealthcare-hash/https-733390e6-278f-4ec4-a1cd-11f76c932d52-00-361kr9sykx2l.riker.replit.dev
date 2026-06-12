@@ -68,7 +68,6 @@ import {
   billingCloseRow,
   billingPauseRow,
   billingPeriodOf,
-  billingReopenRow,
   billingStatusRow,
   buildServiceEntryFromDuty,
   buildBillingPermissions,
@@ -83,7 +82,6 @@ import {
   canTransitionTo,
   computeBillingTotals,
   dutyInPeriod,
-  dutyRemarksKey,
   dutyServiceDate,
   isBillingClosed,
   periodFromServices,
@@ -108,6 +106,8 @@ import { patientRepository } from "@/database/patientRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import { dutyDayLedger } from "@/services/dutyDayLedger";
+import { findDutyLedgerRows } from "@/business/dutyDiaryRules";
+import { crmTodayIso } from "@/utils/crmToday";
 import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
@@ -165,11 +165,32 @@ function validateBillingBundleContract(bundle: BillingWithTotals): BillingWithTo
 export interface BillingServiceContext {
   actor: ServiceActor;
   accessToken?: string;
+  /**
+   * Expensive legacy safety net: when true, a billing detail read first
+   * materializes duty-calendar rows into billing/payout ledgers.
+   *
+   * Keep this opt-in. Opening a bill must be a fast read-only operation;
+   * duty mutations and the explicit /billings/duty-ledger-sync endpoint are
+   * the correct places to run the write-heavy reconciliation.
+   */
+  syncDutyLedgerOnRead?: boolean;
 }
 
 function dbAccess(ctx: BillingServiceContext) {
   const token = ctx.accessToken ?? ctx.actor.accessToken;
   return token ? { accessToken: token } : undefined;
+}
+
+function monthlyInvoiceDutyRange(period: string): { from: string; to: string } | null {
+  const range = monthRangeUTC(period);
+  const from = range.startISO.slice(0, 10);
+  const nextMonthStart = range.endISO.slice(0, 10);
+  const end = new Date(`${nextMonthStart}T00:00:00.000Z`);
+  end.setUTCDate(end.getUTCDate() - 1);
+  const monthEnd = end.toISOString().slice(0, 10);
+  const today = crmTodayIso();
+  if (from > today) return null;
+  return { from, to: monthEnd < today ? monthEnd : today };
 }
 
 export interface CapDutiesResult {
@@ -206,8 +227,7 @@ async function capLinkedDutiesOnBillingClose(
 ): Promise<CapDutiesResult> {
   const { isOpenEndedEndAt, openEndedSentinelFor } = await import("@/business/dutyRules");
   const { dutyDiaryService } = await import("@/services/dutyDiaryService");
-  const { crmTodayEndIso, crmTodayIso } = await import("@/utils/crmToday");
-  const todayDate = crmTodayIso();
+  const { crmTodayEndIso } = await import("@/utils/crmToday");
   const cappedEnd = crmTodayEndIso();
   const out: CapDutiesResult = {
     duties_capped: 0,
@@ -645,6 +665,72 @@ async function ensureActiveBilling(
   return { success: true, data: inserted.data };
 }
 
+export type DutyLedgerSyncSummary = {
+  billing_id: string;
+  processed: number;
+  created_svc: number;
+  created_payout: number;
+  updated_svc: number;
+  updated_payout: number;
+  deleted_svc: number;
+  deleted_payout: number;
+  skipped: number;
+  skipped_no_bill: number;
+  errors: { duty_id: string; error: string }[];
+};
+
+/**
+ * Reconcile every billable duty for a patient into the Active bill's
+ * svc_entries (and payout charges), then run the billing-level dedup RPC.
+ * This is the permanent fix for "calendar shows N days but billing shows
+ * N−k": the calendar paints the duty window, but rows only exist after
+ * materialize — cron may lag, COMPLETED duties are skipped by extendActive,
+ * and hominal_dedup_billing_diary used to delete rows past a capped end_at.
+ */
+async function syncDutyLedgerForPatient(
+  patientId: string,
+  ctx: BillingServiceContext
+): Promise<ApiResult<DutyLedgerSyncSummary>> {
+  const pid = String(patientId || "").trim();
+  if (!pid) {
+    return failure("patient_id is required", ErrorCodes.validation);
+  }
+  const access = dbAccess(ctx);
+  const bill = await billingRepository.findActiveByPatient(pid, access);
+  if (!bill.success) return passFailure(bill);
+  if (!bill.data) {
+    return failure("No active bill for patient — open billing first", ErrorCodes.business);
+  }
+  const billingId = String(bill.data.id);
+  const editGuard = canEditBilling(String(bill.data.status || ""));
+  if (!editGuard.success) {
+    return failure(editGuard.error || "Bill is locked", editGuard.code, editGuard.details);
+  }
+
+  const { dutyService } = await import("@/services/dutyService");
+  const extended = await dutyService.extendForPatient(pid, ctx);
+  if (!extended.success) return passFailure(extended);
+
+  const dedup = await billingRepository.dedupBillingDiaryRpc(billingId, access);
+  if (!dedup.success) {
+    return failure(dedup.error || "Diary dedup failed", dedup.code, dedup.details);
+  }
+
+  return success({
+    billing_id: billingId,
+    processed: extended.data?.processed ?? 0,
+    created_svc: extended.data?.created_svc ?? 0,
+    created_payout: extended.data?.created_payout ?? 0,
+    updated_svc: extended.data?.updated_svc ?? 0,
+    updated_payout: extended.data?.updated_payout ?? 0,
+    deleted_svc: extended.data?.deleted_svc ?? 0,
+    deleted_payout: extended.data?.deleted_payout ?? 0,
+    skipped: extended.data?.skipped ?? 0,
+    skipped_no_bill: extended.data?.skipped_no_bill ?? 0,
+    errors: extended.data?.errors ?? []
+  });
+}
+
 export const billingService = {
   // ─────────────────────────────────────────────────────────────────────
   // Reads
@@ -869,10 +955,40 @@ export const billingService = {
     });
   },
 
+  /**
+   * Materialize all billable duties for a patient into their Active bill,
+   * then dedup the billing diary. Use before showing billing or after
+   * editing the duty calendar so both views stay aligned.
+   */
+  async syncDutyLedgerForPatient(
+    patientId: string,
+    ctx: BillingServiceContext
+  ): Promise<ApiResult<DutyLedgerSyncSummary>> {
+    return syncDutyLedgerForPatient(patientId, ctx);
+  },
+
   async getById(
     id: string,
     ctx: BillingServiceContext
   ): Promise<ApiResult<BillingWithTotals>> {
+    const bill = await loadBilling(id, ctx);
+    if (!bill.success) {
+      return failure(bill.error || "Billing not found", bill.code, bill.details);
+    }
+    const patientId = String(bill.data.patient_id || "");
+    const billStatus = String(bill.data.status || "");
+    if (ctx.syncDutyLedgerOnRead && patientId && canEditBilling(billStatus).success) {
+      const synced = await syncDutyLedgerForPatient(patientId, ctx);
+      if (!synced.success) {
+        console.error("[billingService.getById] duty ledger sync failed", synced.error, synced.details);
+      } else if (
+        (synced.data?.created_svc ?? 0) > 0 ||
+        (synced.data?.errors?.length ?? 0) > 0
+      ) {
+        console.info("[billingService.getById] duty ledger sync", synced.data);
+      }
+    }
+
     const bundle = await loadBundleWithTotals(id, ctx);
     if (!bundle.success) {
       return failure(bundle.error || "Billing not found", bundle.code, bundle.details);
@@ -885,6 +1001,15 @@ export const billingService = {
     billingId: string,
     ctx: BillingServiceContext
   ): Promise<ApiResult<BillingWithTotals>> {
+    const bill = await loadBilling(billingId, ctx);
+    if (ctx.syncDutyLedgerOnRead && bill.success) {
+      const patientId = String(bill.data.patient_id || "");
+      if (patientId && canEditBilling(String(bill.data.status || "")).success) {
+        await syncDutyLedgerForPatient(patientId, ctx).catch((err) => {
+          console.error("[billingService.invoicePayload] duty ledger sync failed", err);
+        });
+      }
+    }
     const bundle = await loadBundleWithTotals(billingId, ctx);
     if (!bundle.success) {
       return failure(bundle.error || "Billing not found", bundle.code, bundle.details);
@@ -1034,6 +1159,13 @@ export const billingService = {
     const parsed = parseInput(billingCloseSchema, rawInput ?? {});
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as BillingCloseInput;
+
+    const stale = assertNotStale(
+      "Billing",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
 
     const bundle = await loadBundleWithTotals(id, ctx);
     if (!bundle.success) {
@@ -1258,6 +1390,13 @@ export const billingService = {
     const parsed = parseInput(billingReopenSchema, rawInput);
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as BillingReopenInput;
+
+    const stale = assertNotStale(
+      "Billing",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
 
     const guard = canReopenBilling(String(existing.data.status || ""));
     if (!guard.success) {
@@ -1559,7 +1698,7 @@ export const billingService = {
     const access = dbAccess(ctx);
 
     const start = `${input.period}-01T00:00:00.000Z`;
-    const [y, m] = input.period.split("-").map((n) => parseInt(n, 10));
+    const [y = 0, m = 1] = input.period.split("-").map((n) => parseInt(n, 10));
     const next = new Date(Date.UTC(y, m, 1));
     const end = next.toISOString();
 
@@ -1958,12 +2097,31 @@ export const billingService = {
     let toDate: string | null = input.to_date || null;
 
     if (input.kind === "MONTHLY") {
-      const svc = await billingRepository.listSvcByBilling(input.billing_id, access);
-      if (!svc.success) return passFailure(svc);
       const period = input.period as string;
-      const matching = (svc.data || []).filter(
-        (s) => String(s.date || "").slice(0, 7) === period
+      const dutyRange = monthlyInvoiceDutyRange(period);
+      if (dutyRange) {
+        const materialized = await dutyRepository.bulkMaterializeDueDutyDays(
+          dutyRange.from,
+          dutyRange.to,
+          1000,
+          ctx.actor.email || "billing@hominal.system",
+          access
+        );
+        if (!materialized.success) {
+          return failure(
+            materialized.error || "Could not sync duty calendar for this invoice month",
+            materialized.code || ErrorCodes.internal,
+            materialized.details
+          );
+        }
+      }
+      const svc = await billingRepository.listSvcByBillingAndPeriod(
+        input.billing_id,
+        period,
+        access
       );
+      if (!svc.success) return passFailure(svc);
+      const matching = svc.data || [];
       if (matching.length === 0) {
         return failure(
           `No service entries in ${period} for this bill — nothing to invoice`,
@@ -1982,8 +2140,8 @@ export const billingService = {
           total: Number(s.total || 0)
         }))
         .sort((a, b) => a.date.localeCompare(b.date));
-      if (!fromDate) fromDate = lines[0].date || null;
-      if (!toDate) toDate = lines[lines.length - 1].date || null;
+      if (!fromDate) fromDate = lines[0]?.date || null;
+      if (!toDate) toDate = lines[lines.length - 1]?.date || null;
     } else {
       lines = (input.manual_lines || []).map((l) => ({
         svc_entry_id: null,
@@ -2649,6 +2807,17 @@ export const billingService = {
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as ReplaceServiceEntriesInput;
     const access = dbAccess(ctx);
+
+    // Source-of-truth guard: duty-calendar materialized rows (remarks `duty:%`)
+    // are owned only by the Duty Calendar. Billing may not create/edit/delete
+    // them through a slice replace — those edits must happen in the Duties
+    // module so billing + payout stay in sync.
+    if (findDutyLedgerRows(input.rows).length > 0) {
+      return failure(
+        "Duty-calendar charges are read-only here. Edit the duty in the Duty Calendar instead.",
+        ErrorCodes.validation
+      );
+    }
 
     const billingId = String(input.svc_key).split("_")[0];
     if (!billingId) {

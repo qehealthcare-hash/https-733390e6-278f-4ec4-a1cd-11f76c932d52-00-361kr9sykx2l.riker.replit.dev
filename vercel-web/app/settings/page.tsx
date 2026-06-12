@@ -4,7 +4,7 @@
  * App settings (M11 Pass D). Helpers: `@/lib/settingsUi`.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
-import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { settingsClient } from "@/lib/clients";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   SETTINGS_DELETE_ROLES,
@@ -63,35 +63,42 @@ export default function SettingsPage() {
   }, [toast]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const accessToken = auth.session?.access_token ?? "";
+  const sessionRef = useRef(auth.session);
+  sessionRef.current = auth.session;
 
-  async function reload() {
-    if (!auth.session?.access_token || !canRead) return;
-    setLoading(true);
-    try {
-      const data = await request("/settings", null, auth.session);
-      setSettings(data || {});
-      const initialDrafts: Record<string, string> = {};
-      SETTINGS_KNOWN_KEYS.forEach(function (k) {
-        initialDrafts[k.key] = settingsValueToString(data ? data[k.key] : null);
-      });
-      Object.keys(data || {}).forEach(function (k) {
-        if (!(k in initialDrafts)) initialDrafts[k] = settingsValueToString(data[k]);
-      });
-      setDrafts(initialDrafts);
-      setError("");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load settings");
-      setSettings({});
-    } finally {
-      setLoading(false);
-    }
-  }
+  const reload = useCallback(
+    async function () {
+      const session = sessionRef.current;
+      if (!accessToken || !canRead || !session) return;
+      setLoading(true);
+      try {
+        const data = await settingsClient.get(session);
+        setSettings(data || {});
+        const initialDrafts: Record<string, string> = {};
+        SETTINGS_KNOWN_KEYS.forEach(function (k) {
+          initialDrafts[k.key] = settingsValueToString(data ? data[k.key] : null);
+        });
+        Object.keys(data || {}).forEach(function (k) {
+          if (!(k in initialDrafts)) initialDrafts[k] = settingsValueToString(data[k]);
+        });
+        setDrafts(initialDrafts);
+        setError("");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to load settings");
+        setSettings({});
+      } finally {
+        setLoading(false);
+      }
+    },
+    [accessToken, canRead, setError]
+  );
 
   useEffect(
     function () {
-      reload();
+      void reload();
     },
-    [auth.session?.access_token, canRead]
+    [reload]
   );
 
   async function saveKey(keyDef: SettingsKeyDef) {
@@ -100,14 +107,11 @@ export default function SettingsPage() {
     setError("");
     setMessage("");
     try {
-      const raw = drafts[keyDef.key] !== undefined ? drafts[keyDef.key] : "";
+      const settingKey = keyDef.key || "";
+      const raw = settingKey && drafts[settingKey] !== undefined ? drafts[settingKey] : "";
       const value = parseSettingsValue(raw, !!keyDef.json);
-      await requestWithOfflineFallback(
-        "/settings/" + encodeURIComponent(keyDef.key),
-        { method: "PUT", body: { value: value } },
-        auth.session
-      );
-      setMessage("Saved " + keyDef.key);
+      await settingsClient.saveKey(auth.session, settingKey, value);
+      setMessage("Saved " + settingKey);
       await reload();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not save");
@@ -128,7 +132,7 @@ export default function SettingsPage() {
     setBusy(true);
     setError("");
     try {
-      await requestWithOfflineFallback("/settings/" + encodeURIComponent(key), { method: "DELETE" }, auth.session);
+      await settingsClient.deleteKey(auth.session, key);
       setMessage("Deleted " + key);
       await reload();
     } catch (err: unknown) {
@@ -155,11 +159,7 @@ export default function SettingsPage() {
       } catch (err) {
         parsed = raw;
       }
-      await requestWithOfflineFallback(
-        "/settings/" + encodeURIComponent(customKey.trim()),
-        { method: "PUT", body: { value: parsed } },
-        auth.session
-      );
+      await settingsClient.saveKey(auth.session, customKey.trim(), parsed);
       setMessage("Saved " + customKey);
       setCustomKey("");
       setCustomValue("");

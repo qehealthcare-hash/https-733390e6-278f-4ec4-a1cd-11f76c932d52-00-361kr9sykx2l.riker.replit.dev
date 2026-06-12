@@ -19,7 +19,9 @@ export const userCreateSchema = z
   })
   .passthrough();
 
-export const userPatchSchema = userCreateSchema.partial();
+export const userPatchSchema = userCreateSchema.partial().extend({
+  expected_updated_at: z.string().trim().optional()
+});
 
 export type UserCreateInput = z.infer<typeof userCreateSchema>;
 export type UserPatchInput = z.infer<typeof userPatchSchema>;

@@ -170,8 +170,13 @@ export const inquiryRepository = {
    * Returns `{ patient_id, inquiry_id }`. The RPC is idempotent — re-running
    * it for a converted inquiry returns the same patient_id.
    */
-  convertRpc(inquiryId: string, opts?: DbAccess): Promise<ApiResult<{ patient_id?: string; inquiry_id?: string } | null>> {
-    return callRpc<{ patient_id?: string; inquiry_id?: string }>(
+  convertRpc(
+    inquiryId: string,
+    opts?: DbAccess
+  ): Promise<
+    ApiResult<{ patient_id?: string; inquiry_id?: string; already_converted?: boolean } | null>
+  > {
+    return callRpc<{ patient_id?: string; inquiry_id?: string; already_converted?: boolean }>(
       "hh_convert_inquiry_to_patient",
       { p_inquiry_id: inquiryId },
       SCOPE,

@@ -1,14 +1,17 @@
 import { z } from "zod";
 import { idSchema, isoDateTime, positiveInt, shiftTypeSchema } from "@/validation/commonValidation";
 
-/** Lifecycle states a duty can hold. */
-export const DUTY_STATUSES = [
+/** Statuses operators may set through the duty form / PATCH API. */
+export const DUTY_FORM_STATUSES = [
   "SCHEDULED",
   "IN_PROGRESS",
   "COMPLETED",
   "CANCELLED",
   "NO_SHOW"
 ] as const;
+
+/** All persisted duty statuses, including system-only DELETED (soft-delete). */
+export const DUTY_STATUSES = [...DUTY_FORM_STATUSES, "DELETED"] as const;
 export type DutyStatus = (typeof DUTY_STATUSES)[number];
 
 /** Shifts the CRM understands today (synced with `crm-options.shiftOptions`). */
@@ -43,7 +46,7 @@ export const dutySchema = z
      * the duty stops on this date even if the bill remains open.
      */
     end_at: isoDateTime.optional(),
-    status: z.enum(DUTY_STATUSES).default("SCHEDULED"),
+    status: z.enum(DUTY_FORM_STATUSES).default("SCHEDULED"),
     cancel_reason: z.string().optional().default(""),
     notes: z.string().optional().default(""),
     billing_id: z.string().optional().nullable(),
@@ -52,8 +55,8 @@ export const dutySchema = z
     payout_term: z.string().trim().max(40).optional().default("Daily"),
     extra_partners: z.array(dutyPartnerSchema).optional().default([]),
     expected_updated_at: z.string().optional(),
-    /** When true, expands date range into hh_svc_entries + hh_payout_charges after save. */
-    materialize: z.boolean().optional().default(false),
+    /** Expands date range into hh_svc_entries + hh_payout_charges after save. */
+    materialize: z.boolean().optional().default(true),
     /** Allow saving even if the staff has another overlapping duty (relief / partner share). */
     confirm_staff_overlap: z.boolean().optional().default(false),
     confirm_patient_overlap: z.boolean().optional().default(false)

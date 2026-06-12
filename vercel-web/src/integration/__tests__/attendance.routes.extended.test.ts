@@ -117,7 +117,7 @@ describe("DELETE /api/v1/attendance/[id]", () => {
     const req = makeRequest("DELETE", "/api/v1/attendance/ATT1");
     const res = await AttendanceByIdDelete(req, ctx({ id: "ATT1" }));
     await expectOkEnvelope(res);
-    expect(m.remove).toHaveBeenCalledWith("ATT1", expect.any(Object));
+    expect(m.remove).toHaveBeenCalledWith("ATT1", expect.any(Object), expect.anything());
   });
 });
 

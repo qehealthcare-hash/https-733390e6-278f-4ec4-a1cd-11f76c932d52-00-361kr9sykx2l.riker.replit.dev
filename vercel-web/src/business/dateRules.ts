@@ -15,7 +15,7 @@ export function monthRangeUTC(month?: string): MonthRange {
     const mo = String(now.getUTCMonth() + 1).padStart(2, "0");
     return monthRangeUTC(`${y}-${mo}`);
   }
-  const [y, mo] = m.split("-").map((n) => parseInt(n, 10));
+  const [y = 0, mo = 1] = m.split("-").map((n) => parseInt(n, 10));
   const start = new Date(Date.UTC(y, mo - 1, 1));
   const end = new Date(Date.UTC(y, mo, 1));
   return { period: m, startISO: start.toISOString(), endISO: end.toISOString() };

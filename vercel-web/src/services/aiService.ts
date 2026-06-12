@@ -27,6 +27,7 @@ import {
   askSchema,
   type AskInput
 } from "@/validation/aiValidation";
+import { sanitizeForLlm } from "@/services/aiPhiSanitizer";
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
@@ -192,11 +193,12 @@ export const aiService = {
     });
     if (!userMsg.success) return passFailure(userMsg);
 
+    const safeChunks = sanitizeForLlm(chunks);
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "system",
-        content: "CRM context (JSON, do not echo verbatim):\n" + JSON.stringify(chunks)
+        content: "CRM context (JSON, do not echo verbatim):\n" + JSON.stringify(safeChunks)
       },
       { role: "user", content: parsed.data.question }
     ];

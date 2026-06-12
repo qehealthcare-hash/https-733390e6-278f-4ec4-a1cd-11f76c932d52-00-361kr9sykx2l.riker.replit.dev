@@ -179,7 +179,12 @@ describe("patient lifecycle — create → edit → close → reopen → delete"
     patients[0].status = "Duty Closed";
     const edited = await patientService.update(
       id,
-      { name: "Asha Verma", phone: "9876543210", area: "Naranpura" },
+      {
+        name: "Asha Verma",
+        phone: "9876543210",
+        area: "Naranpura",
+        expected_updated_at: String(patients[0].updated_at || "")
+      },
       { actor: ACTOR }
     );
     expect(edited.success).toBe(true);
@@ -217,12 +222,32 @@ describe("patient lifecycle — create → edit → close → reopen → delete"
     const id = (created.data as { id: string }).id;
     const result = await patientService.update(
       id,
-      { name: "Status Guard", phone: "9876500009", status: "Closed" },
+      {
+        name: "Status Guard",
+        phone: "9876500009",
+        status: "Closed",
+        expected_updated_at: String(patients[0].updated_at || "")
+      },
       { actor: ACTOR }
     );
     expect(result.success).toBe(false);
     expect(result.code).toBe("business_rule_violation");
     expect(patients[0].status).toBe("Active");
+  });
+
+  it("rejects update when expected_updated_at is omitted", async () => {
+    const created = await patientService.create(
+      { name: "No Version", phone: "9876512346" },
+      { actor: ACTOR }
+    );
+    const id = (created.data as { id: string }).id;
+    const result = await patientService.update(
+      id,
+      { name: "No Version", phone: "9876512346" },
+      { actor: ACTOR }
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("validation_error");
   });
 
   it("returns conflict when expected_updated_at is stale", async () => {

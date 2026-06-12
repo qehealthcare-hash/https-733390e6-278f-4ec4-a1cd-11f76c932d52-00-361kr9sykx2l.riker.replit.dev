@@ -8,6 +8,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent
 } from "react";
@@ -18,12 +19,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
-import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { rolesClient, usersClient } from "@/lib/clients";
+import { apiErrorMessage, isApiConflictError } from "@/lib/apiClientErrors";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   CANONICAL_ROLES,
   ROLE_ADMIN_ROLES,
-  USER_ADMIN_ROLES,
   USER_CREATE_ROLES,
   USER_DEACTIVATE_ROLES,
   USER_UPDATE_ROLES
@@ -36,6 +37,7 @@ type UsersAuth = {
 
 interface AppUserRow {
   id: string;
+  updated_at?: string | null;
   username?: string;
   email?: string;
   phone?: string;
@@ -50,11 +52,16 @@ interface AppRoleRow {
 
 interface UserFormState {
   id: string;
+  expected_updated_at: string;
   username: string;
   email: string;
   phone: string;
   role: string;
   is_active: boolean;
+}
+
+function catalogExpectedUpdatedAt(row: { updated_at?: string | null }): string {
+  return row.updated_at ? String(row.updated_at) : "";
 }
 
 interface RoleFormState {
@@ -66,6 +73,8 @@ type ListEnvelope<T> = {
   rows?: T[];
 };
 
+const USER_LIST_CAP = 500;
+
 function roleInList(role: string | undefined | null, list: readonly string[]): boolean {
   const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
@@ -76,6 +85,7 @@ function roleInList(role: string | undefined | null, list: readonly string[]): b
 function emptyUserForm(): UserFormState {
   return {
     id: "",
+    expected_updated_at: "",
     username: "",
     email: "",
     phone: "",
@@ -93,7 +103,6 @@ function emptyRoleForm(): RoleFormState {
 
 export default function UsersPage() {
   const auth = useAuth() as unknown as UsersAuth;
-  const canAdminUsers = roleInList(auth.profile?.role, USER_ADMIN_ROLES);
   const canCreateUser = roleInList(auth.profile?.role, USER_CREATE_ROLES);
   const canUpdateUser = roleInList(auth.profile?.role, USER_UPDATE_ROLES);
   const canDeactivateUser = roleInList(auth.profile?.role, USER_DEACTIVATE_ROLES);
@@ -106,6 +115,10 @@ export default function UsersPage() {
   const [search, setSearch] = useState("");
   const [error, setErrorState] = useState("");
   const [message, setMessageState] = useState("");
+  const [conflictPrompt, setConflictPrompt] = useState<{
+    message: string;
+    actual?: string;
+  } | null>(null);
   const toast = useToast();
   const setError = useCallback(function (msg: string) {
     const text = String(msg || "");
@@ -118,32 +131,39 @@ export default function UsersPage() {
     if (text) toast.success(text);
   }, [toast]);
   const [busy, setBusy] = useState(false);
+  const accessToken = auth.session?.access_token ?? "";
+  const sessionRef = useRef(auth.session);
+  sessionRef.current = auth.session;
+  const searchRef = useRef(search);
+  searchRef.current = search;
 
-  async function reload() {
-    if (!auth.session?.access_token) return;
-    try {
-      const qs = new URLSearchParams();
-      qs.set("limit", "500");
-      if (search.trim()) qs.set("q", search.trim());
-      const [usersResp, rolesResp] = await Promise.all([
-        request("/users?" + qs.toString(), null, auth.session) as Promise<
-          ListEnvelope<AppUserRow>
-        >,
-        request("/roles", null, auth.session) as Promise<ListEnvelope<AppRoleRow>>
-      ]);
-      setUsers(Array.isArray(usersResp?.rows) ? usersResp.rows : []);
-      setRoles(Array.isArray(rolesResp?.rows) ? rolesResp.rows : []);
-      setError("");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load users / roles");
-    }
-  }
+  const reload = useCallback(
+    async function () {
+      const session = sessionRef.current;
+      if (!accessToken || !session) return;
+      try {
+        const [usersResp, rolesResp] = await Promise.all([
+          usersClient.list(session, {
+            limit: USER_LIST_CAP,
+            q: searchRef.current.trim() || undefined
+          }) as Promise<ListEnvelope<AppUserRow>>,
+          rolesClient.list(session) as Promise<ListEnvelope<AppRoleRow>>
+        ]);
+        setUsers(Array.isArray(usersResp?.rows) ? usersResp.rows : []);
+        setRoles(Array.isArray(rolesResp?.rows) ? rolesResp.rows : []);
+        setError("");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to load users / roles");
+      }
+    },
+    [accessToken, setError]
+  );
 
   useEffect(
     function () {
-      reload();
+      void reload();
     },
-    [auth.session?.access_token, canAdminUsers]
+    [reload]
   );
 
   const visibleUsers = useMemo(
@@ -168,8 +188,10 @@ export default function UsersPage() {
   }
 
   function editUser(row: AppUserRow) {
+    setConflictPrompt(null);
     setUserForm({
       id: row.id,
+      expected_updated_at: catalogExpectedUpdatedAt(row),
       username: row.username || "",
       email: row.email || "",
       phone: row.phone || "",
@@ -182,6 +204,22 @@ export default function UsersPage() {
 
   function resetUserForm() {
     setUserForm(emptyUserForm());
+    setConflictPrompt(null);
+  }
+
+  async function reloadUserFromConflict() {
+    if (!auth.session || !userForm.id) return;
+    setBusy(true);
+    setError("");
+    try {
+      const row = (await usersClient.get(auth.session, userForm.id)) as AppUserRow;
+      editUser(row);
+      setMessage("Reloaded latest user record");
+    } catch (err: unknown) {
+      setError(apiErrorMessage(err, "Could not reload user"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function submitUser(event: FormEvent<HTMLFormElement>) {
@@ -190,26 +228,32 @@ export default function UsersPage() {
     setBusy(true);
     setError("");
     setMessage("");
+    setConflictPrompt(null);
     try {
-      await requestWithOfflineFallback(
-        userForm.id ? "/users/" + userForm.id : "/users",
-        {
-          method: userForm.id ? "PATCH" : "POST",
-          body: {
-            username: userForm.username,
-            email: userForm.email,
-            phone: userForm.phone,
-            role: userForm.role || "",
-            is_active: !!userForm.is_active
-          }
-        },
-        auth.session
-      );
+      const body: Record<string, unknown> = {
+        username: userForm.username,
+        email: userForm.email,
+        phone: userForm.phone,
+        role: userForm.role || "",
+        is_active: !!userForm.is_active
+      };
+      if (userForm.id && userForm.expected_updated_at) {
+        body.expected_updated_at = userForm.expected_updated_at;
+      }
+      await usersClient.save(auth.session, userForm.id || undefined, body);
       setMessage(userForm.id ? "User updated" : "User created");
       resetUserForm();
       await reload();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Could not save user");
+      if (isApiConflictError(err)) {
+        const details = (err as { details?: { actual_updated_at?: string } }).details;
+        setConflictPrompt({
+          message: apiErrorMessage(err, "User was modified by another user — reload and try again."),
+          actual: details?.actual_updated_at
+        });
+      } else {
+        setError(apiErrorMessage(err, "Could not save user"));
+      }
     } finally {
       setBusy(false);
     }
@@ -227,7 +271,7 @@ export default function UsersPage() {
     setBusy(true);
     setError("");
     try {
-      await requestWithOfflineFallback("/users/" + id, { method: "DELETE" }, auth.session);
+      await usersClient.deactivate(auth.session, id);
       if (userForm.id === id) resetUserForm();
       setMessage("User deactivated");
       await reload();
@@ -265,14 +309,7 @@ export default function UsersPage() {
     setError("");
     setMessage("");
     try {
-      await requestWithOfflineFallback(
-        roleForm.id ? "/roles/" + roleForm.id : "/roles",
-        {
-          method: roleForm.id ? "PATCH" : "POST",
-          body: { name: roleForm.name }
-        },
-        auth.session
-      );
+      await rolesClient.save(auth.session, roleForm.id || undefined, { name: roleForm.name });
       setMessage(roleForm.id ? "Role updated" : "Role created");
       resetRoleForm();
       await reload();
@@ -295,7 +332,7 @@ export default function UsersPage() {
     setBusy(true);
     setError("");
     try {
-      await requestWithOfflineFallback("/roles/" + id, { method: "DELETE" }, auth.session);
+      await rolesClient.remove(auth.session, id);
       if (roleForm.id === id) resetRoleForm();
       setMessage("Role deleted");
       await reload();
@@ -390,7 +427,49 @@ export default function UsersPage() {
                     </label>
                   </div>
                 </div>
-                <ErrorBanner message={error} />
+                {conflictPrompt ? (
+                  <div
+                    className="error-text"
+                    role="alert"
+                    aria-live="assertive"
+                    style={{
+                      border: "1px solid var(--warn, #d97706)",
+                      background: "rgba(217,119,6,0.08)",
+                      padding: "10px 12px",
+                      borderRadius: 6
+                    }}
+                  >
+                    <div style={{ marginBottom: 6 }}>
+                      <strong>Concurrent edit detected.</strong> {conflictPrompt.message}
+                      {conflictPrompt.actual ? (
+                        <span className="mini-muted">
+                          {" "}(server updated_at: {String(conflictPrompt.actual)})
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="button-row" style={{ gap: 8 }}>
+                      <button
+                        className="button primary"
+                        type="button"
+                        onClick={reloadUserFromConflict}
+                        disabled={busy}
+                      >
+                        Reload latest
+                      </button>
+                      <button
+                        className="button ghost"
+                        type="button"
+                        onClick={function () {
+                          setConflictPrompt(null);
+                        }}
+                        disabled={busy}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                <ErrorBanner message={error && !conflictPrompt ? error : ""} />
                 <SuccessBanner message={message} />
                 <div className="button-row">
                   <button className="button primary" type="submit" disabled={busy}>
@@ -417,6 +496,11 @@ export default function UsersPage() {
                   </button>
                 </div>
               </div>
+              {users.length >= USER_LIST_CAP ? (
+                <p className="mini-muted" style={{ marginBottom: 8 }}>
+                  Showing first {USER_LIST_CAP} results. Refine search to narrow the list.
+                </p>
+              ) : null}
               {!visibleUsers.length ? (
                 <EmptyState title="No users" description="Add a user on the left to populate the directory." />
               ) : (

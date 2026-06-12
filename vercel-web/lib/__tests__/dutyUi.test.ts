@@ -44,6 +44,32 @@ describe("dutyUi", () => {
     ).toBe(true);
   });
 
+  // Regression — duty calendar must NOT paint cells beyond today for an
+  // open-ended duty (sentinel end_at). Painting future cells diverges from
+  // the billing ledger (which only materializes through today), causing the
+  // "calendar shows N days but bill shows N-k days" mismatch operators
+  // reported in the field.
+  it("dutyTouchesDay does NOT paint future days for sentinel-ended duty", () => {
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+    // Tomorrow (UTC-safe enough — both calendars roll over within an hour).
+    const tomorrow = new Date(Date.parse(today + "T12:00:00Z") + 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    expect(
+      dutyTouchesDay(
+        { start_at: "2026-01-01T02:30:00.000Z", end_at: "2099-12-31T00:00:00Z" },
+        tomorrow
+      )
+    ).toBe(false);
+    // And it definitely must not paint into 2099 just because end_at says so.
+    expect(
+      dutyTouchesDay(
+        { start_at: "2026-01-01T02:30:00.000Z", end_at: "2099-12-31T00:00:00Z" },
+        "2099-06-15"
+      )
+    ).toBe(false);
+  });
+
   it("monthKey formats YYYY-MM", () => {
     expect(monthKey(new Date(2026, 4, 15))).toBe("2026-05");
   });

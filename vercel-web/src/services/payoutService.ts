@@ -7,7 +7,7 @@
  *
  * Hardened rules (Phase 5 Payout):
  *   - Gross / duty_count / hours are *always* computed by
- *     `hh_recompute_payout` from `hh_duties` + `hh_attendance` — never trusted
+ *     `hh_recompute_payout` from duty-calendar payout charges — never trusted
  *     from the frontend.
  *   - Adjustments (advance / deduction / bonus / remarks) flow through
  *     `mergePayoutAdjustments` which recomputes `net_amount` server-side.
@@ -45,7 +45,6 @@ import {
 } from "@/validation/payoutValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
-  PAYABLE_ATTENDANCE_STATUSES,
   buildPayoutPermissions,
   canEditPayout,
   canLockPayout,
@@ -76,7 +75,7 @@ import { attendanceRepository } from "@/database/attendanceRepository";
 import { employeeRepository } from "@/database/employeeRepository";
 import { patientRepository } from "@/database/patientRepository";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
-import { parseDutyDiaryRemarks } from "@/business/dutyDiaryRules";
+import { parseDutyDiaryRemarks, findDutyLedgerRows } from "@/business/dutyDiaryRules";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import { dutyDayLedger } from "@/services/dutyDayLedger";
 import type { JsonRow } from "@/database/types";
@@ -314,6 +313,15 @@ function emptyDiagnostics(): PayoutDiagnostics {
   };
 }
 
+function payoutHoursForTerm(value: unknown): number {
+  const text = String(value || "").toLowerCase();
+  if (!text) return 24;
+  if (text.includes("24")) return 24;
+  if (text.includes("night") || text.includes("8:00 pm") || text.includes("8 pm")) return 12;
+  if (text.includes("day") || text.includes("9:00 am") || text.includes("9 am")) return 10;
+  return 24;
+}
+
 /**
  * Inspect the three tables that feed a payout (`hh_payout_charges`,
  * `hh_duties`, `hh_attendance`) and produce row counts + a human-readable
@@ -325,9 +333,8 @@ function emptyDiagnostics(): PayoutDiagnostics {
  *   2. Duties exist but NO charge rows exist → materialization never ran
  *      (legacy duty, or save without `materialize: true`). Pressing
  *      "Recompute" will fix this because we now re-materialize first.
- *   3. Charge sum > 0 but `hh_attendance` is empty → no PRESENT rows,
- *      so the payout's `duty_count` / `hours` will look wrong even
- *      though gross is correct.
+ *   3. Attendance is intentionally not used for payout totals. The duty
+ *      calendar materialized charge rows are the single payout source.
  */
 function buildDiagnostics(
   duties: JsonRow[],
@@ -354,15 +361,8 @@ function buildDiagnostics(
   }));
 
   diagnostics.attendance_row_count = attendance.length;
-  const payableStatuses = new Set(["PRESENT", "LATE", "HALF_DAY"]);
-  for (const a of attendance) {
-    const status = String(a.status || "").toUpperCase();
-    if (!payableStatuses.has(status)) continue;
-    diagnostics.attendance_payable_count += 1;
-    diagnostics.attendance_payable_hours += Number(a.hours || 0);
-  }
-  diagnostics.attendance_payable_hours =
-    Math.round(diagnostics.attendance_payable_hours * 100) / 100;
+  diagnostics.attendance_payable_count = 0;
+  diagnostics.attendance_payable_hours = 0;
 
   diagnostics.charge_row_count = charges.length;
   const svcKeys = new Set<string>();
@@ -400,9 +400,6 @@ function buildDiagnostics(
   ) {
     diagnostics.warning =
       "Payout charges exist but every row has amount ₹0. Open the source duty and set a non-zero payout_per_day, then Recompute.";
-  } else if (diagnostics.charge_row_count > 0 && diagnostics.attendance_payable_count === 0) {
-    diagnostics.warning =
-      "Charges materialized but no PRESENT / LATE / HALF_DAY attendance rows exist for this period — duty_count and hours will show 0 until attendance is marked.";
   } else if (activeDutyCount === 0 && diagnostics.charge_row_count === 0) {
     diagnostics.warning =
       "No duties or charges for this employee in this period. Assign them on the duty calendar first.";
@@ -419,14 +416,12 @@ function buildDiagnostics(
  *   2. Walk charges → parse `duty:<id>:...` from remarks → look up the
  *      duty's patient. Sum amount per patient, count distinct dates,
  *      track first/last date.
- *   3. Walk attendance → count PRESENT/LATE/HALF_DAY days + hours per
- *      duty → fold those into the patient bucket.
- *   4. Hydrate patient names in one batch lookup so the UI / PDF can
+ *   3. Hydrate patient names in one batch lookup so the UI / PDF can
  *      print "Mr. Patel — 22 days · ₹17,600" without an N+1.
  */
 async function buildPatientBreakdown(
   duties: JsonRow[],
-  attendance: JsonRow[],
+  _attendance: JsonRow[],
   charges: JsonRow[],
   ctx: PayoutServiceContext
 ): Promise<PayoutPatientSummary[]> {
@@ -477,23 +472,10 @@ async function buildPatientBreakdown(
     const date = String(c.date || parsed.isoDate || "").slice(0, 10);
     if (date) {
       acc.days.add(date);
+      acc.hours += payoutHoursForTerm(c.term || c.freq || c.service_term);
       if (!acc.first_date || date < acc.first_date) acc.first_date = date;
       if (!acc.last_date || date > acc.last_date) acc.last_date = date;
     }
-  }
-
-  // Attendance gives the *actual* days worked (PRESENT/LATE/HALF_DAY) per
-  // duty — fold into the patient bucket so the PDF can show "22 days
-  // present" even when charges materialized 30 calendar days.
-  for (const a of attendance) {
-    const status = String(a.status || "").toUpperCase();
-    if (!PAYABLE_ATTENDANCE_STATUSES.has(status)) continue;
-    const dutyId = String(a.duty_id || "");
-    const pid = dutyId ? dutyToPatient.get(dutyId) : undefined;
-    if (!pid) continue;
-    const acc = ensure(pid);
-    acc.days_worked += 1;
-    acc.hours += Number(a.hours || 0);
   }
 
   // Also make sure every duty's patient appears in the breakdown even when
@@ -528,7 +510,7 @@ async function buildPatientBreakdown(
     .map<PayoutPatientSummary>((acc) => ({
       patient_id: acc.patient_id,
       patient_name: nameMap.get(acc.patient_id) || acc.patient_id,
-      days_worked: acc.days_worked,
+      days_worked: acc.days.size,
       hours: Math.round(acc.hours * 100) / 100,
       charged_days: acc.days.size,
       amount: Math.round(acc.amount * 100) / 100,
@@ -635,8 +617,7 @@ async function loadPayoutDetail(
   const outstanding = Math.max(0, Number(payout.net_amount || 0) - paidTotal);
   const dutyCount = Math.max(
     Number(payout.duty_count || 0),
-    diagnostics.duty_row_count,
-    dutyRows.length
+    diagnostics.charge_row_count
   );
 
   return success(
@@ -659,7 +640,7 @@ async function loadPayoutDetail(
       // divergent day counts (PRESENT-only vs PRESENT/LATE/HALF_DAY).
       breakdown: patientBreakdown.map((p) => ({
         patient_id: p.patient_id,
-        duty_count: p.days_worked,
+        duty_count: p.charged_days,
         hours: p.hours,
         duty_ids: p.duty_ids
       }))
@@ -1028,6 +1009,7 @@ export const payoutService = {
       paid: number;
       pending: number;
       duty_count: number;
+      hours: number;
       payout: JsonRow | null;
       paid_transactions: JsonRow[];
     }>
@@ -1057,7 +1039,8 @@ export const payoutService = {
       charged: 0,
       paid: 0,
       pending: 0,
-      duty_count: 0
+      duty_count: 0,
+      hours: 0
     };
     return success({
       employee_id: query.employee_id,
@@ -1067,6 +1050,7 @@ export const payoutService = {
       paid: Number(data.paid || 0),
       pending: Number(data.pending || 0),
       duty_count: Number(data.duty_count || 0),
+      hours: Number((data as { hours?: unknown }).hours || 0),
       payout: existing.data ?? null,
       paid_transactions: paidTx.data || []
     });
@@ -1280,6 +1264,13 @@ export const payoutService = {
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as PayoutLockInput;
 
+    const stale = assertNotStale(
+      "Payout",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
+
     const transition = canPayoutTransitionTo(String(existing.data.status || ""), "LOCKED");
     if (!transition.success) {
       return failure(
@@ -1332,6 +1323,13 @@ export const payoutService = {
     const parsed = parseInput(payoutReopenSchema, rawInput);
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as PayoutReopenInput;
+
+    const stale = assertNotStale(
+      "Payout",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
 
     const guard = canReopenPayout(String(existing.data.status || ""));
     if (!guard.success) {
@@ -1386,6 +1384,13 @@ export const payoutService = {
     if (!existing.success) {
       return failure(existing.error || "Payout not found", existing.code, existing.details);
     }
+
+    const stalePay = assertNotStale(
+      "Payout",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!stalePay.success) return passFailure(stalePay);
 
     const guard = canMarkPayoutPaid(String(existing.data.status || ""));
     if (!guard.success) {
@@ -1527,6 +1532,13 @@ export const payoutService = {
       return failure(existing.error || "Payout not found", existing.code, existing.details);
     }
 
+    const staleAdvance = assertNotStale(
+      "Payout",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!staleAdvance.success) return passFailure(staleAdvance);
+
     const guard = canPayAdvance(String(existing.data.status || ""));
     if (!guard.success) {
       return failure(guard.error || "Cannot pay advance", guard.code, guard.details);
@@ -1626,6 +1638,17 @@ export const payoutService = {
     const parsed = parseInput(replacePayoutChargesSchema, rawInput);
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as ReplacePayoutChargesInput;
+
+    // Source-of-truth guard: duty-calendar materialized payout rows
+    // (remarks `duty:%`) are owned only by the Duty Calendar. Payout may not
+    // create/edit/delete them through a slice replace — those edits must
+    // happen in the Duties module so billing + payout stay in sync.
+    if (findDutyLedgerRows(input.rows).length > 0) {
+      return failure(
+        "Duty-calendar payout charges are read-only here. Edit the duty in the Duty Calendar instead.",
+        ErrorCodes.validation
+      );
+    }
 
     const rows: JsonRow[] = input.rows.map((row) => ({
       date: row.date || "",

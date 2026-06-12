@@ -6,6 +6,9 @@ const TABLE = "hh_idempotency";
 const SCOPE = "idempotencyRepository";
 
 /**
+ * All access uses `adminClient()` (service role). Table RLS allows only
+ * `service_role` — see migration `20260601230000_r5_idempotency_auth_hardening.sql`.
+ *
  * `hh_idempotency` schema (live):
  *   key text not null
  *   actor text not null
@@ -23,6 +26,7 @@ const SCOPE = "idempotencyRepository";
  */
 
 const PENDING_STATUS = 0;
+const PENDING_STALE_MS = 30_000;
 
 export interface IdempotencyCachedRow {
   response: Record<string, unknown> | null;
@@ -84,6 +88,14 @@ export const idempotencyRepository = {
     const db = adminClient();
     return runQuery<IdempotencyReservation | null>(
       async () => {
+        const staleBefore = new Date(Date.now() - PENDING_STALE_MS).toISOString();
+        await db
+          .from(TABLE)
+          .delete()
+          .eq("status", PENDING_STATUS)
+          .is("response", null)
+          .lt("created_at", staleBefore);
+
         const { data, error } = await db
           .from(TABLE)
           .upsert(
@@ -98,7 +110,7 @@ export const idempotencyRepository = {
           )
           .select("key");
         if (error) return { data: null, error };
-        const inserted = Array.isArray(data) && data.length > 0 ? { key: data[0].key as string } : null;
+        const inserted = Array.isArray(data) && data.length > 0 && data[0] ? { key: data[0].key as string } : null;
         return { data: inserted, error: null };
       },
       `${SCOPE}.tryReservePending`

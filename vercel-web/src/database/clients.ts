@@ -30,6 +30,25 @@ export function supabaseAsUser(accessToken: string): SupabaseClient {
 }
 
 /**
+ * Client for SECURITY DEFINER business RPCs (EXECUTE granted to service_role only).
+ * When `accessToken` is set, the user JWT is forwarded in Authorization so
+ * `auth.jwt()` / `hh_has_role()` inside RPC bodies still enforce app roles.
+ */
+export function supabaseRpcAsService(accessToken?: string | null): SupabaseClient {
+  if (!env.supabaseServiceRoleKey) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
+  }
+  const headers: Record<string, string> = {};
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+  return createClient(env.supabaseUrl, env.supabaseServiceRoleKey, {
+    global: { headers },
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
+}
+
+/**
  * Pick user-scoped client when a bearer token is present; otherwise admin.
  * Used while migrating routes incrementally to always pass `accessToken`.
  */

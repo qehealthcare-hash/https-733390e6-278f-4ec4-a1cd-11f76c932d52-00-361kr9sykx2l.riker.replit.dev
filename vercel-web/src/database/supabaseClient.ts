@@ -15,7 +15,8 @@
 import type { SupabaseClient, PostgrestError } from "@supabase/supabase-js";
 import {
   adminClient as legacyAdmin,
-  supabaseAsUser as legacyAsUser
+  supabaseAsUser as legacyAsUser,
+  supabaseRpcAsService as legacyRpcAsService
 } from "@/database/clients";
 import type { ApiResult } from "@/types/common";
 import { dbFailure } from "@/utils/apiResponse";
@@ -28,6 +29,11 @@ export function adminClient(): SupabaseClient {
 /** Per-request client carrying the caller's JWT (RLS applies). */
 export function userClient(accessToken: string): SupabaseClient {
   return legacyAsUser(accessToken);
+}
+
+/** Service-role RPC client; optional user JWT for in-function role guards. */
+export function rpcClient(accessToken?: string | null): SupabaseClient {
+  return legacyRpcAsService(accessToken);
 }
 
 /**

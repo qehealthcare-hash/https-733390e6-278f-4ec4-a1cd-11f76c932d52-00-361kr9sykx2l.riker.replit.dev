@@ -1,5 +1,7 @@
 /** Compact id generators matching the legacy CRM format. */
 
+import { randomDigits } from "@/utils/secureRandom";
+
 function pad(n: number, len: number): string {
   return n.toString().padStart(len, "0");
 }
@@ -17,7 +19,7 @@ function timestampKey(): string {
 }
 
 function rand(len: number): string {
-  return pad(Math.floor(Math.random() * Math.pow(10, len)), len);
+  return randomDigits(len);
 }
 
 export const newId = {

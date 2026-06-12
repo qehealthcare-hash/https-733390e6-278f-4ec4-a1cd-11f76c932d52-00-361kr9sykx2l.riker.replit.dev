@@ -293,6 +293,7 @@ export const payoutRepository = {
       paid: number;
       pending: number;
       duty_count: number;
+      hours?: number;
     } | null>
   > {
     return callRpc<{
@@ -302,6 +303,7 @@ export const payoutRepository = {
       paid: number;
       pending: number;
       duty_count: number;
+      hours?: number;
     }>(
       "hh_employee_pending_payout",
       { p_employee_id: employeeId, p_period: period },
@@ -402,6 +404,10 @@ export const payoutRepository = {
   /**
    * Period-scoped payout charges for an employee (duty calendar source rows).
    * `hh_payout_charges` has no `payout_id` column — match partner_id / partner.
+   *
+   * Keep the YYYY-MM filter in Supabase, not in JavaScript. The payout detail
+   * page calls this whenever an employee payout is opened; scanning every
+   * historical charge for a busy employee made the page feel inaccessible.
    */
   async listChargesByEmployeePeriod(
     employeeId: string,
@@ -418,6 +424,8 @@ export const payoutRepository = {
           .or(
             `partner_id.eq.${employeeId},partner.eq.${employeeId}`
           )
+          .gte("date", `${period}-01`)
+          .lt("date", monthEndExclusive(period))
           .order("date", { ascending: true }),
       `${SCOPE}.listChargesByEmployeePeriod`
     );
@@ -429,13 +437,7 @@ export const payoutRepository = {
         details: result.details
       };
     }
-    const rows = (result.data || []).filter((row) => {
-      const dateStr = String(row.date || "");
-      if (dateStr.length >= 7 && dateStr.slice(0, 7) === period) return true;
-      const created = String(row.created_at || "");
-      return created.length >= 7 && created.slice(0, 7) === period;
-    });
-    return { success: true, data: rows };
+    return { success: true, data: result.data || [] };
   },
 
   insertCharge(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {

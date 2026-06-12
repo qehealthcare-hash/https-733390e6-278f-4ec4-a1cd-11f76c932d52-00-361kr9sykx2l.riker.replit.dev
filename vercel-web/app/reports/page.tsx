@@ -5,7 +5,7 @@
  * All data via `/api/v1/reports/*`.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
@@ -14,19 +14,87 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
-import { request } from "@/lib/api-client";
+import { reportsClient } from "@/lib/clients";
 import { downloadCsv } from "@/lib/csv";
 import { formatCurrency, formatDate } from "@/lib/formatters";
-import { openPrintWindow } from "@/lib/print";
+import { openPrintWindow, reportPrintBlocked } from "@/lib/print";
 import { useNotify } from "@/components/ui/confirm-dialog";
 import { REPORT_READ_ROLES } from "@/business/rbac";
+import type {
+  AttendanceSummary,
+  AttendanceSummaryByEmployee,
+  BillingSummary,
+  BillingSummaryRow,
+  BillingTotalsReport,
+  InquirySummary,
+  PatientSummary,
+  PayoutTotalsReport,
+  ProfitLossReport
+} from "@/business/reportRules";
 import {
   currentPeriod,
   periodFromMonthInput,
   reportTabClass
 } from "@/lib/reportUi";
 
-function roleInList(role, list) {
+type ReportsAuth = {
+  session?: { access_token?: string } | null;
+  profile?: { role?: string } | null;
+};
+
+type CsvRow = Record<string, unknown>;
+
+type PrintColumn = {
+  key: string;
+  label: string;
+  format?: (row: Record<string, unknown>) => string;
+};
+
+type ReportInquiryRow = {
+  id: string;
+  name?: string;
+  phone?: string;
+  area?: string;
+  status?: string;
+  potential?: string;
+  source?: string;
+  created_at?: string | null;
+};
+
+type ReportPatientRow = {
+  id: string;
+  name?: string;
+  phone?: string;
+  area?: string;
+  status?: string;
+  created_at?: string | null;
+  created?: string | null;
+};
+
+type PayrollReportRow = {
+  id?: string;
+  employee_id: string;
+  gross_amount?: number | string | null;
+  net_amount?: number | string | null;
+  advance?: number | string | null;
+  deduction?: number | string | null;
+  bonus?: number | string | null;
+  duty_count?: number;
+  hours?: number;
+  status?: string;
+  attendance?: { present?: number; absent?: number; late?: number; hours?: number };
+};
+
+type PayrollReportPayload = {
+  rows?: PayrollReportRow[];
+};
+
+type ReportDataset<TSummary, TRow> = {
+  summary?: TSummary | null;
+  rows?: TRow[];
+};
+
+function roleInList(role: string | undefined | null, list: readonly string[]): boolean {
   const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
@@ -34,18 +102,18 @@ function roleInList(role, list) {
 }
 
 export default function ReportsPage() {
-  const auth = useAuth();
+  const auth = useAuth() as unknown as ReportsAuth;
   const canViewReports = roleInList(auth.profile?.role, REPORT_READ_ROLES);
   const notify = useNotify();
   const [period, setPeriod] = useState(currentPeriod());
   const [tab, setTab] = useState("overview");
-  const [billing, setBilling] = useState(null);
-  const [payout, setPayout] = useState(null);
-  const [profitLoss, setProfitLoss] = useState(null);
-  const [payroll, setPayroll] = useState(null);
+  const [billing, setBilling] = useState<BillingTotalsReport | null>(null);
+  const [payout, setPayout] = useState<PayoutTotalsReport | null>(null);
+  const [profitLoss, setProfitLoss] = useState<ProfitLossReport | null>(null);
+  const [payroll, setPayroll] = useState<PayrollReportPayload | null>(null);
   const [error, setErrorState] = useState("");
   const toast = useToast();
-  const setError = useCallback(function (msg) {
+  const setError = useCallback(function (msg: string) {
     const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
@@ -55,26 +123,37 @@ export default function ReportsPage() {
   // Phase 12: detail tabs are now driven by server-side aggregation endpoints
   // — `/reports/{inquiries,patients,attendance,billings}` — so totals are
   // accurate for the entire period regardless of the paginated row slice.
-  const [inquirySummary, setInquirySummary] = useState(null);
-  const [inquiryRows, setInquiryRows] = useState([]);
-  const [patientSummary, setPatientSummary] = useState(null);
-  const [patientRows, setPatientRows] = useState([]);
-  const [attendanceSummary, setAttendanceSummary] = useState(null);
-  const [attendanceRows, setAttendanceRows] = useState([]);
-  const [billingSummary, setBillingSummary] = useState(null);
-  const [billingRows, setBillingRows] = useState([]);
+  const [inquirySummary, setInquirySummary] = useState<InquirySummary | null>(null);
+  const [inquiryRows, setInquiryRows] = useState<ReportInquiryRow[]>([]);
+  const [patientSummary, setPatientSummary] = useState<PatientSummary | null>(null);
+  const [patientRows, setPatientRows] = useState<ReportPatientRow[]>([]);
+  const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary | null>(null);
+  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
+  const [billingRows, setBillingRows] = useState<BillingSummaryRow[]>([]);
+  const accessToken = auth.session?.access_token ?? "";
+  const sessionRef = useRef(auth.session);
+  sessionRef.current = auth.session;
 
-  useEffect(
+  const loadOverview = useCallback(
     function () {
-      if (!auth.session?.access_token || !canViewReports) return;
-      const q = "?period=" + encodeURIComponent(periodFromMonthInput(period));
+      const session = sessionRef.current;
+      if (!accessToken || !session || !canViewReports) return;
+      const periodKey = periodFromMonthInput(period);
       setLoading(true);
       setError("");
       Promise.all([
-        request("/reports/billing-totals" + q, null, auth.session).catch(function () { return null; }),
-        request("/reports/payout-totals" + q, null, auth.session).catch(function () { return null; }),
-        request("/reports/profit-loss" + q, null, auth.session).catch(function () { return null; }),
-        request("/reports/payroll" + q, null, auth.session).catch(function () { return null; })
+        reportsClient.billingTotals(session, periodKey).catch(function () {
+          return null;
+        }) as Promise<BillingTotalsReport | null>,
+        reportsClient.payoutTotals(session, periodKey).catch(function () {
+          return null;
+        }) as Promise<PayoutTotalsReport | null>,
+        reportsClient.profitLoss(session, periodKey).catch(function () {
+          return null;
+        }) as Promise<ProfitLossReport | null>,
+        reportsClient.payroll(session, periodKey).catch(function () {
+          return null;
+        }) as Promise<PayrollReportPayload | null>
       ])
         .then(function (result) {
           setBilling(result[0]);
@@ -82,57 +161,80 @@ export default function ReportsPage() {
           setProfitLoss(result[2]);
           setPayroll(result[3]);
         })
-        .catch(function (err) {
-          setError(err.message || "Unable to load reports");
+        .catch(function (err: unknown) {
+          setError(err instanceof Error ? err.message : "Unable to load reports");
         })
         .finally(function () {
           setLoading(false);
         });
     },
-    [auth.session?.access_token, period, canViewReports]
+    [accessToken, period, canViewReports, setError]
   );
 
-  useEffect(
+  const loadDetailDatasets = useCallback(
     function () {
-      if (!auth.session?.access_token || !canViewReports) return;
+      const session = sessionRef.current;
+      if (!accessToken || !session || !canViewReports) return;
       const p = periodFromMonthInput(period);
-      const qs = "?period=" + encodeURIComponent(p) + "&limit=200";
-      const datasetErrors = [];
+      const datasetErrors: string[] = [];
       Promise.all([
-        request("/reports/inquiries" + qs, null, auth.session).catch(function (e) {
-          datasetErrors.push("inquiries: " + (e.message || "load failed"));
+        reportsClient.inquiries(session, p).catch(function (e: unknown) {
+          datasetErrors.push(
+            "inquiries: " + (e instanceof Error ? e.message : "load failed")
+          );
           return null;
-        }),
-        request("/reports/patients" + qs, null, auth.session).catch(function (e) {
-          datasetErrors.push("patients: " + (e.message || "load failed"));
+        }) as Promise<ReportDataset<InquirySummary, ReportInquiryRow> | null>,
+        reportsClient.patients(session, p).catch(function (e: unknown) {
+          datasetErrors.push(
+            "patients: " + (e instanceof Error ? e.message : "load failed")
+          );
           return null;
-        }),
-        request("/reports/attendance" + qs, null, auth.session).catch(function (e) {
-          datasetErrors.push("attendance: " + (e.message || "load failed"));
+        }) as Promise<ReportDataset<PatientSummary, ReportPatientRow> | null>,
+        reportsClient.attendance(session, p).catch(function (e: unknown) {
+          datasetErrors.push(
+            "attendance: " + (e instanceof Error ? e.message : "load failed")
+          );
           return null;
-        }),
-        request("/reports/billings" + qs, null, auth.session).catch(function (e) {
-          datasetErrors.push("billings: " + (e.message || "load failed"));
+        }) as Promise<ReportDataset<AttendanceSummary, unknown> | null>,
+        reportsClient.billings(session, p).catch(function (e: unknown) {
+          datasetErrors.push(
+            "billings: " + (e instanceof Error ? e.message : "load failed")
+          );
           return null;
-        })
+        }) as Promise<ReportDataset<BillingSummary, BillingSummaryRow> | null>
       ]).then(function (result) {
-        setInquirySummary(result[0] ? result[0].summary : null);
-        setInquiryRows(result[0] && Array.isArray(result[0].rows) ? result[0].rows : []);
-        setPatientSummary(result[1] ? result[1].summary : null);
-        setPatientRows(result[1] && Array.isArray(result[1].rows) ? result[1].rows : []);
-        setAttendanceSummary(result[2] ? result[2].summary : null);
-        setAttendanceRows(result[2] && Array.isArray(result[2].rows) ? result[2].rows : []);
-        setBillingSummary(result[3] ? result[3].summary : null);
-        setBillingRows(result[3] && Array.isArray(result[3].rows) ? result[3].rows : []);
+        setInquirySummary(result[0]?.summary ?? null);
+        setInquiryRows(result[0]?.rows ?? []);
+        setPatientSummary(result[1]?.summary ?? null);
+        setPatientRows(result[1]?.rows ?? []);
+        setAttendanceSummary(result[2]?.summary ?? null);
+        setBillingSummary(result[3]?.summary ?? null);
+        setBillingRows(result[3]?.rows ?? []);
         if (datasetErrors.length) {
           setError("Some datasets failed to load — " + datasetErrors.join("; "));
         }
       });
     },
-    [auth.session?.access_token, period, canViewReports]
+    [accessToken, period, canViewReports, setError]
   );
 
-  const payrollRows = useMemo(function () { return (payroll && payroll.rows) || []; }, [payroll]);
+  useEffect(
+    function () {
+      loadOverview();
+    },
+    [loadOverview]
+  );
+
+  useEffect(
+    function () {
+      loadDetailDatasets();
+    },
+    [loadDetailDatasets]
+  );
+
+  const payrollRows = useMemo(function (): PayrollReportRow[] {
+    return payroll?.rows ?? [];
+  }, [payroll]);
 
   // Server-side totals (always accurate) with safe defaults for the empty
   // state. The page used to compute these from a 100-row sample; now the
@@ -142,7 +244,11 @@ export default function ReportsPage() {
       const defaults = {
         New: 0, Contacted: 0, FollowUp: 0, Negotiating: 0, Converted: 0, Closed: 0, Lost: 0
       };
-      const by = Object.assign({}, defaults, (inquirySummary && inquirySummary.by_status) || {});
+      const by = Object.assign(
+        {},
+        defaults,
+        (inquirySummary && inquirySummary.by_status) || {}
+      ) as Record<string, number>;
       const pot = (inquirySummary && inquirySummary.by_potential) || {};
       return {
         by: by,
@@ -163,7 +269,7 @@ export default function ReportsPage() {
       const byEmployee = (attendanceSummary && attendanceSummary.by_employee) || [];
       return {
         by: by,
-        byEmployee: byEmployee.map(function (e) {
+        byEmployee: byEmployee.map(function (e: AttendanceSummaryByEmployee) {
           return {
             employee_id: e.employee_id,
             present: e.present || 0,
@@ -189,12 +295,12 @@ export default function ReportsPage() {
     [patientSummary]
   );
 
-  function exportCsv(name, rows) {
+  function exportCsv(name: string, rows: object[], columns?: string[]) {
     if (!rows || !rows.length) return;
-    downloadCsv(name, rows);
+    downloadCsv(name, rows as CsvRow[], columns);
   }
 
-  function printSection(title, rows, columns) {
+  function printSection(title: string, rows: object[], columns: PrintColumn[]) {
     if (!rows || !rows.length) {
       notify({ title: "Nothing to print", description: "There are no rows for the current selection." });
       return;
@@ -202,10 +308,23 @@ export default function ReportsPage() {
     const thead = "<tr>" + columns.map(function (c) { return "<th>" + c.label + "</th>"; }).join("") + "</tr>";
     const tbody = rows
       .map(function (r) {
-        return "<tr>" + columns.map(function (c) { return "<td>" + (c.format ? c.format(r) : (r[c.key] || "")) + "</td>"; }).join("") + "</tr>";
+        return "<tr>" + columns.map(function (c) {
+          const rec = r as Record<string, unknown>;
+          const cell = c.format ? c.format(rec) : String(rec[c.key] ?? "");
+          return "<td>" + cell + "</td>";
+        }).join("") + "</tr>";
       })
       .join("");
-    openPrintWindow(title, "<h2>" + title + "</h2><table><thead>" + thead + "</thead><tbody>" + tbody + "</tbody></table>");
+    if (
+      !openPrintWindow(
+        title,
+        "<h2>" + title + "</h2><table><thead>" + thead + "</thead><tbody>" + tbody + "</tbody></table>"
+      )
+    ) {
+      reportPrintBlocked(function (msg) {
+        notify({ title: "Pop-up blocked", description: msg });
+      });
+    }
   }
 
   return (
@@ -270,7 +389,11 @@ export default function ReportsPage() {
               <button type="button" className={reportTabClass(tab === "inquiry")} onClick={function () { setTab("inquiry"); }}>Inquiries</button>
               <button type="button" className={reportTabClass(tab === "patients")} onClick={function () { setTab("patients"); }}>Patients</button>
             </div>
-            {loading ? <div className="mini-muted">Loading…</div> : null}
+            {loading ? (
+              <div className="mini-muted" role="status" aria-live="polite">
+                Loading…
+              </div>
+            ) : null}
             <ErrorBanner message={error} />
           </ModuleShell>
 
@@ -334,7 +457,7 @@ export default function ReportsPage() {
                         "billings-" + period + ".csv",
                         billingRows.map(function (b) {
                           return {
-                            billing_id: b.id,
+                            billing_id: b.billing_id,
                             patient_name: b.patient_name || "",
                             patient_phone: b.patient_phone || "",
                             status: b.status,
@@ -343,7 +466,7 @@ export default function ReportsPage() {
                             outstanding: b.totals ? b.totals.outstanding : "",
                             sec_dep: b.sec_dep,
                             paid_status: b.paid_status || "",
-                            created: b.created_at || b.created || ""
+                            created: b.created_at || ""
                           };
                         }),
                         [
@@ -368,18 +491,31 @@ export default function ReportsPage() {
                     type="button"
                     onClick={function () {
                       printSection("Billings " + period, billingRows, [
-                        { key: "id", label: "Bill" },
+                        { key: "billing_id", label: "Bill" },
                         { key: "patient_name", label: "Patient" },
                         { key: "status", label: "Status" },
                         {
                           key: "totals",
                           label: "Outstanding",
                           format: function (r) {
-                            return r.totals ? formatCurrency(r.totals.outstanding) : "—";
+                            const totals = r.totals as BillingSummaryRow["totals"] | undefined;
+                            return totals ? formatCurrency(totals.outstanding) : "—";
                           }
                         },
-                        { key: "sec_dep", label: "Sec Dep", format: function (r) { return formatCurrency(r.sec_dep); } },
-                        { key: "created_at", label: "Created", format: function (r) { return formatDate(r.created_at || r.created); } }
+                        {
+                          key: "sec_dep",
+                          label: "Sec Dep",
+                          format: function (r) {
+                            return formatCurrency(r.sec_dep as number | string | null | undefined);
+                          }
+                        },
+                        {
+                          key: "created_at",
+                          label: "Created",
+                          format: function (r) {
+                            return formatDate(r.created_at as string | null | undefined);
+                          }
+                        }
                       ]);
                     }}
                   >
@@ -411,13 +547,13 @@ export default function ReportsPage() {
                     <tbody>
                       {billingRows.map(function (b) {
                         return (
-                          <tr key={b.id}>
-                            <td>{b.id}</td>
+                          <tr key={b.billing_id}>
+                            <td>{b.billing_id}</td>
                             <td>{b.patient_name || b.patient_id}</td>
                             <td>{b.status}</td>
                             <td>{b.totals ? formatCurrency(b.totals.outstanding) : "—"}</td>
                             <td>{formatCurrency(b.sec_dep)}</td>
-                            <td>{formatDate(b.created_at || b.created)}</td>
+                            <td>{formatDate(b.created_at)}</td>
                           </tr>
                         );
                       })}
@@ -502,8 +638,22 @@ export default function ReportsPage() {
                         { key: "employee_id", label: "Employee" },
                         { key: "net_amount", label: "Net", format: function (r) { return formatCurrency(r.net_amount); } },
                         { key: "status", label: "Status" },
-                        { key: "present", label: "Present", format: function (r) { return r.attendance ? r.attendance.present : "-"; } },
-                        { key: "absent", label: "Absent", format: function (r) { return r.attendance ? r.attendance.absent : "-"; } }
+                        {
+                          key: "present",
+                          label: "Present",
+                          format: function (r) {
+                            const att = r.attendance as PayrollReportRow["attendance"] | undefined;
+                            return att ? String(att.present ?? "-") : "-";
+                          }
+                        },
+                        {
+                          key: "absent",
+                          label: "Absent",
+                          format: function (r) {
+                            const att = r.attendance as PayrollReportRow["attendance"] | undefined;
+                            return att ? String(att.absent ?? "-") : "-";
+                          }
+                        }
                       ]);
                     }}
                   >

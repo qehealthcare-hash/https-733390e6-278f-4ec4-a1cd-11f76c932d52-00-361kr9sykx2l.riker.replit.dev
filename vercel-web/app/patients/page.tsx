@@ -7,14 +7,26 @@
  * live in `@/lib/patientUi`.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent
+} from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { ModalDialog } from "@/components/ui/modal-dialog";
+import { confirmDiscardTyped } from "@/lib/modalDiscard";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
+import { useBusyGuard } from "@/hooks/use-busy-guard";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
 import { patientsClient, lookupsClient } from "@/lib/clients";
@@ -25,8 +37,9 @@ import {
 } from "@/lib/crm-options";
 import { formatDate, slugToText } from "@/lib/formatters";
 import { crmTodayIso } from "@/src/utils/crmToday";
+import { patientStartDateMax } from "@/lib/dateFieldBounds";
 import { downloadCsv } from "@/lib/csv";
-import { openPrintWindow } from "@/lib/print";
+import { openPrintWindow, preOpenPrintWindow, reportPrintBlocked } from "@/lib/print";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
 import { CameraCaptureModal } from "@/components/ui/camera-capture-lazy";
 import { DocumentCard, DocumentList } from "@/components/ui/document-card";
@@ -43,6 +56,7 @@ import {
   type PatientDocRef,
   type PatientListRow
 } from "@/lib/patientUi";
+import type { PatientPermissionsDto } from "@/validation/patientDto";
 
 interface RelativeContact {
   name: string;
@@ -75,6 +89,98 @@ interface PatientFormState {
   aadhar?: string;
 }
 
+type PatientsAuth = {
+  session?: { access_token?: string } | null;
+  profile?: { role?: string } | null;
+  supabase?: unknown;
+};
+
+interface EmployeeOption {
+  id: string;
+  full_name?: string;
+  name?: string;
+  role?: string;
+}
+
+interface CloseDialogState {
+  id: string;
+  name: string;
+  reason: string;
+  reason_other: string;
+}
+
+interface ReopenDialogState {
+  id: string;
+  name: string;
+  note: string;
+}
+
+interface HistoryDialogState {
+  id: string;
+  name: string;
+}
+
+interface ConflictPromptState {
+  actual?: string;
+  message?: string;
+}
+
+interface DuplicatePromptState {
+  message: string;
+}
+
+interface BillingHistoryRow {
+  id?: string;
+  status?: string | null;
+  total?: number | string | null;
+  amount?: number | string | null;
+  created_at?: string | null;
+  created?: string | null;
+}
+
+interface DutyHistoryRow {
+  id?: string;
+  employee_id?: string | null;
+  caretaker_id?: string | null;
+  shift?: string | null;
+  shift_type?: string | null;
+  status?: string | null;
+  start_at?: string | null;
+  start_date?: string | null;
+  created_at?: string | null;
+}
+
+interface ReceiptHistoryRow {
+  id?: string;
+  billing_id?: string | null;
+  method?: string | null;
+  amount?: number | string | null;
+  created_at?: string | null;
+  created?: string | null;
+}
+
+interface AuditHistoryRow {
+  id?: string;
+  created_at?: string | null;
+  actor?: string | null;
+  user_id?: string | null;
+  action?: string | null;
+  stamp?: string | null;
+}
+
+interface PatientHistoryBundle {
+  patient?: PatientListRow;
+  billings?: BillingHistoryRow[];
+  receipts?: ReceiptHistoryRow[];
+  duties?: DutyHistoryRow[];
+  audits?: AuditHistoryRow[];
+  linkCounts?: { billings?: number; duties?: number };
+}
+
+function sessionOrNull(auth: PatientsAuth) {
+  return (auth.session ?? null) as import("@supabase/supabase-js").Session | null;
+}
+
 function roleInList(role: unknown, list: readonly Role[]): boolean {
   const normalized = String(role || "")
     .trim()
@@ -101,7 +207,7 @@ function createInitialForm(): PatientFormState {
     disease_condition: "",
     assigned_staff_id: "",
     shift_type: "DAY",
-    start_date: new Date().toISOString().slice(0, 10),
+    start_date: crmTodayIso(),
     status: "Active",
     status_reason: "",
     status_reason_other: "",
@@ -113,7 +219,7 @@ function createInitialForm(): PatientFormState {
   };
 }
 
-function deriveAgeFromDob(dob) {
+function deriveAgeFromDob(dob: string | undefined | null): number {
   if (!dob) return 0;
   const birth = new Date(dob);
   if (Number.isNaN(birth.getTime())) return 0;
@@ -124,9 +230,9 @@ function deriveAgeFromDob(dob) {
   return age < 0 ? 0 : age;
 }
 
-function patientRowPermissions(row) {
+function patientRowPermissions(row: PatientListRow): PatientPermissionsDto {
   return (
-    (row && row.permissions) || {
+    row.permissions || {
       canEdit: false,
       canAssignCaretaker: false,
       canClose: false,
@@ -137,7 +243,7 @@ function patientRowPermissions(row) {
 }
 
 export default function PatientsPage() {
-  const auth = useAuth();
+  const auth = useAuth() as unknown as PatientsAuth;
   const accessToken = auth.session?.access_token ?? "";
   const canWrite = hasPermission(auth.profile?.role, "patients.write");
   const canClose = roleInList(auth.profile?.role, PATIENT_CLOSE_ROLES);
@@ -174,8 +280,8 @@ export default function PatientsPage() {
     [debouncedSearch, statusFilter, genderFilter, areaFilter, pinFilter, shiftFilter]
   );
 
-  const resource = usePaginatedResource({
-    basePath: patientsClient.basePath,
+  const resource = usePaginatedResource<PatientListRow>({
+    list: patientsClient.list,
     table: "hh_patients",
     channel: "hh_patients",
     queryParams: listQuery,
@@ -193,9 +299,9 @@ export default function PatientsPage() {
       shiftFilter,
     pageSize: 50
   });
-  const [employees, setEmployees] = useState([]);
-  const [form, setForm] = useState(createInitialForm());
-  const [formPermissions, setFormPermissions] = useState(null);
+  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [form, setForm] = useState<PatientFormState>(createInitialForm);
+  const [formPermissions, setFormPermissions] = useState<PatientPermissionsDto | null>(null);
   // P1-36: stable per-form-session resource id for uploads that happen
   // BEFORE the patient is persisted (new-patient flow). Once form.id
   // exists we prefer that; otherwise this draft-id keeps every file
@@ -206,66 +312,73 @@ export default function PatientsPage() {
         ? crypto.randomUUID()
         : Math.random().toString(36).slice(2) + Date.now().toString(36))
   );
-  const [busy, setBusy] = useState(false);
+  const { busy, tryBegin, end } = useBusyGuard();
   const [message, setMessageState] = useState("");
   const [error, setErrorState] = useState("");
   const toast = useToast();
-  const setError = useCallback(function (msg) {
+  const confirm = useConfirm();
+  const setError = useCallback(function (msg: string) {
     const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  const setMessage = useCallback(function (msg) {
+  const setMessage = useCallback(function (msg: string) {
     const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
   }, [toast]);
-  const [conflictPrompt, setConflictPrompt] = useState(null); // { actual, action }
-  const [duplicatePrompt, setDuplicatePrompt] = useState(null); // { message }
-  // Inline modals: close-reason dialog and full patient history viewer.
-  const [closeDialog, setCloseDialog] = useState(null); // { id, name, reason, reason_other }
-  const [reopenDialog, setReopenDialog] = useState(null); // { id, name, note }
-  const [historyDialog, setHistoryDialog] = useState(null); // { id, name }
+  const [conflictPrompt, setConflictPrompt] = useState<ConflictPromptState | null>(null);
+  const [duplicatePrompt, setDuplicatePrompt] = useState<DuplicatePromptState | null>(null);
+  const [closeDialog, setCloseDialog] = useState<CloseDialogState | null>(null);
+  const [reopenDialog, setReopenDialog] = useState<ReopenDialogState | null>(null);
+  const [historyDialog, setHistoryDialog] = useState<HistoryDialogState | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
-  const [historyData, setHistoryData] = useState(null);
+  const [historyData, setHistoryData] = useState<PatientHistoryBundle | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
 
   const isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
+  const authRef = useRef(auth);
+  authRef.current = auth;
+
+  const loadEmployees = useCallback(function () {
+    if (!accessToken) return undefined;
+    let cancelled = false;
+    lookupsClient
+      .employees(sessionOrNull(authRef.current))
+      .then(function (rows: EmployeeOption[]) {
+        if (!cancelled) setEmployees(Array.isArray(rows) ? rows : []);
+      })
+      .catch(function (lookupError: unknown) {
+        if (cancelled) return;
+        setEmployees([]);
+        const msg =
+          lookupError &&
+          typeof lookupError === "object" &&
+          "message" in lookupError &&
+          typeof (lookupError as { message?: unknown }).message === "string"
+            ? (lookupError as { message: string }).message
+            : "unknown error";
+        setError(
+          "Could not load the employee list — " + msg + ". Assignment lists may be incomplete."
+        );
+      });
+    return function () {
+      cancelled = true;
+    };
+  }, [accessToken, setError]);
 
   useEffect(
     function () {
-      if (!accessToken) return;
-      let cancelled = false;
-      lookupsClient
-        .employees(auth.session)
-        .then(function (rows) {
-          if (!cancelled) setEmployees(rows);
-        })
-        .catch(function (lookupError: unknown) {
-          if (cancelled) return;
-          setEmployees([]);
-          const msg =
-            lookupError &&
-            typeof lookupError === "object" &&
-            "message" in lookupError &&
-            typeof (lookupError as { message?: unknown }).message === "string"
-              ? (lookupError as { message: string }).message
-              : "unknown error";
-          setError(
-            "Could not load the employee list — " + msg + ". Assignment lists may be incomplete."
-          );
-        });
-      return function () {
-        cancelled = true;
-      };
+      return loadEmployees();
     },
-    [accessToken, auth.session]
+    [loadEmployees]
   );
 
   const rows = useMemo(
-    function () {
-      return resource.data
+    function (): PatientListRow[] {
+      const data = resource.data || [];
+      return data
         .slice()
         .sort(function (left, right) {
           const leftTime = new Date(left.registered_at || left.created_at || left.created || 0).getTime();
@@ -276,7 +389,7 @@ export default function PatientsPage() {
     [resource.data, sortOrder]
   );
 
-  function caretakerLabel(employeeId) {
+  function caretakerLabel(employeeId: string | undefined | null) {
     if (!employeeId) return "";
     const hit = employees.find(function (employee) {
       return employee.id === employeeId;
@@ -284,20 +397,20 @@ export default function PatientsPage() {
     return hit ? (hit.full_name || hit.name || employeeId) : employeeId;
   }
 
-  function updateField(name, value) {
+  function updateField<K extends keyof PatientFormState>(name: K, value: PatientFormState[K]) {
     setForm(function (current) {
       const next = { ...current, [name]: value };
       if (name === "dob") {
-        next.age = deriveAgeFromDob(value) || current.age;
+        next.age = deriveAgeFromDob(String(value ?? "")) || current.age;
       }
       return next;
     });
   }
 
-  function updateContact(index, key, value) {
+  function updateContact(index: number, key: keyof RelativeContact, value: string) {
     setForm(function (current) {
       const next = current.relative_contacts.slice();
-      next[index] = { ...next[index], [key]: value };
+      next[index] = { ...(next[index] || { name: "", phone: "" }), [key]: value };
       return { ...current, relative_contacts: next };
     });
   }
@@ -333,20 +446,22 @@ export default function PatientsPage() {
     );
   }
 
-  async function handleUpload(event) {
+  async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files || []);
     if (!files.length) return;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
-      const uploaded = [];
+      const uploaded: PatientDocRef[] = [];
       const patientResourceId = form.id || draftIdRef.current;
       for (let i = 0; i < files.length; i += 1) {
+        const file = files[i];
+        if (!file) continue;
         uploaded.push(
           await uploadDocument({
             bucket: "patient-documents",
-            file: files[i],
-            session: auth.session,
+            file,
+            session: sessionOrNull(auth),
             supabase: auth.supabase,
             resource: "Patients",
             resourceId: patientResourceId
@@ -357,43 +472,49 @@ export default function PatientsPage() {
         return { ...current, documents: current.documents.concat(uploaded) };
       });
       setMessage("Patient documents uploaded");
-    } catch (uploadError) {
-      setError(uploadError.message || "Unable to upload patient documents");
+    } catch (uploadError: unknown) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Unable to upload patient documents"
+      );
     } finally {
-      setBusy(false);
+      end();
       event.target.value = "";
     }
   }
 
-  async function uploadPhotoFile(file) {
+  async function uploadPhotoFile(file: File | null | undefined) {
     if (!file) return;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
       const uploaded = await uploadDocument({
         bucket: "patient-documents",
         file: file,
-        session: auth.session,
+        session: sessionOrNull(auth),
         supabase: auth.supabase,
         resource: "Patients",
         resourceId: form.id || draftIdRef.current
       });
       setForm(function (current) { return { ...current, photo: uploaded }; });
       setMessage("Patient photo uploaded");
-    } catch (uploadError) {
-      setError(uploadError.message || "Unable to upload photo");
+    } catch (uploadError: unknown) {
+      setError(
+        uploadError instanceof Error ? uploadError.message : "Unable to upload photo"
+      );
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
-  async function handlePhotoUpload(event) {
+  async function handlePhotoUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = (event.target.files || [])[0];
     event.target.value = "";
     await uploadPhotoFile(file);
   }
 
-  async function handleCameraCapture(file) {
+  async function handleCameraCapture(file: File) {
     setCameraOpen(false);
     await uploadPhotoFile(file);
   }
@@ -408,9 +529,11 @@ export default function PatientsPage() {
     ];
     if (Array.isArray(row.relative_contacts) && row.relative_contacts.length) {
       for (let i = 0; i < Math.min(3, row.relative_contacts.length); i += 1) {
+        const contact = row.relative_contacts[i];
+        if (!contact) continue;
         rels[i] = {
-          name: row.relative_contacts[i].name || rels[i].name,
-          phone: row.relative_contacts[i].phone || rels[i].phone
+          name: contact.name || rels[i]?.name || "",
+          phone: contact.phone || rels[i]?.phone || ""
         };
       }
     }
@@ -428,7 +551,7 @@ export default function PatientsPage() {
       disease_condition: row.disease_condition || "",
       assigned_staff_id: row.assigned_staff_id || row.caretaker_id || "",
       shift_type: row.shift_type || row.shift || "DAY",
-      start_date: row.start_date || (row.created_at || "").slice(0, 10) || new Date().toISOString().slice(0, 10),
+      start_date: row.start_date || (row.created_at || "").slice(0, 10) || crmTodayIso(),
       status: row.status || "Active",
       status_reason: row.status_reason || row.close_reason || "",
       status_reason_other: row.status_reason_other || row.close_reason_other || "",
@@ -455,7 +578,7 @@ export default function PatientsPage() {
 
   async function submitForm(formOverride?: PatientFormState) {
     const current = formOverride ?? form;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     setMessage("");
     setConflictPrompt(null);
@@ -509,7 +632,7 @@ export default function PatientsPage() {
       if (current.confirm_duplicate_name) {
         payload.confirm_duplicate_name = true;
       }
-      await patientsClient.save(auth.session, payload);
+      await patientsClient.save(sessionOrNull(auth), payload);
       await resource.reload();
       resetForm();
       setMessage(current.id ? "Patient updated successfully" : "Patient created successfully");
@@ -535,7 +658,7 @@ export default function PatientsPage() {
         setError(err.message || "Unable to save patient");
       }
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
@@ -553,17 +676,19 @@ export default function PatientsPage() {
       setConflictPrompt(null);
       return;
     }
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
-      const fresh = await patientsClient.get(auth.session, form.id);
+      const fresh = await patientsClient.get(sessionOrNull(auth), form.id);
       editPatient(fresh);
       setConflictPrompt(null);
       setMessage("Patient reloaded — your previous edits were discarded.");
-    } catch (reloadError) {
-      setError(reloadError.message || "Could not reload patient.");
+    } catch (reloadError: unknown) {
+      setError(
+        reloadError instanceof Error ? reloadError.message : "Could not reload patient."
+      );
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
@@ -574,7 +699,7 @@ export default function PatientsPage() {
     await submitForm(next);
   }
 
-  function openCloseDialog(row) {
+  function openCloseDialog(row: PatientListRow) {
     setError("");
     setMessage("");
     setCloseDialog({
@@ -595,11 +720,11 @@ export default function PatientsPage() {
       setError("Specify the other reason");
       return;
     }
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     setMessage("");
     try {
-      await patientsClient.close(auth.session, closeDialog.id, {
+      await patientsClient.close(sessionOrNull(auth), closeDialog.id, {
         reason: closeDialog.reason,
         reason_other: closeDialog.reason_other
       });
@@ -607,14 +732,16 @@ export default function PatientsPage() {
       if (form.id === closeDialog.id) resetForm();
       setMessage("Patient closed");
       setCloseDialog(null);
-    } catch (closeError) {
-      setError(closeError.message || "Unable to close patient");
+    } catch (closeError: unknown) {
+      setError(
+        closeError instanceof Error ? closeError.message : "Unable to close patient"
+      );
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
-  function openReopenDialog(row) {
+  function openReopenDialog(row: PatientListRow) {
     setError("");
     setMessage("");
     setReopenDialog({
@@ -626,12 +753,12 @@ export default function PatientsPage() {
 
   async function submitReopenDialog() {
     if (!reopenDialog) return;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     setMessage("");
     try {
       await patientsClient.reopen(
-        auth.session,
+        sessionOrNull(auth),
         reopenDialog.id,
         reopenDialog.note.trim() ? { reason: reopenDialog.note.trim() } : {}
       );
@@ -639,51 +766,57 @@ export default function PatientsPage() {
       if (form.id === reopenDialog.id) resetForm();
       setMessage("Patient reopened");
       setReopenDialog(null);
-    } catch (reopenError) {
-      setError(reopenError.message || "Unable to reopen patient");
+    } catch (reopenError: unknown) {
+      setError(
+        reopenError instanceof Error ? reopenError.message : "Unable to reopen patient"
+      );
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
-  async function deletePatientPermanently(id) {
+  async function deletePatientPermanently(id: string) {
     if (!isAdmin) {
       setError("Only an Admin can permanently delete patients.");
       return;
     }
-    if (
-      !window.confirm(
-        "Permanently delete this patient? This cannot be undone. " +
-          "If the patient has any billings, duties, or receipts, the delete will be refused."
-      )
-    ) {
-      return;
-    }
-    setBusy(true);
+    const ok = await confirm({
+      title: "Permanently delete patient?",
+      description:
+        "This cannot be undone. If the patient has any billings, duties, or receipts, the delete will be refused.",
+      confirmLabel: "Delete permanently",
+      tone: "danger"
+    });
+    if (!ok) return;
+    if (!tryBegin()) return;
     setError("");
     setMessage("");
     try {
-      await patientsClient.hardDelete(auth.session, id);
+      await patientsClient.hardDelete(sessionOrNull(auth), id);
       await resource.reload();
       if (form.id === id) resetForm();
       setMessage("Patient permanently deleted");
-    } catch (deleteError) {
-      setError(deleteError.message || "Unable to delete patient");
+    } catch (deleteError: unknown) {
+      setError(
+        deleteError instanceof Error ? deleteError.message : "Unable to delete patient"
+      );
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
-  async function openHistory(row) {
+  async function openHistory(row: PatientListRow) {
     setHistoryDialog({ id: row.id, name: row.full_name || row.name || row.id });
     setHistoryData(null);
     setHistoryError("");
     setHistoryLoading(true);
     try {
-      const bundle = await patientsClient.history(auth.session, row.id);
-      setHistoryData(bundle);
-    } catch (historyErr) {
-      setHistoryError(historyErr.message || "Could not load patient history");
+      const bundle = await patientsClient.history(sessionOrNull(auth), row.id);
+      setHistoryData(bundle as PatientHistoryBundle);
+    } catch (historyErr: unknown) {
+      setHistoryError(
+        historyErr instanceof Error ? historyErr.message : "Could not load patient history"
+      );
     } finally {
       setHistoryLoading(false);
     }
@@ -696,13 +829,13 @@ export default function PatientsPage() {
     setHistoryLoading(false);
   }
 
-  async function resolvePatientDocLinks(docs) {
+  async function resolvePatientDocLinks(docs: PatientDocRef[]) {
     if (!Array.isArray(docs) || !docs.length || !auth.session) return [];
     const resolved = [];
     for (let i = 0; i < docs.length; i += 1) {
       const d = docs[i];
       try {
-        const data = await getDocumentSignedUrl(d, auth.session, { expiresIn: 1800 });
+        const data = await getDocumentSignedUrl(d, sessionOrNull(auth), { expiresIn: 1800 });
         resolved.push({ ...d, signedUrl: data && data.signedUrl ? data.signedUrl : "" });
       } catch (_e) {
         resolved.push({ ...d, signedUrl: "" });
@@ -712,15 +845,10 @@ export default function PatientsPage() {
   }
 
   async function openPatientPdf(row: PatientListRow, hideSensitive: boolean) {
-    const preOpened = window.open("about:blank", "_blank", "width=1024,height=820");
-    if (preOpened && preOpened.document) {
-      try {
-        preOpened.document.write(
-          "<title>Preparing PDF…</title><body style='font-family:Segoe UI,Arial,sans-serif;padding:32px;color:#475569'>Loading patient profile…</body>"
-        );
-      } catch {
-        /* ignore opaque about:blank */
-      }
+    const preOpened = preOpenPrintWindow();
+    if (!preOpened) {
+      reportPrintBlocked(setError);
+      return;
     }
     const rawDocs = row.patient_documents || row.docs || [];
     const photoDoc =
@@ -810,6 +938,7 @@ export default function PatientsPage() {
                   <label htmlFor="patients-start-date-8">Start date</label>
                   <input id="patients-start-date-8"
                     type="date"
+                    max={patientStartDateMax()}
                     value={form.start_date}
                     onChange={function (event) { updateField("start_date", event.target.value); }}
                     required
@@ -818,11 +947,11 @@ export default function PatientsPage() {
               </div>
               <div className="field">
                 <label htmlFor="patients-disease-condition-9">Disease / condition</label>
-                <textarea id="patients-disease-condition-9" rows="3" value={form.disease_condition} onChange={function (event) { updateField("disease_condition", event.target.value); }} />
+                <textarea id="patients-disease-condition-9" rows={3} value={form.disease_condition} onChange={function (event) { updateField("disease_condition", event.target.value); }} />
               </div>
               <div className="field">
                 <label htmlFor="patients-address-10">Address</label>
-                <textarea id="patients-address-10" rows="3" maxLength="500" value={form.address} onChange={function (event) { updateField("address", event.target.value); }} />
+                <textarea id="patients-address-10" rows={3} maxLength={500} value={form.address} onChange={function (event) { updateField("address", event.target.value); }} />
               </div>
               <div className="grid-3">
                 <div className="field">
@@ -920,15 +1049,17 @@ export default function PatientsPage() {
               <div className="stack">
                 <strong>Relatives / emergency contacts</strong>
                 {form.relative_contacts.map(function (contact, index) {
+                  const nameId = "patients-relative-" + index + "-name";
+                  const phoneId = "patients-relative-" + index + "-phone";
                   return (
-                    <div className="grid-2" key={index}>
+                    <div className="grid-2" key={"relative-" + index}>
                       <div className="field">
-                        <label htmlFor="patients-relative-index-1-name-in-18">Relative {index + 1} name {index === 0 ? "*" : ""}</label>
-                        <input id="patients-relative-index-1-name-in-18" value={contact.name} onChange={function (event) { updateContact(index, "name", event.target.value); }} required={index === 0} />
+                        <label htmlFor={nameId}>Relative {index + 1} name {index === 0 ? "*" : ""}</label>
+                        <input id={nameId} value={contact.name} onChange={function (event) { updateContact(index, "name", event.target.value); }} required={index === 0} />
                       </div>
                       <div className="field">
-                        <label htmlFor="patients-relative-index-1-phone-i-19">Relative {index + 1} phone {index === 0 ? "*" : ""}</label>
-                        <input id="patients-relative-index-1-phone-i-19" type="tel" inputMode="tel" value={contact.phone} onChange={function (event) { updateContact(index, "phone", event.target.value); }} required={index === 0} />
+                        <label htmlFor={phoneId}>Relative {index + 1} phone {index === 0 ? "*" : ""}</label>
+                        <input id={phoneId} type="tel" inputMode="tel" value={contact.phone} onChange={function (event) { updateContact(index, "phone", event.target.value); }} required={index === 0} />
                       </div>
                     </div>
                   );
@@ -954,7 +1085,7 @@ export default function PatientsPage() {
                   </div>
                   {form.photo ? (
                     <div style={{ marginTop: 8 }}>
-                      <DocumentCard doc={form.photo} session={auth.session} />
+                      <DocumentCard doc={form.photo} session={sessionOrNull(auth)} />
                     </div>
                   ) : (
                     <small>Optional. On mobile the file picker also opens the camera.</small>
@@ -973,8 +1104,8 @@ export default function PatientsPage() {
               </div>
               <DocumentList
                 docs={form.documents}
-                session={auth.session}
-                onRemove={function (doc) {
+                session={sessionOrNull(auth)}
+                onRemove={function (doc: PatientDocRef) {
                   setForm(function (current) {
                     return {
                       ...current,
@@ -1071,10 +1202,9 @@ export default function PatientsPage() {
                   <button
                     className="button primary"
                     type="submit"
-                    disabled={
-                      busy ||
-                      (form.id && formPermissions && !formPermissions.canEdit)
-                    }
+                    disabled={Boolean(
+                      busy || (form.id && formPermissions && !formPermissions.canEdit)
+                    )}
                     title={
                       formPermissions && formPermissions.blockReasons
                         ? formPermissions.blockReasons.canEdit
@@ -1175,6 +1305,7 @@ export default function PatientsPage() {
                 total={resource.total}
                 onPageChange={resource.setPage}
                 onPageSizeChange={resource.setPageSize}
+                pageSizeOptions={undefined}
               />
               <div className="mini-muted" style={{ margin: "0.25rem 0 0.75rem" }}>
                 {debouncedSearch ? "Search: \"" + debouncedSearch + "\" — " : ""}
@@ -1303,11 +1434,18 @@ export default function PatientsPage() {
             </ModuleShell>
           </div>
           {closeDialog ? (
-            <div className="modal-backdrop" onClick={function (event) {
-              if (event.target === event.currentTarget && !busy) setCloseDialog(null);
-            }}>
-              <div className="panel modal-card" role="dialog" aria-modal="true">
-                <h3>Close patient: {closeDialog.name}</h3>
+            <ModalDialog
+              open
+              onClose={function () { setCloseDialog(null); }}
+              onRequestClose={function () {
+                const dirty =
+                  closeDialog.reason === "Other" &&
+                  closeDialog.reason_other.trim().length > 0;
+                confirmDiscardTyped(confirm, dirty, function () { setCloseDialog(null); });
+              }}
+              lockClose={busy}
+              title={"Close patient: " + closeDialog.name}
+            >
                 <p className="mini-muted">
                   Soft-close keeps all billings, duties and receipts. Pick a reason — it is
                   recorded in the audit log.
@@ -1364,15 +1502,22 @@ export default function PatientsPage() {
                     {busy ? "Closing..." : "Close patient"}
                   </button>
                 </div>
-              </div>
-            </div>
+            </ModalDialog>
           ) : null}
           {reopenDialog ? (
-            <div className="modal-backdrop" onClick={function (event) {
-              if (event.target === event.currentTarget && !busy) setReopenDialog(null);
-            }}>
-              <div className="panel modal-card" role="dialog" aria-modal="true">
-                <h3>Reopen patient: {reopenDialog.name}</h3>
+            <ModalDialog
+              open
+              onClose={function () { setReopenDialog(null); }}
+              onRequestClose={function () {
+                confirmDiscardTyped(
+                  confirm,
+                  reopenDialog.note.trim().length > 0,
+                  function () { setReopenDialog(null); }
+                );
+              }}
+              lockClose={busy}
+              title={"Reopen patient: " + reopenDialog.name}
+            >
                 <p className="mini-muted">
                   Status will return to Active. If another active patient already uses this
                   mobile number, reopen will be refused.
@@ -1380,7 +1525,7 @@ export default function PatientsPage() {
                 <div className="field">
                   <label htmlFor="patients-note-optional-for-your-r-31">Note (optional, for your records)</label>
                   <textarea id="patients-note-optional-for-your-r-31"
-                    rows="2"
+                    rows={2}
                     value={reopenDialog.note}
                     onChange={function (event) {
                       const value = event.target.value;
@@ -1411,19 +1556,24 @@ export default function PatientsPage() {
                     {busy ? "Reopening..." : "Reopen as Active"}
                   </button>
                 </div>
-              </div>
-            </div>
+            </ModalDialog>
           ) : null}
           {historyDialog ? (
-            <div className="modal-backdrop" onClick={function (event) {
-              if (event.target === event.currentTarget) closeHistory();
-            }}>
-              <div className="panel modal-card modal-wide" role="dialog" aria-modal="true">
+            <ModalDialog
+              open
+              onClose={closeHistory}
+              className="panel modal-card modal-wide"
+              labelledBy="patients-history-title"
+            >
                 <div className="modal-head">
-                  <h3>History — {historyDialog.name}</h3>
+                  <h3 id="patients-history-title">History — {historyDialog.name}</h3>
                   <button className="button ghost" type="button" onClick={closeHistory}>Close</button>
                 </div>
-                {historyLoading ? <p>Loading patient ledger...</p> : null}
+                {historyLoading ? (
+                  <p role="status" aria-live="polite">
+                    Loading patient ledger...
+                  </p>
+                ) : null}
                 {historyError ? <div className="error-text">{historyError}</div> : null}
                 {historyData ? (
                   <div className="stack">
@@ -1442,7 +1592,7 @@ export default function PatientsPage() {
                               <tr><th>ID</th><th>Status</th><th>Total</th><th>Created</th></tr>
                             </thead>
                             <tbody>
-                              {historyData.billings.map(function (b) {
+                              {historyData.billings.map(function (b: BillingHistoryRow) {
                                 return (
                                   <tr key={b.id}>
                                     <td>{b.id}</td>
@@ -1466,7 +1616,7 @@ export default function PatientsPage() {
                               <tr><th>ID</th><th>Employee</th><th>Shift</th><th>Status</th><th>Start</th></tr>
                             </thead>
                             <tbody>
-                              {historyData.duties.map(function (d) {
+                              {historyData.duties.map(function (d: DutyHistoryRow) {
                                 return (
                                   <tr key={d.id}>
                                     <td>{d.id}</td>
@@ -1491,7 +1641,7 @@ export default function PatientsPage() {
                               <tr><th>ID</th><th>Billing</th><th>Method</th><th>Amount</th><th>Created</th></tr>
                             </thead>
                             <tbody>
-                              {historyData.receipts.map(function (r) {
+                              {historyData.receipts.map(function (r: ReceiptHistoryRow) {
                                 return (
                                   <tr key={r.id}>
                                     <td>{r.id}</td>
@@ -1516,7 +1666,7 @@ export default function PatientsPage() {
                               <tr><th>When</th><th>Actor</th><th>Action</th><th>Note</th></tr>
                             </thead>
                             <tbody>
-                              {historyData.audits.map(function (a) {
+                              {historyData.audits.map(function (a: AuditHistoryRow) {
                                 return (
                                   <tr key={a.id}>
                                     <td>{formatDate(a.created_at)}</td>
@@ -1533,8 +1683,7 @@ export default function PatientsPage() {
                     </div>
                   </div>
                 ) : null}
-              </div>
-            </div>
+            </ModalDialog>
           ) : null}
         </div>
       </AppShell>

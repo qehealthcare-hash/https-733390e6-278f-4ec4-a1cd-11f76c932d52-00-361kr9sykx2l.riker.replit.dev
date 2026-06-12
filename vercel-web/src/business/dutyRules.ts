@@ -9,7 +9,15 @@ export { DUTY_SHIFT_TYPES };
 export type { DutyShiftType, DutyStatus };
 
 /** Statuses that should be skipped when checking for overlap. */
-export const DUTY_OVERLAP_SKIP_STATUSES = new Set<DutyStatus>(["CANCELLED", "NO_SHOW"]);
+/** Duties in these states are excluded from overlap checks and ledger materialization. */
+export const DUTY_OVERLAP_SKIP_STATUSES = new Set<DutyStatus>([
+  "CANCELLED",
+  "NO_SHOW",
+  "DELETED"
+]);
+
+/** PostgREST `not.in` filter for inactive duty rows. */
+export const DUTY_INACTIVE_STATUS_FILTER = "(CANCELLED,NO_SHOW,DELETED)";
 
 /**
  * Sentinel `end_at` stored when a duty is "open-ended" — the legacy CRM had
@@ -143,6 +151,33 @@ export function selectPatientOverlappingDuty(
   return selectOverlap(duties, startAt, endAt, (d) => d.patient_id === patientId, excludeId);
 }
 
+/**
+ * First overlapping ACTIVE duty for the SAME (patient, employee) pair.
+ *
+ * This is the hard, non-bypassable guard: a single carer can never hold two
+ * overlapping duties for the same patient. Relief / partner-share is always a
+ * *different* employee, so this never blocks a legitimate booking. It exists
+ * because two open-ended duties for the same pair previously slipped through
+ * the bypassable warning and silently doubled billing + payout (the source of
+ * the duty-calendar drift we repaired).
+ */
+export function selectSamePatientEmployeeOverlap(
+  duties: DutyTimeSlot[],
+  patientId: string,
+  employeeId: string,
+  startAt: string,
+  endAt: string,
+  excludeId?: string
+): DutyTimeSlot | null {
+  return selectOverlap(
+    duties,
+    startAt,
+    endAt,
+    (d) => d.patient_id === patientId && d.employee_id === employeeId,
+    excludeId
+  );
+}
+
 export function canReopenCompletedDuty(currentStatus: string, nextStatus: string): ApiResult<null> {
   if (currentStatus === "COMPLETED" && nextStatus !== "COMPLETED") {
     return businessFailure("Completed duties cannot be reopened. Create a new duty instead.");
@@ -266,6 +301,18 @@ export function canCancelDuty(currentStatus: string): ApiResult<null> {
   if (s === "CANCELLED") {
     return businessFailure("Duty is already cancelled.");
   }
+  if (s === "DELETED") {
+    return businessFailure("Duty has been deleted.");
+  }
+  return businessOk();
+}
+
+/** Admin soft-delete (?hard=1) — keeps the row for audit, removes from calendar. */
+export function canDeleteDuty(currentStatus: string): ApiResult<null> {
+  const s = String(currentStatus || "").toUpperCase();
+  if (s === "DELETED") {
+    return businessFailure("Duty is already deleted.");
+  }
   return businessOk();
 }
 
@@ -287,6 +334,16 @@ export function dutyCancellationPatch(actorEmail: string, reason: string) {
   return {
     status: "CANCELLED" as DutyStatus,
     cancel_reason: reason || "",
+    updated_by: actorEmail
+  };
+}
+
+/** Patch applied when an Admin soft-deletes a duty (DELETE ?hard=1). */
+export function dutyDeletionPatch(actorEmail: string) {
+  const now = new Date().toISOString();
+  return {
+    status: "DELETED" as DutyStatus,
+    deleted_at: now,
     updated_by: actorEmail
   };
 }

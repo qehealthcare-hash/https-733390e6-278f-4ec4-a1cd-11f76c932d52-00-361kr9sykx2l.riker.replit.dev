@@ -33,7 +33,9 @@ export const doctorCreateSchema = z
   })
   .passthrough();
 
-export const doctorPatchSchema = doctorCreateSchema.partial();
+export const doctorPatchSchema = doctorCreateSchema.partial().extend({
+  expected_updated_at: z.string().trim().optional()
+});
 
 export type DoctorCreateInput = z.infer<typeof doctorCreateSchema>;
 export type DoctorPatchInput = z.infer<typeof doctorPatchSchema>;

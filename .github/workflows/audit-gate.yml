@@ -26,6 +26,27 @@ on:
     branches: [main]
 
 jobs:
+  supply-chain:
+    name: npm audit high+ (P2-12)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vercel-web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: vercel-web/package-lock.json
+
+      - name: Install vercel-web deps
+        run: npm ci
+
+      - name: npm audit (fail on high or critical)
+        run: npm audit --audit-level=high
+
   audit:
     name: Frozen audit rubric (P0 / P1)
     runs-on: ubuntu-latest

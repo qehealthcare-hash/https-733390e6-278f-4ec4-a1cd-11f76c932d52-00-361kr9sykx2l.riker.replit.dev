@@ -2,10 +2,11 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { parseJsonBody } from "@/lib/api/handler";
-import { enforceRateLimit, enforceRateLimitPersistent } from "@/lib/api/security";
+import { enforceRateLimitPersistent } from "@/lib/api/security";
 import { badRequest, jsonError, unauthorized } from "@/lib/api/errors";
 import { success } from "@/utils/apiResponse";
 import { env } from "@/lib/api/env";
+import { attachRefreshCookie } from "@/lib/auth/refreshCookie";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,10 +27,10 @@ export const dynamic = "force-dynamic";
  *     `_hh_resolve_login_email`.
  *
  * Security guarantees:
- *   * enforceRateLimit + enforceRateLimitPersistent both apply — the
- *     in-memory limiter catches a burst from a single hot Lambda, the
- *     Upstash limiter catches an attack distributed across regions.
- *     Both share the same 5 attempts / 60s budget per IP.
+ *   * enforceRateLimitPersistent applies once. It uses Upstash/Redis when
+ *     configured and falls back to memory locally. Do not stack it with the
+ *     synchronous limiter, otherwise the memory fallback counts one login
+ *     attempt twice and locks an office IP out too quickly.
  *   * No body field is reflected back to the client on failure — we
  *     respond with a generic "Invalid credentials" to avoid leaking
  *     "this username exists, that one doesn't".
@@ -81,8 +82,9 @@ async function resolveEmail(identifier: string): Promise<string | null> {
 
 export async function POST(req: NextRequest) {
   try {
-    enforceRateLimit(req, "login", 5, 60_000);
-    await enforceRateLimitPersistent(req, "login", 5, 60_000);
+    // Office users commonly share one public IP; 20/minute prevents accidental
+    // lockout while still throttling automated password spraying.
+    await enforceRateLimitPersistent(req, "login-v2", 20, 60_000);
 
     const body = await parseJsonBody(req);
     const parsed = loginSchema.safeParse(body);
@@ -118,15 +120,18 @@ export async function POST(req: NextRequest) {
     if (!tokenRes.ok || !tokenBody?.access_token) {
       throw unauthorized(tokenBody.error_description || tokenBody.msg || "Invalid username or password");
     }
-    return NextResponse.json(
+    const response = NextResponse.json(
       success({
         access_token: tokenBody.access_token,
-        refresh_token: tokenBody.refresh_token,
         expires_in: tokenBody.expires_in,
         expires_at: tokenBody.expires_at,
         user: tokenBody.user
       })
     );
+    if (tokenBody.refresh_token) {
+      attachRefreshCookie(response, tokenBody.refresh_token, tokenBody.expires_in);
+    }
+    return response;
   } catch (err) {
     return jsonError(err);
   }

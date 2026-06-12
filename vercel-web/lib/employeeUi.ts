@@ -5,6 +5,7 @@
  */
 
 import { formatCurrency, formatDate, slugToText } from "@/lib/formatters";
+import type { EmployeePermissionsDto } from "@/validation/employeeDto";
 
 export interface EmployeeDocRef {
   path?: string;
@@ -65,6 +66,13 @@ export interface EmployeeListRow {
   docs?: EmployeeDocRef[];
   photo?: EmployeeDocRef | null;
   updated_at?: string | null;
+  gender?: string;
+  dob?: string;
+  joining_date?: string;
+  relname?: string;
+  relphone?: string;
+  city?: string;
+  permissions?: EmployeePermissionsDto;
 }
 
 export function escapeHtml(value: unknown): string {

@@ -847,7 +847,9 @@ describe("payoutService.getById patient_breakdown", () => {
         total: 2
       }
     });
-    // 2 PRESENT for DUTY1 (PAT1), 1 PRESENT for DUTY2 (PAT2).
+    // Attendance rows are loaded for audit context only. Payout day/hour totals
+    // must remain sourced from hh_payout_charges so missing attendance cannot
+    // make payroll disagree with the duty calendar.
     vi.mocked(attendanceRepository.listForEmployeeMonth).mockResolvedValue({
       success: true,
       data: [
@@ -868,6 +870,7 @@ describe("payoutService.getById patient_breakdown", () => {
           id: "C1",
           svc_key: "SVC1",
           date: "2026-05-01",
+          term: "Day Shift",
           amount: 5000,
           remarks: "duty:DUTY1:2026-05-01:EMP1"
         },
@@ -875,6 +878,7 @@ describe("payoutService.getById patient_breakdown", () => {
           id: "C2",
           svc_key: "SVC1",
           date: "2026-05-02",
+          term: "Day Shift",
           amount: 5000,
           remarks: "duty:DUTY1:2026-05-02:EMP1"
         },
@@ -882,6 +886,7 @@ describe("payoutService.getById patient_breakdown", () => {
           id: "C3",
           svc_key: "SVC2",
           date: "2026-05-16",
+          term: "Night Shift",
           amount: 12000,
           remarks: "duty:DUTY2:2026-05-16:EMP1"
         }
@@ -917,6 +922,6 @@ describe("payoutService.getById patient_breakdown", () => {
     expect(byId.PAT2.patient_name).toBe("Mrs. Sharma");
     expect(byId.PAT2.amount).toBe(12000);
     expect(byId.PAT2.days_worked).toBe(1);
-    expect(byId.PAT2.hours).toBe(8);
+    expect(byId.PAT2.hours).toBe(12);
   });
 });

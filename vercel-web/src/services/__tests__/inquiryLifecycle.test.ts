@@ -69,6 +69,17 @@ vi.mock("@/database/inquiryRepository", () => ({
     async convertRpc(inquiryId: string) {
       const inq = inquiries.find((r) => r.id === inquiryId);
       if (!inq) return { success: false as const, error: "not found", code: "not_found" };
+      if (String(inq.status) === "Converted") {
+        const existing = patients.find((p) => p.phone === inq.phone);
+        return {
+          success: true as const,
+          data: {
+            patient_id: existing?.id || "PID_FROM_INQ",
+            inquiry_id: inquiryId,
+            already_converted: true
+          }
+        };
+      }
       const pid = "PID_FROM_INQ";
       patients.push({ id: pid, name: inq.name, phone: inq.phone, status: "Active" });
       inq.status = "Converted";

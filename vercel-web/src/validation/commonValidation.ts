@@ -56,7 +56,7 @@ export const isoDate = z
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "isoDate must be YYYY-MM-DD")
   .refine((v) => {
-    const [y, m, d] = v.split("-").map((n) => Number.parseInt(n, 10));
+    const [y = 0, m = 0, d = 0] = v.split("-").map((n) => Number.parseInt(n, 10));
     if (m < 1 || m > 12 || d < 1 || d > 31) return false;
     const dt = new Date(Date.UTC(y, m - 1, d));
     return (
@@ -76,7 +76,7 @@ export const isoDateTime = z
   .trim()
   .refine((v) => {
     if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-      const [y, m, d] = v.split("-").map((n) => Number.parseInt(n, 10));
+      const [y = 0, m = 0, d = 0] = v.split("-").map((n) => Number.parseInt(n, 10));
       if (m < 1 || m > 12 || d < 1 || d > 31) return false;
       const dt = new Date(Date.UTC(y, m - 1, d));
       return (
@@ -114,9 +114,9 @@ export function normaliseDateString(input: unknown): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   const legacyMatch = raw.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);
   if (legacyMatch) {
-    const day = Number(legacyMatch[1]);
-    const month = LEGACY_MONTHS[legacyMatch[2].toLowerCase()];
-    const year = Number(legacyMatch[3]);
+    const day = Number(legacyMatch[1] || 0);
+    const month = LEGACY_MONTHS[String(legacyMatch[2] || "").toLowerCase()];
+    const year = Number(legacyMatch[3] || 0);
     if (month && day >= 1 && day <= 31) {
       return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
     }

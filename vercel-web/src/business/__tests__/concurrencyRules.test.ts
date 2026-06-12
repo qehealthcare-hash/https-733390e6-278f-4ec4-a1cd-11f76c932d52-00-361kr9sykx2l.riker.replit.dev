@@ -1,7 +1,18 @@
 import { describe, it } from "vitest";
-import { assertNotStale } from "@/business/concurrencyRules";
+import { assertNotStale, requireExpectedVersion } from "@/business/concurrencyRules";
 import { ErrorCodes } from "@/types/common";
 import { expectFail, expectOk } from "@/test/assertions";
+
+describe("concurrencyRules.requireExpectedVersion", () => {
+  it("passes when expected_updated_at is present", () => {
+    expectOk(requireExpectedVersion("Patient", "2026-05-23T10:00:00Z"));
+  });
+
+  it("fails when expected_updated_at is missing", () => {
+    expectFail(requireExpectedVersion("Patient", undefined), ErrorCodes.validation);
+    expectFail(requireExpectedVersion("Patient", ""), ErrorCodes.validation);
+  });
+});
 
 describe("concurrencyRules.assertNotStale", () => {
   it("passes when client did not opt in (no expected_updated_at)", () => {

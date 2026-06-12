@@ -20,6 +20,7 @@ import {
   type VendorCreateInput,
   type VendorPatchInput
 } from "@/validation/vendorValidation";
+import { assertNotStale, requireExpectedVersion } from "@/business/concurrencyRules";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 
 const ALLOWED_FIELDS = [
@@ -58,7 +59,7 @@ function nextVendorId(rows: { id: string }[]): string {
   rows.forEach((r) => {
     const m = String(r.id || "").match(/^VEN(\d+)$/);
     if (m) {
-      const n = parseInt(m[1], 10);
+      const n = parseInt(m[1] || "", 10);
       if (n > max) max = n;
     }
   });
@@ -119,13 +120,28 @@ export const vendorService = {
     input: unknown,
     ctx: ServiceContext
   ): Promise<ApiResult<JsonRow>> {
+    const existing = await vendorRepository.findById(id, { accessToken: ctx.accessToken });
+    if (!existing.success) return passFailure(existing);
+    if (!existing.data) return notFoundFailure("Vendor", id);
+
     const parsed = vendorPatchSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
+
+    const versionRequired = requireExpectedVersion("Vendor", parsed.data.expected_updated_at);
+    if (!versionRequired.success) return passFailure(versionRequired);
+
+    const stale = assertNotStale(
+      "Vendor",
+      existing.data.updated_at,
+      parsed.data.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
+
     const payload = buildPayload(parsed.data);
     if (Object.keys(payload).length === 0) {
       return failure("No editable fields supplied", ErrorCodes.badRequest);
     }
-    const before = await vendorRepository.findById(id, { accessToken: ctx.accessToken });
+    const before = existing;
     const updated = await vendorRepository.update(id, payload, { accessToken: ctx.accessToken });
     if (!updated.success) return passFailure(updated);
     if (!updated.data) return notFoundFailure("Vendor", id);

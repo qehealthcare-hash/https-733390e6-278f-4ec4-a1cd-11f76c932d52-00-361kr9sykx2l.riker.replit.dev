@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withAuth } from "@/lib/api/handler";
 import { authService } from "@/services/authService";
 import { respond } from "@/lib/api/apiResultBridge";
+import { clearRefreshCookie } from "@/lib/auth/refreshCookie";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,5 +64,6 @@ export const POST = withAuth(async (req, { actor }) => {
     }
   );
 
-  return respond(result);
+  const response = respond(result);
+  return clearRefreshCookie(response);
 });

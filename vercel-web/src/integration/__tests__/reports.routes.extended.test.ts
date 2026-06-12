@@ -14,7 +14,8 @@ vi.mock("@/services/reportService", () => ({
     billingTotals: vi.fn(),
     payoutTotals: vi.fn(),
     profitLoss: vi.fn(),
-    payroll: vi.fn()
+    payroll: vi.fn(),
+    reconciliation: vi.fn()
   }
 }));
 
@@ -32,6 +33,7 @@ import { GET as BillingTotalsGet } from "../../../app/api/v1/reports/billing-tot
 import { GET as PayoutTotalsGet } from "../../../app/api/v1/reports/payout-totals/route";
 import { GET as ProfitLossGet } from "../../../app/api/v1/reports/profit-loss/route";
 import { GET as PayrollGet } from "../../../app/api/v1/reports/payroll/route";
+import { GET as ReconciliationGet } from "../../../app/api/v1/reports/reconciliation/route";
 
 const m = reportService as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
@@ -127,5 +129,47 @@ describe("GET /api/v1/reports/payroll", () => {
     const res = await PayrollGet(req, ctx({}));
     await expectOkEnvelope(res);
     expect(m.payroll).toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/v1/reports/reconciliation", () => {
+  beforeEach(() => {
+    setActor(null);
+    vi.clearAllMocks();
+  });
+
+  it("returns duty-master synchronization audit for Admin", async () => {
+    setActor(ACTORS.admin);
+    m.reconciliation.mockResolvedValue({
+      success: true,
+      data: {
+        ok: true,
+        from: "2026-05-01",
+        to: "2026-05-31",
+        summary: {
+          expected_duty_day_rows: 40,
+          missing_service_rows: 0,
+          missing_payout_rows: 0,
+          duplicate_service_groups: 0,
+          duplicate_payout_groups: 0
+        }
+      }
+    });
+
+    const req = makeRequest("GET", "/api/v1/reports/reconciliation?period=2026-05");
+    const res = await ReconciliationGet(req, ctx({}));
+    await expectOkEnvelope(res);
+    expect(m.reconciliation).toHaveBeenCalledWith(
+      expect.objectContaining({ period: "2026-05" }),
+      expect.objectContaining({ actor: expect.objectContaining({ email: "admin@hominal.test" }) })
+    );
+  });
+
+  it("denies Nurse", async () => {
+    setActor(ACTORS.nurse);
+    const req = makeRequest("GET", "/api/v1/reports/reconciliation?period=2026-05");
+    const res = await ReconciliationGet(req, ctx({}));
+    await expectErrorEnvelope(res, 403, "forbidden");
+    expect(m.reconciliation).not.toHaveBeenCalled();
   });
 });

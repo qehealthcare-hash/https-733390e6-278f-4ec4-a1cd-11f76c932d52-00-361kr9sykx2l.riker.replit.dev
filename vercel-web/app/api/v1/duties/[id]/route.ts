@@ -32,9 +32,9 @@ export const PUT = PATCH;
 
 /**
  * DELETE soft-cancels a duty (status = CANCELLED) and rolls back its billing
- * service entry when safe. Pass `?hard=1` (Admin-only) to permanently delete
- * the duty + diary rows. Returns the persisted row so the frontend can
- * refetch without race conditions.
+ * service entry when safe. Pass `?hard=1` (Admin-only) to soft-delete the
+ * duty (status = DELETED, diary rolled back, row kept for audit). Returns the
+ * persisted row so the frontend can refetch without race conditions.
  */
 export const DELETE = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   const url = new URL(req.url);

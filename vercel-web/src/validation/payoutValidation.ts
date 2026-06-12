@@ -85,7 +85,8 @@ export const payoutPaySchema = z
     photo: z.string().optional().default(""),
     proof_bucket: z.string().trim().max(64).optional(),
     proof_path: z.string().trim().max(512).optional(),
-    remarks: z.string().trim().max(500).optional().default("")
+    remarks: z.string().trim().max(500).optional().default(""),
+    expected_updated_at: z.string().trim().optional()
   })
   .refine(hasPayoutProof, {
     message:
@@ -109,7 +110,8 @@ export const payoutAdvanceSchema = z
     proof_bucket: z.string().trim().max(64).optional(),
     proof_path: z.string().trim().max(512).optional(),
     photo: z.string().optional().default(""),
-    remarks: z.string().trim().max(500).optional().default("")
+    remarks: z.string().trim().max(500).optional().default(""),
+    expected_updated_at: z.string().trim().optional()
   })
   .refine(hasPayoutProof, {
     message:
@@ -133,12 +135,14 @@ export const payoutLockSchema = z.object({
     .string()
     .trim()
     .min(1, "reason is required to lock a payout for payment")
-    .max(500)
+    .max(500),
+  expected_updated_at: z.string().trim().optional()
 });
 
 /** Reopening a Locked payout always requires an audited reason. */
 export const payoutReopenSchema = z.object({
-  reason: z.string().trim().min(1, "reason is required to reopen a locked payout").max(500)
+  reason: z.string().trim().min(1, "reason is required to reopen a locked payout").max(500),
+  expected_updated_at: z.string().trim().optional()
 });
 
 /** Recompute a payout from duty + attendance — RPC-driven. */

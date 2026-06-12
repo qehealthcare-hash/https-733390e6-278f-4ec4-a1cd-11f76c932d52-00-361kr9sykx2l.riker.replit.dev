@@ -9,18 +9,22 @@ import { billingSvcKey, canEditBilling } from "@/business/billingRules";
 import { isPayoutLocked } from "@/business/payoutRules";
 import {
   buildPayoutChargeRow,
+  addExcludedDaySlot,
   buildSvcEntryRow,
   collectDutyPartners,
   diarySlotKey,
   dutyDiaryRemarks,
   eachDutyCalendarDay,
+  excludedDaySet,
   expectedDiarySlotKeys,
+  isDayExcluded,
+  normalizeExcludedDays,
   normalizeExtraPartners,
   parseDutyDiaryRemarks,
   type DutyPartnerAssignment
 } from "@/business/dutyDiaryRules";
 import { effectiveMaterializeEndAt, isOpenEndedEndAt } from "@/business/dutyRules";
-import { crmDateKeyFromTimestamp, crmTodayEndIso, crmTodayIso } from "@/utils/crmToday";
+import { crmDateKeyFromTimestamp, crmTodayEndIso } from "@/utils/crmToday";
 import { billingRepository } from "@/database/billingRepository";
 import { employeeRepository } from "@/database/employeeRepository";
 import { dutyRepository } from "@/database/dutyRepository";
@@ -165,6 +169,34 @@ function rowOwnedByDuty(remarks: string | null | undefined, dutyId: string): boo
   return parsed !== null && parsed.dutyId === dutyId;
 }
 
+function normalizedText(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function sameSvcDiaryIdentity(row: JsonRow, expected: JsonRow): boolean {
+  return (
+    normalizedText(row.svc_key) === normalizedText(expected.svc_key) &&
+    normalizedText(row.billing_id) === normalizedText(expected.billing_id) &&
+    normalizedText(row.service_name) === normalizedText(expected.service_name) &&
+    normalizedText(row.partner_id) === normalizedText(expected.partner_id) &&
+    normalizedText(row.partner) === normalizedText(expected.partner) &&
+    normalizedText(row.date) === normalizedText(expected.date) &&
+    normalizedText(row.freq) === normalizedText(expected.freq)
+  );
+}
+
+function samePayoutDiaryIdentity(row: JsonRow, expected: JsonRow): boolean {
+  return (
+    normalizedText(row.svc_key) === normalizedText(expected.svc_key) &&
+    normalizedText(row.billing_id) === normalizedText(expected.billing_id) &&
+    normalizedText(row.service_name) === normalizedText(expected.service_name) &&
+    normalizedText(row.partner_id) === normalizedText(expected.partner_id) &&
+    normalizedText(row.partner) === normalizedText(expected.partner) &&
+    normalizedText(row.date) === normalizedText(expected.date) &&
+    normalizedText(row.term) === normalizedText(expected.term)
+  );
+}
+
 export interface RematerializeReport {
   period: string;
   employee_id: string;
@@ -202,7 +234,7 @@ export const dutyDiaryService = {
       );
     }
     const access = dbAccess(ctx);
-    const [y, mo] = period.split("-").map((n) => parseInt(n, 10));
+    const [y = 0, mo = 1] = period.split("-").map((n) => parseInt(n, 10));
     const startDay = `${period}-01`;
     // Last day of period as YYYY-MM-DD (works for Dec rollover).
     const lastDate = new Date(Date.UTC(y, mo, 0)).getUTCDate();
@@ -233,7 +265,7 @@ export const dutyDiaryService = {
 
     for (const duty of rows) {
       const status = String(duty.status || "").toUpperCase();
-      if (status === "CANCELLED" || status === "NO_SHOW") {
+      if (status === "CANCELLED" || status === "NO_SHOW" || status === "DELETED") {
         report.duties_skipped += 1;
         continue;
       }
@@ -264,7 +296,7 @@ export const dutyDiaryService = {
   async materializeDuty(
     duty: JsonRow,
     ctx: DutyServiceContext,
-    opts?: { from?: string; to?: string; dry_run?: boolean }
+    opts?: { from?: string; to?: string; dry_run?: boolean; prune?: boolean }
   ): Promise<ApiResult<MaterializeResult>> {
     const access = dbAccess(ctx);
     const dutyId = String(duty.id);
@@ -275,7 +307,7 @@ export const dutyDiaryService = {
     if (!patientId || !primaryId) {
       return failure("Duty must have patient_id and employee_id to materialize", ErrorCodes.badRequest);
     }
-    if (status === "CANCELLED" || status === "NO_SHOW") {
+    if (status === "CANCELLED" || status === "NO_SHOW" || status === "DELETED") {
       return failure("Cannot materialize a cancelled or no-show duty", ErrorCodes.business);
     }
 
@@ -313,16 +345,17 @@ export const dutyDiaryService = {
     //   - today (so we never materialize the future)
     //   - the bill's effective close date (if a closed bill was passed in via opts.to)
     //   - the duty's explicit end_at (if any)
-    const today = (opts?.to || crmTodayIso()).slice(0, 10);
     const materializeEnd = effectiveMaterializeEndAt(
       { end_at: duty.end_at as string | undefined },
       (active.data.closed_at as string | null | undefined) ?? null,
       opts?.to ? `${opts.to}T23:59:59.999Z` : crmTodayEndIso()
     );
 
+    const excludedSlots = excludedDaySet(normalizeExcludedDays(duty.excluded_days));
     const expectedKeys = expectedDiarySlotKeys(String(duty.start_at), materializeEnd, partners, {
       from: opts?.from,
-      to: opts?.to
+      to: opts?.to,
+      excluded: excludedSlots
     });
     const days = [...expectedKeys].map((k) => k.split(":")[0]);
     const uniqueDays = new Set(days);
@@ -467,6 +500,10 @@ export const dutyDiaryService = {
       partner: DutyPartnerAssignment
     ): Promise<ApiResult<null>> {
       const empId = partner.employee_id;
+      if (isDayExcluded(excludedSlots, isoDate, empId)) {
+        skipped += 1;
+        return success(null);
+      }
       const empName = await resolveName(empId);
       const key = diarySlotKey(isoDate, empId);
       const chargeAmt = Number(partner.charge_per_day ?? chargePerDay);
@@ -503,7 +540,7 @@ export const dutyDiaryService = {
         } else {
           const sameAmt =
             Number(ownedSvc.amt) === chargeAmt && Number(ownedSvc.total) === svcRow.total;
-          svcAction = sameAmt ? "skip" : "update";
+          svcAction = sameAmt && sameSvcDiaryIdentity(ownedSvc, svcRow) ? "skip" : "update";
         }
       } else {
         const daySvc = await billingRepository.findSvcByDayPartner(
@@ -523,7 +560,8 @@ export const dutyDiaryService = {
             } else {
               const sameAmt =
                 Number(daySvc.data.amt) === chargeAmt && Number(daySvc.data.total) === svcRow.total;
-              svcAction = sameAmt ? "skip" : "update";
+              svcAction =
+                sameAmt && sameSvcDiaryIdentity(daySvc.data, svcRow) ? "skip" : "update";
             }
           } else {
             svcAction = "skip";
@@ -539,7 +577,7 @@ export const dutyDiaryService = {
           payoutAction = "skip";
         } else {
           const sameAmt = Number(ownedPay.amount) === payoutAmt;
-          payoutAction = sameAmt ? "skip" : "update";
+          payoutAction = sameAmt && samePayoutDiaryIdentity(ownedPay, payRow) ? "skip" : "update";
         }
       } else {
         const dayPay = await billingRepository.findPayoutByDayPartner(
@@ -556,7 +594,11 @@ export const dutyDiaryService = {
             if (parsed?.manual) {
               payoutAction = "skip";
             } else {
-              payoutAction = Number(dayPay.data.amount) === payoutAmt ? "skip" : "update";
+              payoutAction =
+                Number(dayPay.data.amount) === payoutAmt &&
+                samePayoutDiaryIdentity(dayPay.data, payRow)
+                  ? "skip"
+                  : "update";
             }
           } else {
             payoutAction = "skip";
@@ -588,10 +630,16 @@ export const dutyDiaryService = {
         const upd = await billingRepository.updateSvc(
           id,
           {
+            svc_key: svcRow.svc_key,
+            billing_id: svcRow.billing_id,
+            service_name: svcRow.service_name,
+            partner_id: svcRow.partner_id,
+            date: svcRow.date,
             amt: svcRow.amt,
+            count: svcRow.count,
             total: svcRow.total,
             disc: svcRow.disc,
-            partner: empName,
+            partner: svcRow.partner || empName,
             freq: svcRow.freq,
             remarks: svcRow.remarks,
             updated_by: ctx.actor.email
@@ -619,9 +667,14 @@ export const dutyDiaryService = {
         const upd = await billingRepository.updatePayoutCharge(
           id,
           {
+            svc_key: payRow.svc_key,
+            billing_id: payRow.billing_id,
+            service_name: payRow.service_name,
+            partner_id: payRow.partner_id,
+            date: payRow.date,
             amount: payRow.amount,
             term: payRow.term,
-            partner: empName,
+            partner: payRow.partner || empName,
             remarks: payRow.remarks,
             updated_by: ctx.actor.email
           },
@@ -645,8 +698,10 @@ export const dutyDiaryService = {
       return success(null);
     }
 
-    const pruned = await pruneOrphans();
-    if (!pruned.success) return passFailure(pruned);
+    if (opts?.prune !== false) {
+      const pruned = await pruneOrphans();
+      if (!pruned.success) return passFailure(pruned);
+    }
 
     for (const isoDate of eachDutyCalendarDay(String(duty.start_at), materializeEnd)) {
       if (opts?.from && isoDate < opts.from) continue;
@@ -1006,15 +1061,20 @@ export const dutyDiaryService = {
           ? Math.max(0, patch.charge)
           : Number(svcRow.amt ?? 0);
       const svcPatch: Record<string, unknown> = {
+        svc_key: svcRow.svc_key,
+        billing_id: svcRow.billing_id,
+        service_name: svcRow.service_name,
+        partner_id: targetEmployee,
+        partner: partnerChanged ? newPartnerName || targetEmployee : svcRow.partner || targetEmployee,
+        date: svcRow.date || isoDate,
+        freq: svcRow.freq,
         amt: nextCharge,
+        count: svcRow.count,
         total: nextCharge,
+        disc: svcRow.disc,
         remarks: newRemarks,
         updated_by: ctx.actor.email
       };
-      if (partnerChanged) {
-        svcPatch.partner_id = targetEmployee;
-        svcPatch.partner = newPartnerName || targetEmployee;
-      }
       const upd = await billingRepository.updateSvc(String(svcRow.id), svcPatch, access);
       if (!upd.success) return passFailure(upd);
       svcUpdated = true;
@@ -1025,14 +1085,17 @@ export const dutyDiaryService = {
           ? Math.max(0, patch.payout)
           : Number(payRow.amount ?? 0);
       const payPatch: Record<string, unknown> = {
+        svc_key: payRow.svc_key,
+        billing_id: payRow.billing_id,
+        service_name: payRow.service_name,
+        partner_id: targetEmployee,
+        partner: partnerChanged ? newPartnerName || targetEmployee : payRow.partner || targetEmployee,
+        date: payRow.date || isoDate,
         amount: nextPayout,
+        term: payRow.term,
         remarks: newRemarks,
         updated_by: ctx.actor.email
       };
-      if (partnerChanged) {
-        payPatch.partner_id = targetEmployee;
-        payPatch.partner = newPartnerName || targetEmployee;
-      }
       const upd = await billingRepository.updatePayoutCharge(String(payRow.id), payPatch, access);
       if (!upd.success) return passFailure(upd);
       payoutUpdated = true;
@@ -1179,10 +1242,25 @@ export const dutyDiaryService = {
     }
 
     await recomputeForPartners([employeeId], isoDate, ctx);
+
+    const dutyLookup = await dutyRepository.findById(dutyId, access);
+    if (!dutyLookup.success) return passFailure(dutyLookup);
+    const nextExcluded = addExcludedDaySlot(
+      normalizeExcludedDays(dutyLookup.data?.excluded_days),
+      isoDate,
+      employeeId
+    );
+    const excludedPatch = await dutyRepository.update(
+      dutyId,
+      { excluded_days: nextExcluded, updated_by: ctx.actor.email },
+      access
+    );
+    if (!excludedPatch.success) return passFailure(excludedPatch);
+
     await emitDiaryAudit(ctx, dutyId, "delete", {
-      stamp: `Day removed ${isoDate} · partner ${employeeId}`,
+      stamp: `Day excluded ${isoDate} · partner ${employeeId} (will not re-materialize)`,
       before: beforeSnapshot,
-      after: null
+      after: { excluded_days: nextExcluded }
     });
 
     return success({ svc_deleted: svcDeleted, payout_deleted: payoutDeleted });
@@ -1255,13 +1333,13 @@ export const dutyDiaryService = {
       const results = await Promise.all(batch.map((id) => dutyDiaryService.listDays(id, ctx)));
       batch.forEach((id, idx) => {
         const r = results[idx];
-        if (r.success && r.data) {
+        if (r && r.success && r.data) {
           out[id] = r.data;
         } else {
           out[id] = {
             duty_id: id,
             entries: [],
-            error: (r.success ? "Empty diary payload" : r.error) || "Failed to load diary"
+            error: (r && r.success ? "Empty diary payload" : r?.error) || "Failed to load diary"
           };
         }
       });

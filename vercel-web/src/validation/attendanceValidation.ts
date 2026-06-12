@@ -46,7 +46,8 @@ export const attendanceSchema = z
     check_in_at: isoDateTime.optional(),
     check_out_at: isoDateTime.optional(),
     status: z.enum(ATTENDANCE_STATUSES).default("PRESENT"),
-    notes: z.string().optional().default("")
+    notes: z.string().optional().default(""),
+    expected_updated_at: z.string().trim().optional()
   })
   .superRefine((v, ctx) => {
     const needsCheckIn = v.status === "PRESENT" || v.status === "LATE" || v.status === "HALF_DAY";
@@ -102,9 +103,16 @@ export const attendanceDayMarkSchema = z.object({
   check_in_at: isoDateTime.optional(),
   check_out_at: isoDateTime.optional(),
   notes: z.string().optional().default(""),
-  sync_duty: z.boolean().optional().default(true)
+  sync_duty: z.boolean().optional().default(true),
+  expected_updated_at: z.string().trim().optional()
+});
+
+/** DELETE /attendance/:id — optional optimistic-lock token. */
+export const attendanceDeleteSchema = z.object({
+  expected_updated_at: z.string().trim().optional()
 });
 
 export type AttendanceInput = z.infer<typeof attendanceSchema>;
+export type AttendanceDeleteInput = z.infer<typeof attendanceDeleteSchema>;
 export type AttendanceListQuery = z.infer<typeof attendanceListQuerySchema>;
 export type AttendanceDayMarkInput = z.infer<typeof attendanceDayMarkSchema>;

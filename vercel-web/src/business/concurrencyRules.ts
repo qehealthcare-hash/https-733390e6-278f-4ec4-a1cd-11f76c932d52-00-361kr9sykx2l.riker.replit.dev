@@ -22,6 +22,23 @@ import { ErrorCodes } from "@/types/common";
  * both sides through `Date.parse` and comparing milliseconds at second
  * resolution.
  */
+/**
+ * PATCH/PUT updates must carry the `updated_at` the client loaded so we can
+ * detect concurrent edits. Omitting the field disables locking entirely.
+ */
+export function requireExpectedVersion(
+  entity: string,
+  expectedUpdatedAt: unknown
+): ApiResult<null> {
+  if (normalise(expectedUpdatedAt)) return { success: true, data: null };
+  return {
+    success: false,
+    error: `${entity} update requires expected_updated_at — reload the record and try again`,
+    code: ErrorCodes.validation,
+    details: { field: "expected_updated_at" }
+  };
+}
+
 export function assertNotStale(
   entity: string,
   actualUpdatedAt: unknown,

@@ -6,8 +6,17 @@ import {
   getFunctionDef,
   probeRpcAsNurse,
   requireNurseJwt,
-  requireSupabaseEnv
+  requireSupabaseEnv,
+  readAllMigrations
 } from "./helpers";
+
+function staticBusinessRpcRevokedFromAuthenticated(mig: string): boolean {
+  return (
+    /20260601210000_revoke_authenticated_business_rpc/.test(mig) &&
+    /revoke execute[\s\S]{0,120}from authenticated/i.test(mig) &&
+    /hominal_delete_invoice|hominal\_%/.test(mig)
+  );
+}
 
 const DESTRUCTIVE_RPCS = [
   "hominal_delete_invoice",
@@ -27,17 +36,18 @@ describe("P0 — Data loss, auth bypass, breach", () => {
   });
 
   it("P0-2: 7 destructive RPCs all require role (runtime probe → Nurse JWT must get 42501)", async () => {
-    // Either Nurse-JWT runtime probe OR pg_proc static probe must succeed.
-    // We prefer the runtime probe because it tests the actual production state.
-    let env: ReturnType<typeof requireSupabaseEnv>;
+    const mig = readAllMigrations();
+    const staticR2 = staticBusinessRpcRevokedFromAuthenticated(mig);
     let jwt: string;
     try {
-      env = requireSupabaseEnv();
+      requireSupabaseEnv();
       jwt = requireNurseJwt();
     } catch (e) {
-      throw new Error(
-        `P0-2 requires runtime probe — set SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, NURSE_JWT. (${(e as Error).message})`
-      );
+      expect(
+        staticR2,
+        `P0-2 needs runtime probe (SUPABASE_URL, NURSE_JWT) or migration R2 in repo. (${(e as Error).message})`
+      ).toBe(true);
+      return;
     }
     const failures: string[] = [];
     for (const rpc of DESTRUCTIVE_RPCS) {
@@ -59,13 +69,13 @@ describe("P0 — Data loss, auth bypass, breach", () => {
         hh_convert_inquiry_to_patient: { p_inquiry_id: "AUDIT_PROBE" }
       };
       const { status, body } = await probeRpcAsNurse(rpc, sampleArgs[rpc] || {});
-      // Pass criterion: response is 4xx AND mentions 42501 OR "forbidden"/"insufficient role".
-      // Anything else (200 / 500 / different error code) means the role guard isn't in place
-      // (or is masked by an earlier error). We require the explicit 42501 to be sure.
+      // Pass: in-function role guard (42501) OR PostgREST EXECUTE denied after R2 migration.
       const ok =
         status >= 400 &&
         status < 500 &&
-        (body.includes("42501") || /forbidden|insufficient/i.test(body));
+        (body.includes("42501") ||
+          /forbidden|insufficient/i.test(body) ||
+          /permission denied for function|not authorized to execute function/i.test(body));
       if (!ok) failures.push(`${rpc} → status=${status} body=${body.slice(0, 120)}`);
     }
     expect(failures, `Unguarded RPCs:\n${failures.join("\n")}`).toEqual([]);

@@ -38,6 +38,7 @@ export interface DashboardRawCounts {
   receipt_rows: Array<{ amount?: number | string | null; billing_id?: string | null }>;
   /** All payout rows for the period. */
   payout_rows: Array<{
+    employee_id?: string | null;
     gross_amount?: number | string | null;
     net_amount?: number | string | null;
     advance?: number | string | null;
@@ -46,7 +47,11 @@ export interface DashboardRawCounts {
     status?: string;
   }>;
   /** Partner charge ledger (`hh_payout_charges`) in the period. */
-  payout_charge_rows?: Array<{ amount?: number | string | null }>;
+  payout_charge_rows?: Array<{
+    amount?: number | string | null;
+    partner_id?: string | null;
+    partner?: string | null;
+  }>;
 }
 
 export interface DashboardKpis {
@@ -80,8 +85,10 @@ export interface DashboardKpis {
   billing_collected_amount: number;
   billing_pending_amount: number;
 
-  // Payouts — total = net_amount sum, paid = net for PAID rows,
-  //           pending = total − paid (= outstanding).
+  // Payouts — total = net_amount sum, paid = net for PAID rows.
+  // Pending = payout-row outstanding + charge rows for employees that do not
+  // yet have a payout row. This avoids counting the same duty charge twice
+  // after `hh_recompute_payout` has already folded it into hh_payouts.
   payout_total_amount: number;
   payout_gross_amount: number;
   payout_paid_amount: number;
@@ -98,7 +105,7 @@ export interface DashboardKpis {
    * so the dashboard widget and the P/L report agree to the rupee.
    *
    * Formula: collected − payouts (gross net amount, regardless of
-   * status) − partner-charge ledger.
+   * status) − unrepresented partner-charge ledger.
    *
    * Why both numbers ship on the dashboard:
    *   - `profit_loss` is the cash-basis snapshot operators see at end
@@ -108,6 +115,35 @@ export interface DashboardKpis {
    *     ambiguity that the old single-card layout invited.
    */
   profit_loss_after_pending: number;
+}
+
+function normalizedId(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function payoutChargeEmployeeId(row: {
+  partner_id?: string | null;
+  partner?: string | null;
+}): string {
+  return normalizedId(row.partner_id) || normalizedId(row.partner);
+}
+
+function sumUnrepresentedPayoutCharges(
+  charges: Array<{
+    amount?: number | string | null;
+    partner_id?: string | null;
+    partner?: string | null;
+  }>,
+  payouts: Array<{ employee_id?: string | null }>
+): number {
+  const representedEmployees = new Set(
+    payouts.map((p) => normalizedId(p.employee_id)).filter(Boolean)
+  );
+  return charges.reduce((sum, row) => {
+    const employeeId = payoutChargeEmployeeId(row);
+    if (employeeId && representedEmployees.has(employeeId)) return sum;
+    return sum + Number(row.amount || 0);
+  }, 0);
 }
 
 /** Build the dashboard KPI bundle from raw counts. Pure function. */
@@ -132,7 +168,12 @@ export function buildDashboardKpis(
     .filter((r) => String(r.status || "").toUpperCase() === "PAID")
     .reduce((s, r) => s + Number(r.net_amount || 0), 0);
   const partnerChargeLedger = sumReceiptAmounts(raw.payout_charge_rows || []);
-  const payoutPending = payoutOutstanding(payoutNet, payoutPaid) + partnerChargeLedger;
+  const unrepresentedPartnerChargeLedger = sumUnrepresentedPayoutCharges(
+    raw.payout_charge_rows || [],
+    raw.payout_rows
+  );
+  const payoutPending =
+    payoutOutstanding(payoutNet, payoutPaid) + unrepresentedPartnerChargeLedger;
 
   // Profit/loss for the window — collected receipts minus payouts already paid.
   // Don't subtract payable-but-unpaid payouts; that hides a liability and
@@ -146,7 +187,7 @@ export function buildDashboardKpis(
   // where owners read "Profit / Loss" as accrual profit when it was only
   // cash-basis (paid payouts only).
   const profitLossAfterPending = round2(
-    collected - payoutNet - partnerChargeLedger
+    collected - payoutNet - unrepresentedPartnerChargeLedger
   );
 
   return {
@@ -243,7 +284,7 @@ export interface PayoutTotalsReport {
   net: number;
   paid: number;
   pending: number;
-  /** Partner diary charge ledger in the period (matches dashboard KPIs). */
+  /** Full partner diary charge ledger in the period (display/audit only). */
   partner_charge_ledger: number;
   advance: number;
   deduction: number;
@@ -254,6 +295,7 @@ export function buildPayoutTotals(
   period: string,
   range: { from: string; to: string },
   rows: Array<{
+    employee_id?: string | null;
     gross_amount?: number | string | null;
     net_amount?: number | string | null;
     advance?: number | string | null;
@@ -261,7 +303,11 @@ export function buildPayoutTotals(
     bonus?: number | string | null;
     status?: string;
   }>,
-  payoutChargeRows: Array<{ amount?: number | string | null }> = []
+  payoutChargeRows: Array<{
+    amount?: number | string | null;
+    partner_id?: string | null;
+    partner?: string | null;
+  }> = []
 ): PayoutTotalsReport {
   const gross = rows.reduce((s, r) => s + Number(r.gross_amount || 0), 0);
   const net = rows.reduce((s, r) => s + Number(r.net_amount || 0), 0);
@@ -272,6 +318,10 @@ export function buildPayoutTotals(
     .filter((r) => String(r.status || "").toUpperCase() === "PAID")
     .reduce((s, r) => s + Number(r.net_amount || 0), 0);
   const partnerChargeLedger = sumReceiptAmounts(payoutChargeRows);
+  const unrepresentedPartnerChargeLedger = sumUnrepresentedPayoutCharges(
+    payoutChargeRows,
+    rows
+  );
   return {
     period,
     range,
@@ -279,7 +329,7 @@ export function buildPayoutTotals(
     gross: round2(gross),
     net: round2(net),
     paid: round2(paid),
-    pending: round2(payoutOutstanding(net, paid) + partnerChargeLedger),
+    pending: round2(payoutOutstanding(net, paid) + unrepresentedPartnerChargeLedger),
     partner_charge_ledger: round2(partnerChargeLedger),
     advance: round2(advance),
     deduction: round2(deduction),
@@ -308,8 +358,16 @@ export function buildProfitLoss(
   range: { from: string; to: string },
   args: {
     receipts: Array<{ amount?: number | string | null }>;
-    payouts: Array<{ net_amount?: number | string | null; status?: string }>;
-    payout_charges?: Array<{ amount?: number | string | null }>;
+    payouts: Array<{
+      employee_id?: string | null;
+      net_amount?: number | string | null;
+      status?: string;
+    }>;
+    payout_charges?: Array<{
+      amount?: number | string | null;
+      partner_id?: string | null;
+      partner?: string | null;
+    }>;
   }
 ): ProfitLossReport {
   const revenue = sumReceiptAmounts(args.receipts);
@@ -321,7 +379,12 @@ export function buildProfitLoss(
     0
   );
   const partnerChargeLedger = sumReceiptAmounts(args.payout_charges || []);
-  const payoutPending = payoutOutstanding(payoutAll, payoutPaid) + partnerChargeLedger;
+  const unrepresentedPartnerChargeLedger = sumUnrepresentedPayoutCharges(
+    args.payout_charges || [],
+    args.payouts
+  );
+  const payoutPending =
+    payoutOutstanding(payoutAll, payoutPaid) + unrepresentedPartnerChargeLedger;
 
   return {
     period,
@@ -331,7 +394,9 @@ export function buildProfitLoss(
     payouts_pending: round2(payoutPending),
     partner_charge_ledger: round2(partnerChargeLedger),
     net_profit: round2(revenue - payoutPaid),
-    net_profit_after_pending_payouts: round2(revenue - payoutAll - partnerChargeLedger)
+    net_profit_after_pending_payouts: round2(
+      revenue - payoutAll - unrepresentedPartnerChargeLedger
+    )
   };
 }
 

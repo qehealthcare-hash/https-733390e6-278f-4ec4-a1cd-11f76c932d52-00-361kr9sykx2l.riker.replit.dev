@@ -327,7 +327,7 @@ export const billingRepository = {
     opts?: DbAccess
   ): Promise<ApiResult<JsonRow[]>> {
     const start = `${periodYM}-01`;
-    const [y, m] = periodYM.split("-").map((n) => parseInt(n, 10));
+    const [y = 0, m = 1] = periodYM.split("-").map((n) => parseInt(n, 10));
     const nextMonth = new Date(Date.UTC(y, m, 1));
     const end = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, "0")}-01`;
     const db = resolveClient(opts);
@@ -406,7 +406,7 @@ export const billingRepository = {
     opts?: DbAccess
   ): Promise<ApiResult<{ total: number; rows: JsonRow[] }>> {
     const start = `${periodYM}-01`;
-    const [y, m] = periodYM.split("-").map((n) => parseInt(n, 10));
+    const [y = 0, m = 1] = periodYM.split("-").map((n) => parseInt(n, 10));
     const nextMonth = new Date(Date.UTC(y, m, 1));
     const end = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, "0")}-01`;
     const db = resolveClient(opts);

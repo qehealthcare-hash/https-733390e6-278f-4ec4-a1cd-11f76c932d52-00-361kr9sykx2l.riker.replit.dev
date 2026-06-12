@@ -42,6 +42,10 @@ describe("billingService — invoice summary view", () => {
     // Reproduces the kundanben shah case: MONTHLY ₹6,050 + FINAL ₹0 carrying
     // a ₹5,000 Security receipt. Bill outstanding = ₹1,050. Expect the
     // MONTHLY row to show the deposit credit and the FINAL row to net to 0.
+    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Closed", patient_id: "PAT1", sec_dep: 0 }
+    });
     vi.mocked(billingRepository.loadBillingBundle).mockResolvedValue({
       success: true,
       data: {

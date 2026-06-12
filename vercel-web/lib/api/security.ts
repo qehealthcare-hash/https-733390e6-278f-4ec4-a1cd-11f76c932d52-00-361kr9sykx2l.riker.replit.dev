@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
-import { forbidden } from "./errors";
+import { tooManyRequests } from "./errors";
 
 export function isProduction(): boolean {
   return process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
@@ -137,7 +137,9 @@ export function enforceRateLimit(
   const ip = clientIpFromRequest(req);
   const key = `${routeKey}:${ip}`;
   if (!checkRateLimit(key, limit, windowMs)) {
-    throw forbidden("Too many requests — try again shortly");
+    throw tooManyRequests("Too many requests — try again shortly", {
+      retry_after_seconds: Math.ceil(windowMs / 1000)
+    });
   }
 }
 
@@ -150,7 +152,11 @@ export async function enforceRateLimitPersistent(
   const ip = clientIpFromRequest(req);
   const key = `${routeKey}:${ip}`;
   const ok = await checkRateLimitPersistent(key, limit, windowMs);
-  if (!ok) throw forbidden("Too many requests — try again shortly");
+  if (!ok) {
+    throw tooManyRequests("Too many requests — try again shortly", {
+      retry_after_seconds: Math.ceil(windowMs / 1000)
+    });
+  }
 }
 
 const BLOCKED_UPLOAD_EXTENSIONS = [

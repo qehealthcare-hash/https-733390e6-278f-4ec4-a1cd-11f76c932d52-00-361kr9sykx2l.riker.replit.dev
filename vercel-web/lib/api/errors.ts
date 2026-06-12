@@ -24,6 +24,9 @@ export function unauthorized(message = "Sign in required") {
 export function forbidden(message = "Forbidden") {
   return new ApiError(403, message, "forbidden");
 }
+export function tooManyRequests(message = "Too many requests — try again shortly", details?: unknown) {
+  return new ApiError(429, message, "rate_limited", details);
+}
 export function notFound(entity = "Resource") {
   return new ApiError(404, `${entity} not found`, "not_found");
 }

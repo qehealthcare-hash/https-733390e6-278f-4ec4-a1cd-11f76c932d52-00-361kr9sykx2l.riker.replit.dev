@@ -145,8 +145,9 @@ export function buildAttendancePatch(
 }
 
 /**
- * Two attendance rows are duplicates when they share employee + duty (when a
- * duty is provided) OR share employee + calendar date (when no duty is set).
+ * Two attendance rows are duplicates when they share employee + duty + work
+ * date (when a duty is provided) OR share employee + calendar date (when no
+ * duty is set).
  *
  * Pre-fetched candidates allow the repository to scope the query however it
  * likes (by duty_id, or by date-window) and the rule layer to make the call.
@@ -162,8 +163,10 @@ export function findAttendanceDuplicate(
     candidates.find((c) => {
       if (c.id === excludeId) return false;
       if (c.employee_id !== employeeId) return false;
-      if (dutyId) return c.duty_id === dutyId && c.employee_id === employeeId;
       const candidateDate = attendanceRowWorkDate(c);
+      if (dutyId) {
+        return c.duty_id === dutyId && c.employee_id === employeeId && candidateDate === dateKey;
+      }
       return candidateDate === dateKey;
     }) || null
   );

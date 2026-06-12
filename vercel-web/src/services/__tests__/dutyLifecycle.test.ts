@@ -182,6 +182,186 @@ describe("dutyDiaryService.materializeDuty", () => {
     expect(result.data?.updated_svc).toBeGreaterThanOrEqual(1);
     expect(result.data?.updated_payout).toBeGreaterThanOrEqual(1);
   });
+
+  it("refreshes existing billing and payout identity metadata from the duty calendar", async () => {
+    vi.mocked(billingRepository.findActiveByPatient).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Active" }
+    });
+    vi.mocked(employeeRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "EMP1", full_name: "Alice" }
+    });
+    vi.mocked(dutyRepository.findSvcEntriesByDutyId).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          id: 10,
+          remarks: "duty:DUTY1:2026-05-01:EMP1",
+          svc_key: "OLD_BILL_Old Service",
+          billing_id: "OLD_BILL",
+          service_name: "Old Service",
+          partner_id: "",
+          partner: "Old Name",
+          date: "2026-05-01",
+          freq: "DAY",
+          amt: 100,
+          total: 100
+        }
+      ]
+    });
+    vi.mocked(dutyRepository.findPayoutChargesByDutyId).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          id: 20,
+          remarks: "duty:DUTY1:2026-05-01:EMP1",
+          svc_key: "OLD_BILL_Old Service",
+          billing_id: "OLD_BILL",
+          service_name: "Old Service",
+          partner_id: "",
+          partner: "Old Name",
+          date: "2026-05-01",
+          term: "Old",
+          amount: 50
+        }
+      ]
+    });
+    vi.mocked(billingRepository.findSvcByDayPartner).mockResolvedValue({
+      success: true,
+      data: {
+        id: 10,
+        remarks: "duty:DUTY1:2026-05-01:EMP1",
+        amt: 100,
+        total: 100
+      }
+    });
+    vi.mocked(billingRepository.findPayoutByDayPartner).mockResolvedValue({
+      success: true,
+      data: {
+        id: 20,
+        remarks: "duty:DUTY1:2026-05-01:EMP1",
+        amount: 50
+      }
+    });
+    vi.mocked(billingRepository.updateSvc).mockResolvedValue({ success: true, data: { id: 10 } });
+    vi.mocked(billingRepository.updatePayoutCharge).mockResolvedValue({ success: true, data: { id: 20 } });
+    vi.mocked(dutyRepository.update).mockResolvedValue({ success: true, data: baseDuty });
+
+    const result = await dutyDiaryService.materializeDuty(
+      {
+        ...baseDuty,
+        end_at: "2026-05-01T16:00:00Z",
+        charge_per_day: 500,
+        payout_per_day: 300
+      },
+      ctx
+    );
+
+    expect(result.success).toBe(true);
+    expect(billingRepository.updateSvc).toHaveBeenCalledWith(
+      "10",
+      expect.objectContaining({
+        svc_key: "BILL1_Care Taker Services",
+        billing_id: "BILL1",
+        service_name: "Care Taker Services",
+        partner_id: "EMP1",
+        partner: "Alice",
+        date: "2026-05-01",
+        freq: "DAY"
+      }),
+      expect.anything()
+    );
+    expect(billingRepository.updatePayoutCharge).toHaveBeenCalledWith(
+      "20",
+      expect.objectContaining({
+        svc_key: "BILL1_Care Taker Services",
+        billing_id: "BILL1",
+        service_name: "Care Taker Services",
+        partner_id: "EMP1",
+        partner: "Alice",
+        date: "2026-05-01",
+        term: "Daily"
+      }),
+      expect.anything()
+    );
+  });
+
+  it("updates stale payout metadata even when the payout amount is unchanged", async () => {
+    vi.mocked(billingRepository.findActiveByPatient).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Active" }
+    });
+    vi.mocked(employeeRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "EMP1", full_name: "Alice" }
+    });
+    vi.mocked(dutyRepository.findSvcEntriesByDutyId).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          id: 10,
+          remarks: "duty:DUTY1:2026-05-01:EMP1",
+          svc_key: "OLD_BILL_Old Service",
+          billing_id: "OLD_BILL",
+          service_name: "Old Service",
+          partner_id: "",
+          partner: "Alice",
+          date: "2026-05-01",
+          freq: "DAY",
+          amt: 500,
+          total: 500
+        }
+      ]
+    });
+    vi.mocked(dutyRepository.findPayoutChargesByDutyId).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          id: 20,
+          remarks: "duty:DUTY1:2026-05-01:EMP1",
+          svc_key: "OLD_BILL_Old Service",
+          billing_id: "OLD_BILL",
+          service_name: "Old Service",
+          partner_id: "",
+          partner: "Alice",
+          date: "2026-05-01",
+          term: "Daily",
+          amount: 300
+        }
+      ]
+    });
+    vi.mocked(billingRepository.findSvcByDayPartner).mockResolvedValue({ success: true, data: null });
+    vi.mocked(billingRepository.findPayoutByDayPartner).mockResolvedValue({ success: true, data: null });
+    vi.mocked(billingRepository.updateSvc).mockResolvedValue({ success: true, data: { id: 10 } });
+    vi.mocked(billingRepository.updatePayoutCharge).mockResolvedValue({ success: true, data: { id: 20 } });
+    vi.mocked(dutyRepository.update).mockResolvedValue({ success: true, data: baseDuty });
+
+    const result = await dutyDiaryService.materializeDuty(
+      {
+        ...baseDuty,
+        end_at: "2026-05-01T16:00:00Z",
+        charge_per_day: 500,
+        payout_per_day: 300
+      },
+      ctx
+    );
+
+    expect(result.success).toBe(true);
+    expect(billingRepository.updatePayoutCharge).toHaveBeenCalledWith(
+      "20",
+      expect.objectContaining({
+        svc_key: "BILL1_Care Taker Services",
+        billing_id: "BILL1",
+        service_name: "Care Taker Services",
+        partner_id: "EMP1",
+        partner: "Alice",
+        date: "2026-05-01",
+        amount: 300
+      }),
+      expect.anything()
+    );
+  });
 });
 
 describe("open-ended duty (no end_at)", () => {
@@ -294,6 +474,51 @@ describe("dutyService.cancel", () => {
     const result = await dutyService.cancel("DUTY1", { reason: "done" }, ctx);
     expect(result.success).toBe(false);
     expect(String(result.error || "").toLowerCase()).toContain("completed");
+  });
+});
+
+const dutyUpdatePayload = {
+  patient_id: "PAT1",
+  employee_id: "EMP1",
+  service_name: "Care Taker Services",
+  service_type: "Care Taker Services",
+  shift_type: "DAY" as const,
+  start_at: "2026-05-01T08:00:00Z",
+  end_at: "2026-05-03T16:00:00Z",
+  status: "SCHEDULED" as const,
+  charge_per_day: 500,
+  payout_per_day: 300,
+  payout_term: "Daily",
+  materialize: false
+};
+
+describe("dutyService.update concurrency", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rejects update when expected_updated_at is omitted", async () => {
+    vi.mocked(dutyRepository.findById).mockResolvedValue({
+      success: true,
+      data: baseDuty
+    });
+    const result = await dutyService.update("DUTY1", dutyUpdatePayload, ctx);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("validation_error");
+  });
+
+  it("returns conflict when expected_updated_at is stale", async () => {
+    vi.mocked(dutyRepository.findById).mockResolvedValue({
+      success: true,
+      data: baseDuty
+    });
+    const result = await dutyService.update(
+      "DUTY1",
+      { ...dutyUpdatePayload, expected_updated_at: "2020-01-01T00:00:00.000Z" },
+      ctx
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("conflict");
   });
 });
 
@@ -498,6 +723,69 @@ describe("dutyDiaryService paid-charge guard", () => {
     expect(String(out.error || "")).toMatch(/disbursed|paid/i);
     expect(billingRepository.removeSvc).not.toHaveBeenCalled();
   });
+
+  it("persists excluded_days when deleteDay removes a diary slot", async () => {
+    vi.mocked(dutyRepository.findSvcEntriesByDutyId).mockResolvedValue({
+      success: true,
+      data: [{ id: 1, remarks: "duty:DUTY1:2026-05-01:EMP1", amt: 500, total: 500 }]
+    });
+    vi.mocked(dutyRepository.findPayoutChargesByDutyId).mockResolvedValue({
+      success: true,
+      data: [{ id: 2, remarks: "duty:DUTY1:2026-05-01:EMP1", amount: 300 }]
+    });
+    vi.mocked(billingRepository.removeSvc).mockResolvedValue({ success: true, data: { id: 1 } });
+    vi.mocked(billingRepository.removePayoutCharge).mockResolvedValue({ success: true, data: { id: 2 } });
+    vi.mocked(dutyRepository.findById).mockResolvedValue({ success: true, data: baseDuty });
+    vi.mocked(dutyRepository.update).mockResolvedValue({ success: true, data: baseDuty });
+
+    const out = await dutyDiaryService.deleteDay("DUTY1", "2026-05-01", "EMP1", ctx);
+    expect(out.success).toBe(true);
+    expect(dutyRepository.update).toHaveBeenCalledWith(
+      "DUTY1",
+      expect.objectContaining({
+        excluded_days: [{ date: "2026-05-01", employee_id: "EMP1" }]
+      }),
+      expect.anything()
+    );
+  });
+});
+
+describe("dutyDiaryService excluded days", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(payoutRepository.findByEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: null
+    });
+  });
+
+  it("does not recreate ledger rows for excluded diary slots on materialize", async () => {
+    vi.mocked(billingRepository.findActiveByPatient).mockResolvedValue({
+      success: true,
+      data: { id: "BILL1", status: "Active" }
+    });
+    vi.mocked(employeeRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "EMP1", full_name: "Alice" }
+    });
+    vi.mocked(dutyRepository.findSvcEntriesByDutyId).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(dutyRepository.findPayoutChargesByDutyId).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(billingRepository.findSvcByDayPartner).mockResolvedValue({ success: true, data: null });
+    vi.mocked(billingRepository.findPayoutByDayPartner).mockResolvedValue({ success: true, data: null });
+    vi.mocked(dutyRepository.update).mockResolvedValue({ success: true, data: baseDuty });
+
+    const oneDay = {
+      ...baseDuty,
+      start_at: "2026-05-01T08:00:00Z",
+      end_at: "2026-05-01T16:00:00Z",
+      excluded_days: [{ date: "2026-05-01", employee_id: "EMP1" }]
+    };
+    const result = await dutyDiaryService.materializeDuty(oneDay, ctx);
+    expect(result.success).toBe(true);
+    expect(billingRepository.insertSvc).not.toHaveBeenCalled();
+    expect(billingRepository.insertPayoutCharge).not.toHaveBeenCalled();
+    expect(result.data?.skipped).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe("dutyDiaryService pruner :m guard", () => {
@@ -614,6 +902,75 @@ describe("dutyService.extendActive", () => {
   });
 });
 
+describe("dutyService.extendForPatient (duty<->billing parity)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns an empty no-op summary for a blank patient id", async () => {
+    const out = await dutyService.extendForPatient("", ctx);
+    expect(out.success).toBe(true);
+    expect(out.data?.processed).toBe(0);
+    expect(dutyRepository.findMaterializableByPatient).not.toHaveBeenCalled();
+  });
+
+  it("only materializes duties belonging to the requested patient", async () => {
+    vi.mocked(dutyRepository.findMaterializableByPatient).mockResolvedValue({
+      success: true,
+      data: [
+        { ...baseDuty, id: "DUTY_P1A", patient_id: "PAT1" },
+        { ...baseDuty, id: "DUTY_P1B", patient_id: "PAT1" }
+      ]
+    });
+    vi.mocked(billingRepository.findActiveByPatient).mockResolvedValue({
+      success: true,
+      data: { id: "BILL_PAT1", status: "Active" }
+    });
+    vi.mocked(employeeRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "EMP1", full_name: "Alice" }
+    });
+    vi.mocked(billingRepository.findSvcByDayPartner).mockResolvedValue({ success: true, data: null });
+    vi.mocked(billingRepository.findPayoutByDayPartner).mockResolvedValue({ success: true, data: null });
+    vi.mocked(dutyRepository.findSvcEntriesByDutyId).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(dutyRepository.findPayoutChargesByDutyId).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(billingRepository.insertSvc).mockResolvedValue({ success: true, data: { id: 1 } });
+    vi.mocked(billingRepository.insertPayoutCharge).mockResolvedValue({ success: true, data: { id: 2 } });
+    vi.mocked(dutyRepository.update).mockResolvedValue({ success: true, data: baseDuty });
+
+    const out = await dutyService.extendForPatient("PAT1", ctx);
+    expect(out.success).toBe(true);
+    expect(dutyRepository.findMaterializableByPatient).toHaveBeenCalledWith("PAT1", expect.anything());
+    expect(dutyRepository.findActive).not.toHaveBeenCalled();
+    expect(out.data?.processed).toBe(2);
+  });
+
+  it("isolates per-duty failures so one bad row never blocks the lazy backfill", async () => {
+    vi.mocked(dutyRepository.findMaterializableByPatient).mockResolvedValue({
+      success: true,
+      data: [{ ...baseDuty, id: "DUTY_BAD", patient_id: "PAT_X" }]
+    });
+    vi.mocked(billingRepository.findActiveByPatient).mockResolvedValue({
+      success: true,
+      data: { id: "BILL_PAT_X", status: "Active" }
+    });
+    vi.mocked(employeeRepository.findById).mockResolvedValue({
+      success: true,
+      data: { id: "EMP1", full_name: "Alice" }
+    });
+    vi.mocked(dutyRepository.findSvcEntriesByDutyId).mockResolvedValue({
+      success: false,
+      error: "kaboom",
+      code: "INTERNAL"
+    });
+
+    const out = await dutyService.extendForPatient("PAT_X", ctx);
+    expect(out.success).toBe(true);
+    expect(out.data?.errors).toHaveLength(1);
+    expect(out.data?.errors?.[0].duty_id).toBe("DUTY_BAD");
+  });
+});
+
 describe("patient-side overlap guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -703,5 +1060,54 @@ describe("patient-side overlap guard", () => {
     );
 
     expect(result.success).toBe(true);
+  });
+
+  it("HARD-blocks the same carer on the same patient even with confirm flags", async () => {
+    vi.mocked(dutyRepository.findOverlapping).mockResolvedValue({ success: true, data: [] });
+    vi.mocked(dutyRepository.findOverlappingForPatient).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          id: "DUTY_EXISTING",
+          employee_id: "EMP_SAME",
+          patient_id: "PAT1",
+          // Existing open-ended duty (far-future sentinel).
+          start_at: "2026-05-15T03:30:00Z",
+          end_at: "2099-12-31T23:59:59Z",
+          status: "SCHEDULED"
+        }
+      ]
+    });
+    vi.mocked(dutyRepository.insert).mockResolvedValue({
+      success: true,
+      data: { ...baseDuty, id: "DUTY_NEW" }
+    });
+    vi.mocked(dutyRepository.findById).mockResolvedValue({ success: true, data: null });
+
+    const result = await dutyService.create(
+      {
+        patient_id: "PAT1",
+        employee_id: "EMP_SAME",
+        service_name: "Care Taker Services",
+        service_type: "Care Taker Services",
+        shift_type: "DAY",
+        // New open-ended duty (no end_at) for the SAME pair, starting later.
+        start_at: "2026-05-27T03:30:00Z",
+        status: "SCHEDULED",
+        charge_per_day: 600,
+        payout_per_day: 433,
+        payout_term: "Daily",
+        materialize: false,
+        // Both confirm flags set — must STILL be rejected.
+        confirm_patient_overlap: true,
+        confirm_staff_overlap: true
+      },
+      ctx
+    );
+
+    expect(result.success).toBe(false);
+    expect(String(result.code || "").toLowerCase()).toBe("duplicate");
+    expect((result.details as { field?: string })?.field).toBe("patient_employee_window");
+    expect(vi.mocked(dutyRepository.insert)).not.toHaveBeenCalled();
   });
 });

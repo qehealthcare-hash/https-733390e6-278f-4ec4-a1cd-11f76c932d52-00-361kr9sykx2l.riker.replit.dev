@@ -48,7 +48,10 @@ If step 2 fails after step 1 succeeded, the API returns **503** `audit_write_fai
 
 Set `API_AUDIT_DISABLED=true` only in CI/unit tests.
 
-DB triggers (`hh_audit_trigger` from migration 012/013) may also write rows; the service layer trail is authoritative for `/api/v1` mutations.
+DB triggers (`hh_audit_trigger`, migration `20260601220000_audit_triggers_core_modules.sql`) write rows on
+`hh_duties`, `hh_attendance`, `hh_payouts`, `hh_patients`, `hh_employees`, and `hh_inquiries` for any insert/update/delete
+(including RPC and legacy paths). The service layer trail is authoritative for `/api/v1` mutations; those routes may
+produce paired rows (trigger `insert`/`update`/`delete` plus service `create`/`update`/`close`/…).
 
 ## Covered operations
 

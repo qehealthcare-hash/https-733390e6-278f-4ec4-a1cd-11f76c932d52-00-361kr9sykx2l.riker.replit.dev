@@ -158,9 +158,17 @@ describe("E2E lifecycle — patient → bill → invoice → receipt → close",
     });
     const closeRes = await BillingClose(
       makeRequest("POST", `/api/v1/billings/${billing.id}/close`, {
-        body: { reason: "fully paid" }
+        body: { reason: "fully paid", expected_updated_at: "2026-05-28T10:00:00.000Z" }
       }),
       ctx({ id: billing.id })
+    );
+    expect(bil.close).toHaveBeenCalledWith(
+      "BILL1",
+      expect.objectContaining({
+        reason: "fully paid",
+        expected_updated_at: "2026-05-28T10:00:00.000Z"
+      }),
+      expect.any(Object)
     );
     const closed = await expectOkEnvelope<{ status: string }>(closeRes);
     expect(closed.status).toBe("Closed");

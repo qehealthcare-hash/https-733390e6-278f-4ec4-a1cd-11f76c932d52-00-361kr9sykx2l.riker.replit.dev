@@ -4,7 +4,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { adminClient, userClient, runQuery, runListQuery } from "@/database/supabaseClient";
+import { adminClient, userClient, rpcClient, runQuery, runListQuery } from "@/database/supabaseClient";
 import type { ApiResult } from "@/types/common";
 import type { DbAccess, JsonRow, ListQuery, ListResult, MonthRange } from "@/database/types";
 
@@ -26,7 +26,7 @@ export function monthRange(month?: string): MonthRange {
     const mo = String(now.getUTCMonth() + 1).padStart(2, "0");
     return monthRange(`${y}-${mo}`);
   }
-  const [y, mo] = m.split("-").map((n) => parseInt(n, 10));
+  const [y = 0, mo = 1] = m.split("-").map((n) => parseInt(n, 10));
   const start = new Date(Date.UTC(y, mo - 1, 1));
   const end = new Date(Date.UTC(y, mo, 1));
   return { period: m, startISO: start.toISOString(), endISO: end.toISOString() };
@@ -176,7 +176,10 @@ export async function callRpc<T>(
   scope: string,
   opts?: DbAccess
 ): Promise<ApiResult<T | null>> {
-  const db = resolveClient(opts);
+  // Business RPCs are EXECUTE-granted to service_role only (see migration
+  // 20260601210000). Forward the caller JWT when present so hh_has_role() still
+  // applies; cron/admin paths without a token use bare service_role.
+  const db = rpcClient(opts?.accessToken);
   return runQuery(() => db.rpc(fn, args), `${scope}.rpc.${fn}`);
 }
 

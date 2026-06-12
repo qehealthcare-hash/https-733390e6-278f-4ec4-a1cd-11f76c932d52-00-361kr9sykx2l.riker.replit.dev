@@ -68,6 +68,7 @@ import {
   reportRepository,
   REPORT_ROW_CEILING
 } from "@/database/reportRepository";
+import { dutyRepository, type DutyMasterReconciliationReport } from "@/database/dutyRepository";
 import { billingRepository } from "@/database/billingRepository";
 import { patientRepository } from "@/database/patientRepository";
 import { computeBillingTotals, derivePaidStatus } from "@/business/billingRules";
@@ -118,6 +119,12 @@ function resolveWindow(query: {
     endYMD: endISO.slice(0, 10),
     customRange: Boolean(query.from || query.to)
   };
+}
+
+function previousCalendarDay(ymd: string): string {
+  const date = new Date(`${ymd}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
 }
 
 /** Helper to unwrap one of N parallel ApiResult repository calls. */
@@ -245,6 +252,24 @@ export const reportService = {
 
     return success(
       buildDashboardKpis(w.period, { from: w.startISO, to: w.endISO }, raw)
+    );
+  },
+
+  async reconciliation(
+    rawQuery: unknown,
+    ctx: ReportServiceContext
+  ): Promise<ApiResult<DutyMasterReconciliationReport | null>> {
+    const query = (rawQuery || {}) as {
+      period?: string;
+      from?: string;
+      to?: string;
+    };
+    const w = resolveWindow(query);
+    return dutyRepository.dutyMasterReconciliationReport(
+      w.startYMD,
+      w.customRange ? w.endYMD : previousCalendarDay(w.endYMD),
+      ctx.actor.email || "reconciliation@hominal.system",
+      dbAccess(ctx)
     );
   },
 

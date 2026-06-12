@@ -32,6 +32,7 @@ import {
   type UserCreateInput,
   type UserPatchInput
 } from "@/validation/userValidation";
+import { assertNotStale, requireExpectedVersion } from "@/business/concurrencyRules";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import { crmTodayIso } from "@/utils/crmToday";
 
@@ -43,7 +44,7 @@ function nextSequenceId(rows: { id: string }[], prefix: string, width = 5): stri
   rows.forEach((r) => {
     const m = String(r.id || "").match(re);
     if (m) {
-      const n = parseInt(m[1], 10);
+      const n = parseInt(m[1] || "", 10);
       if (n > max) max = n;
     }
   });
@@ -151,8 +152,23 @@ export const userService = {
     input: unknown,
     ctx: ServiceContext
   ): Promise<ApiResult<JsonRow>> {
+    const existing = await userRepository.findById(id);
+    if (!existing.success) return passFailure(existing);
+    if (!existing.data) return notFoundFailure("User", id);
+
     const parsed = userPatchSchema.safeParse(input);
     if (!parsed.success) return validationFailure(parsed.error.flatten());
+
+    const versionRequired = requireExpectedVersion("User", parsed.data.expected_updated_at);
+    if (!versionRequired.success) return passFailure(versionRequired);
+
+    const stale = assertNotStale(
+      "User",
+      existing.data.updated_at,
+      parsed.data.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
+
     const payload = buildUserPayload(parsed.data);
     if (Object.keys(payload).length === 0) {
       return failure("No editable fields supplied", ErrorCodes.badRequest);
@@ -169,7 +185,7 @@ export const userService = {
         ErrorCodes.forbidden
       );
     }
-    const before = await userRepository.findById(id);
+    const before = existing;
     const updated = await userRepository.update(id, payload);
     if (!updated.success) return passFailure(updated);
     if (!updated.data) return notFoundFailure("User", id);

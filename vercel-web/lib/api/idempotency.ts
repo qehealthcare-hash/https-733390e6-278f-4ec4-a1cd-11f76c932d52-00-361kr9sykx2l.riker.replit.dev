@@ -35,6 +35,8 @@ export interface IdempotencyConfig {
 }
 
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+/** Stale PENDING rows older than this may be reclaimed (P0-9). */
+export const PENDING_TTL_MS = 30_000;
 
 // ─── canonical body + stable hash ─────────────────────────────────────────
 

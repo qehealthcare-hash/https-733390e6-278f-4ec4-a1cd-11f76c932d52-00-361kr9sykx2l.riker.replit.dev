@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useBusyGuard } from "@/hooks/use-busy-guard";
 import { useRouter } from "next/navigation";
 import { appConfig } from "@/lib/config";
 import { useAuth } from "@/components/providers/auth-provider";
@@ -17,14 +18,22 @@ type LoginAuth = {
   signIn: (email: string, password: string) => Promise<void>;
 };
 
+type LoginError = Error & {
+  code?: string;
+  details?: { retry_after_seconds?: number } | null;
+  status?: number;
+};
+
 export default function LoginPage() {
   const auth = useAuth() as unknown as LoginAuth;
   const router = useRouter();
   const toast = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, tryBegin, end } = useBusyGuard();
   const [error, setErrorState] = useState("");
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
   const setError = useCallback(
     function (msg: string) {
       const text = String(msg || "");
@@ -66,25 +75,64 @@ export default function LoginPage() {
     [toast]
   );
 
+  useEffect(
+    function () {
+      if (!cooldownUntil) {
+        setCooldownRemaining(0);
+        return;
+      }
+      function tick() {
+        const remaining = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000));
+        setCooldownRemaining(remaining);
+        if (remaining <= 0) {
+          setCooldownUntil(0);
+        }
+      }
+      tick();
+      const timer = window.setInterval(tick, 1000);
+      return function cleanup() {
+        window.clearInterval(timer);
+      };
+    },
+    [cooldownUntil]
+  );
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setBusy(true);
+    if (cooldownRemaining > 0) {
+      setError("Too many login attempts. Please wait " + cooldownRemaining + " seconds.");
+      return;
+    }
+    if (!tryBegin()) return;
     setError("");
     try {
       await auth.signIn(email.trim(), password);
     } catch (signInError: unknown) {
+      const richError = signInError as LoginError;
+      if (
+        richError?.status === 429 ||
+        richError?.code === "rate_limited" ||
+        /too many requests/i.test(String(richError?.message || ""))
+      ) {
+        const retryAfter = Number(richError?.details?.retry_after_seconds || 60);
+        setCooldownUntil(Date.now() + Math.max(10, retryAfter) * 1000);
+        setError("Too many login attempts. Please wait " + Math.max(10, retryAfter) + " seconds and try once.");
+        return;
+      }
       const message =
         signInError instanceof Error ? signInError.message : "Sign-in failed";
       setError(message);
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
   if (auth.loading || (auth.session && auth.profileLoading)) {
     return (
       <div className="login-wrap">
-        <div className="panel login-card">Loading…</div>
+        <div className="panel login-card" role="status" aria-live="polite">
+          Loading…
+        </div>
       </div>
     );
   }
@@ -134,8 +182,12 @@ export default function LoginPage() {
               {error}
             </div>
           ) : null}
-          <button className="button primary" type="submit" disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
+          <button className="button primary" type="submit" disabled={busy || cooldownRemaining > 0}>
+            {busy
+              ? "Signing in…"
+              : cooldownRemaining > 0
+                ? "Wait " + cooldownRemaining + "s"
+                : "Sign in"}
           </button>
         </form>
         <div className="mini-muted" style={{ textAlign: "center" }}>

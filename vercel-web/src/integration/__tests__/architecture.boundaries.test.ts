@@ -252,7 +252,7 @@ describe("architecture: Supabase client import boundary", () => {
     "src/database/supabaseClient.ts",
     "src/database/clients.ts",
     "src/database/baseRepository.ts",
-    "lib/supabase/browser.js"
+    "lib/supabase/browser.ts"
   ]);
 
   it("only database layer and browser entry import @supabase/supabase-js", () => {
@@ -273,6 +273,46 @@ describe("architecture: Supabase client import boundary", () => {
           if (spec === "@supabase/supabase-js") {
             violations.push({ file: r, importPath: spec });
           }
+        }
+      }
+    }
+    if (violations.length > 0) {
+      console.error(JSON.stringify(violations, null, 2));
+    }
+    expect(violations).toEqual([]);
+  });
+});
+
+describe("architecture: api-client import boundary", () => {
+  const allowedApiClient = new Set([
+    "lib/api-client.ts",
+    "lib/uploads.ts",
+    "lib/offline-queue.ts"
+  ]);
+
+  function isUnderClients(relPath: string): boolean {
+    return relPath.startsWith("lib/clients/");
+  }
+
+  function importsRestrictedApiClientHelpers(source: string): boolean {
+    const blocks =
+      source.match(/import\s+(?:type\s+)?\{[^}]+\}\s+from\s+["']@\/lib\/api-client["']/g) || [];
+    return blocks.some(function (block) {
+      return /\b(?:request|requestWithOfflineFallback)\b/.test(block);
+    });
+  }
+
+  it("app and UI do not import request helpers from api-client directly", () => {
+    const scanRoots = [path.join(ROOT, "app"), path.join(ROOT, "components"), path.join(ROOT, "lib")];
+    const violations: string[] = [];
+    for (const root of scanRoots) {
+      for (const file of walk(root)) {
+        const r = rel(file);
+        if (r.includes("__tests__") || r.includes("node_modules")) continue;
+        if (allowedApiClient.has(r) || isUnderClients(r)) continue;
+        const source = read(file);
+        if (importsRestrictedApiClientHelpers(source)) {
+          violations.push(r);
         }
       }
     }

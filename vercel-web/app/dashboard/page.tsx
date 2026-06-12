@@ -33,7 +33,7 @@ import { AuthGuard } from "@/components/state/auth-guard";
 import { StatCard } from "@/components/ui/stat-card";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
-import { request } from "@/lib/api-client";
+import { reportsClient } from "@/lib/clients";
 import { formatCurrency } from "@/lib/formatters";
 import {
   currentPeriod,
@@ -72,8 +72,11 @@ export default function DashboardPage() {
   const auth = useAuth() as {
     session?: { access_token?: string } | null;
   } | null;
-  const session = auth?.session ?? null;
-  const accessToken = session?.access_token ?? "";
+  const accessToken = auth?.session?.access_token ?? "";
+  // P1-B: pin latest session so memoized fetchKpis never reads a stale
+  // session object after onAuthStateChange re-renders the provider.
+  const sessionRef = useRef(auth?.session ?? null);
+  sessionRef.current = auth?.session ?? null;
 
   const [period, setPeriod] = useState<string>(() => currentPeriod());
   const [kpis, setKpis] = useState<DashboardKpis | null>(null);
@@ -118,11 +121,11 @@ export default function DashboardPage() {
       if (!isAutoRetry) setError("");
 
       try {
-        const data = (await request(
-          "/reports/dashboard?period=" + encodeURIComponent(targetPeriod),
-          { signal: controller.signal },
-          session
-        )) as DashboardKpis;
+        const session = sessionRef.current;
+        if (!session) return;
+        const data = (await reportsClient.dashboard(session, targetPeriod, {
+          signal: controller.signal
+        })) as DashboardKpis;
         if (gen !== generationRef.current) return; // stale
         setKpis(data);
         setError("");
@@ -154,7 +157,7 @@ export default function DashboardPage() {
         }
       }
     },
-    [accessToken, session]
+    [accessToken, setError]
   );
 
   useEffect(() => {
@@ -209,10 +212,12 @@ export default function DashboardPage() {
               </button>
             </div>
             <label
+              htmlFor="dashboard-period-custom"
               style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: "auto" }}
             >
               <span className="mini-muted">Custom:</span>
               <input
+                id="dashboard-period-custom"
                 type="month"
                 value={period}
                 onChange={(e) => onPeriodChange(e.target.value)}

@@ -38,19 +38,24 @@ import {
   buildDutyPermissions,
   canCancelDutyWithBilling,
   canCancelDuty,
+  canDeleteDuty,
   canEditDutyStatus,
   canReopenCompletedDuty,
   dutyCancellationPatch,
+  dutyDeletionPatch,
   dutyCheckInPatch,
   dutyCheckOutPatch,
   dutyPersistRow,
+  isOpenEndedEndAt,
+  OPEN_ENDED_END_AT,
   payoutPeriodForDuty,
   selectOverlappingDuty,
   selectPatientOverlappingDuty,
+  selectSamePatientEmployeeOverlap,
   shouldCheckDutyOverlap,
   type DutyTimeSlot
 } from "@/business/dutyRules";
-import { assertNotStale } from "@/business/concurrencyRules";
+import { assertNotStale, requireExpectedVersion } from "@/business/concurrencyRules";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
 import { hoursBetween } from "@/business/attendanceRules";
 import { newId } from "@/business/idRules";
@@ -125,6 +130,134 @@ function toLoadFailure(result: ApiResult<unknown>): LoadResult<never> {
   };
 }
 
+interface ExtendSummary {
+  processed: number;
+  created_svc: number;
+  created_payout: number;
+  updated_svc: number;
+  updated_payout: number;
+  deleted_svc: number;
+  deleted_payout: number;
+  skipped: number;
+  skipped_no_bill: number;
+  errors: { duty_id: string; error: string }[];
+}
+
+/**
+ * Shared materialize loop for both `extendActive` (global cron sweep) and
+ * `extendForPatient` (explicit patient-scoped backfill from billingService.syncDutyLedgerForPatient).
+ * Iterates every duty returned by `loader`, skips ones whose
+ * patient has no Active bill, and lets per-duty errors flow through to
+ * `errors[]` without aborting the whole pass.
+ *
+ * Pass `{ audit: true }` to write the global cron-extend audit row at the
+ * end. The patient-scoped lazy path passes `{ audit: false }` to avoid
+ * flooding the audit log on every billing read.
+ */
+async function runExtendOverDuties(
+  loader: () => Promise<ApiResult<JsonRow[]>>,
+  ctx: DutyServiceContext,
+  opts: { audit: boolean; from?: string; to?: string; prune?: boolean }
+): Promise<ApiResult<ExtendSummary>> {
+  const active = await loader();
+  if (!active.success) return passFailure(active);
+
+  let createdSvc = 0;
+  let createdPayout = 0;
+  let updatedSvc = 0;
+  let updatedPayout = 0;
+  let deletedSvc = 0;
+  let deletedPayout = 0;
+  let skipped = 0;
+  let skippedNoBill = 0;
+  const errors: { duty_id: string; error: string }[] = [];
+
+  const { billingRepository } = await import("@/database/billingRepository");
+  const access = dbAccess(ctx);
+
+  for (const duty of active.data || []) {
+    const id = String(duty.id);
+    // Skip duties whose patient has no Active bill — materializeDuty would
+    // fail with "No active bill for patient" and that's expected (operator
+    // hasn't opened a bill yet, or the bill is already Closed). This keeps
+    // the cron summary honest and avoids noisy error counts.
+    const patientId = String(duty.patient_id || "");
+    if (!patientId) {
+      skippedNoBill += 1;
+      continue;
+    }
+    const bill = await billingRepository.findActiveByPatient(patientId, access);
+    if (!bill.success) {
+      errors.push({ duty_id: id, error: bill.error || bill.code || "active-bill lookup failed" });
+      continue;
+    }
+    if (!bill.data) {
+      skippedNoBill += 1;
+      continue;
+    }
+
+    const mat = await dutyDiaryService.materializeDuty(duty, ctx, {
+      from: opts.from,
+      to: opts.to,
+      prune: opts.prune
+    });
+    if (!mat.success) {
+      errors.push({ duty_id: id, error: mat.error || mat.code || "materialize failed" });
+      continue;
+    }
+    const r = mat.data!;
+    createdSvc += r.created_svc;
+    createdPayout += r.created_payout;
+    updatedSvc += r.updated_svc;
+    updatedPayout += r.updated_payout;
+    deletedSvc += r.deleted_svc;
+    deletedPayout += r.deleted_payout;
+    skipped += r.skipped;
+  }
+
+  const summary: ExtendSummary = {
+    processed: active.data?.length || 0,
+    created_svc: createdSvc,
+    created_payout: createdPayout,
+    updated_svc: updatedSvc,
+    updated_payout: updatedPayout,
+    deleted_svc: deletedSvc,
+    deleted_payout: deletedPayout,
+    skipped,
+    skipped_no_bill: skippedNoBill,
+    errors
+  };
+
+  if (opts.audit) {
+    // Best-effort audit for the cron run itself. Skipped when nothing
+    // mutated to avoid log noise on idle nights.
+    const mutated =
+      createdSvc + updatedSvc + deletedSvc + createdPayout + updatedPayout + deletedPayout;
+    if (mutated > 0 || errors.length > 0) {
+      try {
+        await writeMutationAudit(dbAccess(ctx), ctx.actor, {
+          module: "duty_cron",
+          entity_id: "duties-extend",
+          action: "update",
+          stamp:
+            `Cron extend · processed:${summary.processed}` +
+            ` skipped-no-bill:${skippedNoBill}` +
+            ` created:${createdSvc}/${createdPayout}` +
+            ` updated:${updatedSvc}/${updatedPayout}` +
+            ` deleted:${deletedSvc}/${deletedPayout}` +
+            (errors.length ? ` errors:${errors.length}` : ""),
+          before: null,
+          after: summary
+        });
+      } catch (err) {
+        console.error("[dutyService.extendActive] cron audit write failed", err);
+      }
+    }
+  }
+
+  return success(summary);
+}
+
 async function loadDuty(
   id: string,
   ctx: DutyServiceContext
@@ -182,6 +315,42 @@ async function ensureNoOverlap(
     input.end_at && input.end_at.trim()
       ? input.end_at
       : new Date(new Date(input.start_at).getTime() + 24 * 3600 * 1000).toISOString();
+
+  // HARD guard (non-bypassable): the SAME carer can never hold two overlapping
+  // active duties for the SAME patient. Relief / partner-share always uses a
+  // different employee, so this never blocks a legitimate booking. Open-ended
+  // duties use the far-future sentinel here (NOT the 24h window) so two
+  // open-ended duties for the same pair always collide — closing the exact
+  // hole that silently doubled billing + payout. No confirm flag overrides it.
+  const hardEnd =
+    input.end_at && input.end_at.trim() && !isOpenEndedEndAt(input.end_at)
+      ? input.end_at
+      : OPEN_ENDED_END_AT;
+  const samePairRows = await dutyRepository.findOverlappingForPatient(
+    input.patient_id,
+    input.start_at,
+    hardEnd,
+    excludeId,
+    access
+  );
+  if (!samePairRows.success) return passFailure<null>(samePairRows);
+  const samePairConflict = selectSamePatientEmployeeOverlap(
+    (samePairRows.data || []).map(asSlot),
+    input.patient_id,
+    input.employee_id,
+    input.start_at,
+    hardEnd,
+    excludeId
+  );
+  if (samePairConflict) {
+    return duplicateFailure(
+      "patient_employee_window",
+      samePairConflict.id,
+      "This carer already has an overlapping duty for this patient. Close or " +
+        "cancel the existing duty first — the same carer cannot be booked twice " +
+        "for the same patient (it would double billing and payout)."
+    );
+  }
 
   if (!input.confirm_staff_overlap) {
     const empRows = await dutyRepository.findOverlapping(
@@ -282,6 +451,90 @@ async function rollbackBillingFromDuty(
   return success(null);
 }
 
+async function payoutPeriodsTouchedByDuty(
+  duty: JsonRow,
+  ctx: DutyServiceContext
+): Promise<Map<string, Set<string>>> {
+  const access = dbAccess(ctx);
+  const dutyId = String(duty.id || "");
+  const periodsByEmployee = new Map<string, Set<string>>();
+
+  function add(employeeId: string, isoDate: string) {
+    const emp = String(employeeId || "").trim();
+    const period = String(isoDate || "").slice(0, 7);
+    if (!emp || !/^\d{4}-\d{2}$/.test(period)) return;
+    const set = periodsByEmployee.get(emp) || new Set<string>();
+    set.add(period);
+    periodsByEmployee.set(emp, set);
+  }
+
+  const primaryId = String(duty.employee_id || "");
+  const fallbackPeriod = payoutPeriodForDuty(
+    String(duty.start_at || ""),
+    new Date().toISOString()
+  );
+  add(primaryId, `${fallbackPeriod}-01`);
+
+  try {
+    const extra = Array.isArray(duty.extra_partners) ? duty.extra_partners : [];
+    for (const item of extra) {
+      const empId = String((item as { employee_id?: unknown }).employee_id || "");
+      add(empId, `${fallbackPeriod}-01`);
+    }
+  } catch {
+    /* ignore malformed extra_partners */
+  }
+
+  if (dutyId) {
+    const payRows = await dutyRepository.findPayoutChargesByDutyId(dutyId, access);
+    if (payRows.success) {
+      for (const row of payRows.data || []) {
+        const empId = String(row.partner_id || row.partner || "");
+        add(empId, String(row.date || `${fallbackPeriod}-01`));
+      }
+    }
+  }
+
+  return periodsByEmployee;
+}
+
+async function recomputeAffectedPayoutPeriods(
+  periodsByEmployee: Map<string, Set<string>>,
+  ctx: DutyServiceContext,
+  scope: string
+): Promise<void> {
+  const access = dbAccess(ctx);
+  const tasks: Promise<unknown>[] = [];
+  periodsByEmployee.forEach(function (periods, employeeId) {
+    periods.forEach(function (period) {
+      tasks.push(
+        payoutRepository.recomputeRpc(employeeId, period, access).catch((err) => {
+          console.error(`[dutyService.${scope}] recompute payout failed`, {
+            employeeId,
+            period,
+            err
+          });
+        })
+      );
+    });
+  });
+  await Promise.all(tasks);
+}
+
+function mergePayoutPeriods(
+  target: Map<string, Set<string>>,
+  source: Map<string, Set<string>>
+): Map<string, Set<string>> {
+  source.forEach(function (periods, employeeId) {
+    const set = target.get(employeeId) || new Set<string>();
+    periods.forEach(function (period) {
+      set.add(period);
+    });
+    target.set(employeeId, set);
+  });
+  return target;
+}
+
 export type DutyApiRow = JsonRow;
 
 export const dutyService = {
@@ -357,6 +610,14 @@ export const dutyService = {
     const inserted = await dutyRepository.insert(row, dbAccess(ctx));
     if (!inserted.success) {
       const msg = (inserted.error || "").toLowerCase();
+      if (msg.includes("hh_duties_patient_emp_no_overlap")) {
+        return duplicateFailure(
+          "patient_employee_window",
+          id,
+          "This carer already has an overlapping duty for this patient. Close " +
+            "or cancel the existing duty first."
+        );
+      }
       if (msg.includes("hh_duties_no_overlap")) {
         return duplicateFailure("duty_window", id, "Staff already has a duty overlapping this time");
       }
@@ -367,7 +628,17 @@ export const dutyService = {
 
     if (input.materialize) {
       const mat = await dutyDiaryService.materializeDuty(fresh.data, ctx);
-      if (!mat.success) return passFailure(mat);
+      if (!mat.success) {
+        // Do not leave a half-created duty that is absent from billing/payout.
+        try {
+          await dutyRepository.remove(id, dbAccess(ctx));
+        } catch (err) {
+          console.error("[dutyService.create] failed to rollback unsynced duty", { id, err });
+        }
+        return passFailure(mat);
+      }
+      const affected = await payoutPeriodsTouchedByDuty(fresh.data, ctx);
+      await recomputeAffectedPayoutPeriods(affected, ctx, "create");
     }
 
     return finalizeWithAudit(
@@ -387,6 +658,9 @@ export const dutyService = {
     const parsed = parseInput(dutySchema, { ...(rawInput as object), id });
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as DutyInput;
+
+    const versionRequired = requireExpectedVersion("Duty", input.expected_updated_at);
+    if (!versionRequired.success) return passFailure(versionRequired);
 
     const stale = assertNotStale("Duty", existing.data.updated_at, input.expected_updated_at);
     if (!stale.success) return passFailure(stale);
@@ -409,6 +683,8 @@ export const dutyService = {
       );
     }
 
+    const affectedBefore = await payoutPeriodsTouchedByDuty(existing.data, ctx);
+
     const overlap = await ensureNoOverlap(
       {
         ...input,
@@ -425,7 +701,21 @@ export const dutyService = {
       updated_by: ctx.actor.email
     };
     const updated = await dutyRepository.update(id, patch, dbAccess(ctx));
-    if (!updated.success) return passFailure(updated);
+    if (!updated.success) {
+      const msg = (updated.error || "").toLowerCase();
+      if (msg.includes("hh_duties_patient_emp_no_overlap")) {
+        return duplicateFailure(
+          "patient_employee_window",
+          id,
+          "This carer already has an overlapping duty for this patient. Close " +
+            "or cancel the existing duty first."
+        );
+      }
+      if (msg.includes("hh_duties_no_overlap")) {
+        return duplicateFailure("duty_window", id, "Staff already has a duty overlapping this time");
+      }
+      return passFailure(updated);
+    }
 
     const fresh = await loadFreshDuty(id, ctx, updated.data ?? null);
     if (!fresh.success) return passFailure(fresh);
@@ -433,6 +723,9 @@ export const dutyService = {
     if (input.materialize) {
       const mat = await dutyDiaryService.materializeDuty(fresh.data, ctx);
       if (!mat.success) return passFailure(mat);
+      const affectedAfter = await payoutPeriodsTouchedByDuty(fresh.data, ctx);
+      const affected = mergePayoutPeriods(affectedBefore, affectedAfter);
+      await recomputeAffectedPayoutPeriods(affected, ctx, "update");
     }
 
     return finalizeWithAudit(
@@ -622,6 +915,10 @@ export const dutyService = {
    * one new charge + payout per partner per day. Designed to be hit by
    * a Vercel Cron so the duty calendar is always in sync without the
    * operator clicking "Sync diary" manually.
+   *
+   * Patient-scoped variant is available via `extendForPatient(patientId)`.
+   * It is intentionally called from mutation/sync flows, not from ordinary
+   * billing detail reads, so opening a patient bill remains fast.
    */
   async extendActive(
     ctx: DutyServiceContext
@@ -639,94 +936,144 @@ export const dutyService = {
       errors: { duty_id: string; error: string }[];
     }>
   > {
-    const active = await dutyRepository.findActive(dbAccess(ctx));
-    if (!active.success) return passFailure(active);
+    return runExtendOverDuties(
+      () => dutyRepository.findActive(dbAccess(ctx)),
+      ctx,
+      { audit: true }
+    );
+  },
 
-    let createdSvc = 0;
-    let createdPayout = 0;
-    let updatedSvc = 0;
-    let updatedPayout = 0;
-    let deletedSvc = 0;
-    let deletedPayout = 0;
-    let skipped = 0;
-    let skippedNoBill = 0;
-    const errors: { duty_id: string; error: string }[] = [];
+  /**
+   * Cron-safe catch-up: process only active duties that are missing today's
+   * materialized billing/payout row. This keeps the live cron request short
+   * and avoids re-walking every already-synced duty.
+   */
+  async extendDue(
+    ctx: DutyServiceContext,
+    options?: { today?: string; limit?: number }
+  ): Promise<
+    ApiResult<{
+      processed: number;
+      created_svc: number;
+      created_payout: number;
+      updated_svc: number;
+      updated_payout: number;
+      deleted_svc: number;
+      deleted_payout: number;
+      skipped: number;
+      skipped_no_bill: number;
+      errors: { duty_id: string; error: string }[];
+    }>
+  > {
+    const today = /^\d{4}-\d{2}-\d{2}$/.test(String(options?.today || ""))
+      ? String(options?.today)
+      : new Date().toISOString().slice(0, 10);
+    const limit = Math.max(1, Math.min(50, Math.floor(Number(options?.limit) || 20)));
+    return runExtendOverDuties(
+      () => dutyRepository.findActiveNeedingExtension(today, limit, dbAccess(ctx)),
+      ctx,
+      { audit: true, from: today, to: today, prune: false }
+    );
+  },
 
-    const { billingRepository } = await import("@/database/billingRepository");
-    const access = dbAccess(ctx);
+  /**
+   * Database-side daily materialization for production cron. This is the
+   * durable path for open-ended duties: one Supabase transaction inserts the
+   * missing hh_svc_entries + hh_payout_charges rows and unique indexes prevent
+   * duplicate patient/staff/day billing.
+   */
+  async bulkExtendDue(
+    ctx: DutyServiceContext,
+    options?: { from?: string; to?: string; limit?: number }
+  ): Promise<ApiResult<import("@/database/dutyRepository").BulkDutyMaterializeResult | null>> {
+    const today = new Date().toISOString().slice(0, 10);
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(options?.from || ""))
+      ? String(options?.from)
+      : today;
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(options?.to || ""))
+      ? String(options?.to)
+      : from;
+    const limit = Math.max(1, Math.min(1000, Math.floor(Number(options?.limit) || 500)));
+    return dutyRepository.bulkMaterializeDueDutyDays(
+      from,
+      to,
+      limit,
+      ctx.actor.email || "cron@hominal.system",
+      dbAccess(ctx)
+    );
+  },
 
-    for (const duty of active.data || []) {
-      const id = String(duty.id);
-      // Skip duties whose patient has no Active bill — materializeDuty would
-      // fail with "No active bill for patient" and that's expected (operator
-      // hasn't opened a bill yet, or the bill is already Closed). This keeps
-      // the cron summary honest and avoids noisy error counts.
-      const patientId = String(duty.patient_id || "");
-      if (!patientId) {
-        skippedNoBill += 1;
-        continue;
-      }
-      const bill = await billingRepository.findActiveByPatient(patientId, access);
-      if (!bill.success) {
-        errors.push({ duty_id: id, error: bill.error || bill.code || "active-bill lookup failed" });
-        continue;
-      }
-      if (!bill.data) {
-        skippedNoBill += 1;
-        continue;
-      }
+  /**
+   * Reconcile the downstream ledgers that must mirror duty diary rows.
+   * This is intentionally database-side so attendance + payouts are updated
+   * from the same source-of-truth snapshot and the cron cannot leave partial
+   * frontend-only state behind.
+   */
+  async syncDutyAttendancePayoutLedger(
+    ctx: DutyServiceContext,
+    options?: { from?: string; to?: string }
+  ): Promise<ApiResult<import("@/database/dutyRepository").DutyLedgerSyncResult | null>> {
+    const today = new Date().toISOString().slice(0, 10);
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(options?.from || ""))
+      ? String(options?.from)
+      : today;
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(options?.to || ""))
+      ? String(options?.to)
+      : from;
+    return dutyRepository.syncDutyAttendancePayoutLedger(
+      from,
+      to,
+      ctx.actor.email || "cron@hominal.system",
+      dbAccess(ctx)
+    );
+  },
 
-      const mat = await dutyDiaryService.materializeDuty(duty, ctx);
-      if (!mat.success) {
-        errors.push({ duty_id: id, error: mat.error || mat.code || "materialize failed" });
-        continue;
-      }
-      const r = mat.data!;
-      createdSvc += r.created_svc;
-      createdPayout += r.created_payout;
-      updatedSvc += r.updated_svc;
-      updatedPayout += r.updated_payout;
-      deletedSvc += r.deleted_svc;
-      deletedPayout += r.deleted_payout;
-      skipped += r.skipped;
+  /**
+   * Same materialize loop as `extendActive` but scoped to a single
+   * patient. Called by the explicit duty-ledger sync path so operators can
+   * reconcile one patient's calendar without blocking normal billing reads.
+   *
+   * Mutations are intentionally suppressed when there's nothing to
+   * write (audit log noise, idempotent) and errors are isolated per
+   * duty so one bad row never blocks the whole bill.
+   */
+  async extendForPatient(
+    patientId: string,
+    ctx: DutyServiceContext
+  ): Promise<
+    ApiResult<{
+      processed: number;
+      created_svc: number;
+      created_payout: number;
+      updated_svc: number;
+      updated_payout: number;
+      deleted_svc: number;
+      deleted_payout: number;
+      skipped: number;
+      skipped_no_bill: number;
+      errors: { duty_id: string; error: string }[];
+    }>
+  > {
+    const pid = String(patientId || "").trim();
+    if (!pid) {
+      return success({
+        processed: 0,
+        created_svc: 0,
+        created_payout: 0,
+        updated_svc: 0,
+        updated_payout: 0,
+        deleted_svc: 0,
+        deleted_payout: 0,
+        skipped: 0,
+        skipped_no_bill: 0,
+        errors: []
+      });
     }
-
-    const summary = {
-      processed: active.data?.length || 0,
-      created_svc: createdSvc,
-      created_payout: createdPayout,
-      updated_svc: updatedSvc,
-      updated_payout: updatedPayout,
-      deleted_svc: deletedSvc,
-      deleted_payout: deletedPayout,
-      skipped,
-      skipped_no_bill: skippedNoBill,
-      errors
-    };
-    // Best-effort audit for the cron run itself. Skipped when nothing
-    // mutated to avoid log noise on idle nights.
-    if (createdSvc + updatedSvc + deletedSvc + createdPayout + updatedPayout + deletedPayout > 0
-      || errors.length > 0) {
-      try {
-        await writeMutationAudit(dbAccess(ctx), ctx.actor, {
-          module: "duty_cron",
-          entity_id: "duties-extend",
-          action: "update",
-          stamp:
-            `Cron extend · processed:${summary.processed}` +
-            ` skipped-no-bill:${skippedNoBill}` +
-            ` created:${createdSvc}/${createdPayout}` +
-            ` updated:${updatedSvc}/${updatedPayout}` +
-            ` deleted:${deletedSvc}/${deletedPayout}` +
-            (errors.length ? ` errors:${errors.length}` : ""),
-          before: null,
-          after: summary
-        });
-      } catch (err) {
-        console.error("[dutyService.extendActive] cron audit write failed", err);
-      }
-    }
-    return success(summary);
+    return runExtendOverDuties(
+      () => dutyRepository.findMaterializableByPatient(pid, dbAccess(ctx)),
+      ctx,
+      { audit: false }
+    );
   },
 
   async assignPartners(
@@ -777,6 +1124,7 @@ export const dutyService = {
       );
     }
 
+    const affectedPayoutPeriods = await payoutPeriodsTouchedByDuty(existing.data, ctx);
     const rollback = await rollbackBillingFromDuty(existing.data, ctx);
     if (!rollback.success) return passFailure(rollback);
 
@@ -796,31 +1144,10 @@ export const dutyService = {
       console.error("[dutyService.cancel] attendance cleanup failed", err);
     }
 
-    // Recompute payout for the duty's own month so cancelled hours don't
-    // linger in the staff's payslip. Includes every partner who held a
-    // payout row on this duty (per-day reassignments), since the rollback
-    // removed all of them.
-    const period = payoutPeriodForDuty(
-      String(existing.data.start_at || ""),
-      new Date().toISOString()
-    );
-    const partnerIds = new Set<string>();
-    const primaryId = String(existing.data.employee_id || "");
-    if (primaryId) partnerIds.add(primaryId);
-    const payRows = await dutyRepository.findPayoutChargesByDutyId(id, dbAccess(ctx));
-    if (payRows.success) {
-      for (const row of payRows.data || []) {
-        const p = String(row.partner_id || "");
-        if (p) partnerIds.add(p);
-      }
-    }
-    await Promise.all(
-      Array.from(partnerIds).map((empId) =>
-        payoutRepository.recomputeRpc(empId, period, dbAccess(ctx)).catch((err) => {
-          console.error("[dutyService.cancel] recompute payout failed", { empId, period, err });
-        })
-      )
-    );
+    // Recompute every employee/month that had payout charge rows removed.
+    // Capture happens before rollback so reassignments and cross-month duties
+    // do not leave ghost pending payout balances after refresh.
+    await recomputeAffectedPayoutPeriods(affectedPayoutPeriods, ctx, "cancel");
 
     return finalizeWithAudit(
       await fireAudit(ctx, {
@@ -844,9 +1171,9 @@ export const dutyService = {
   },
 
   /**
-   * Hard-delete a duty + all of its diary rows. Refuses if the bill already
-   * has receipts (we never silently corrupt finance data).
-   * Admin-only.
+   * Soft-delete a duty: marks status DELETED, rolls back diary rows, and
+   * keeps the row for audit. Refuses if the bill already has receipts.
+   * Admin-only (`DELETE ?hard=1`).
    */
   async hardDelete(
     id: string,
@@ -855,64 +1182,41 @@ export const dutyService = {
     const existing = await loadDuty(id, ctx);
     if (!existing.success) return passFailure(existing);
 
+    const deleteGuard = canDeleteDuty(String(existing.data.status || ""));
+    if (!deleteGuard.success) {
+      return failure(
+        deleteGuard.error || "Cannot delete this duty",
+        deleteGuard.code,
+        deleteGuard.details
+      );
+    }
+
+    const affectedPayoutPeriods = await payoutPeriodsTouchedByDuty(existing.data, ctx);
     const rollback = await rollbackBillingFromDuty(existing.data, ctx);
     if (!rollback.success) return passFailure(rollback);
 
     const access = dbAccess(ctx);
+    const patch = dutyDeletionPatch(ctx.actor.email);
+    const updated = await dutyRepository.update(id, patch, access);
+    if (!updated.success) return passFailure(updated);
 
-    // Clean up the attendance row before deleting the parent duty so the
-    // FK cascade doesn't silently lose history.
     try {
-      const att = await attendanceRepository.findByDutyId(id, access);
-      if (att.success && att.data) {
-        await writeMutationAudit(access, ctx.actor, {
-          module: "attendance",
-          entity_id: String(att.data.id),
-          action: "delete",
-          stamp: `Cascaded with duty ${id} hard-delete`,
-          before: att.data,
-          after: null
-        });
-        await attendanceRepository.remove(String(att.data.id), access);
-      }
+      await syncDutyCancelledAbsent(id, "Duty deleted", ctx);
     } catch (err) {
       console.error("[dutyService.hardDelete] attendance cleanup failed", err);
     }
 
-    const removed = await dutyRepository.remove(id, access);
-    if (!removed.success) return passFailure(removed);
+    await recomputeAffectedPayoutPeriods(affectedPayoutPeriods, ctx, "hardDelete");
 
-    const employeeId = (existing.data.employee_id as string | undefined) || "";
-    const period = payoutPeriodForDuty(
-      String(existing.data.start_at || ""),
-      new Date().toISOString()
-    );
-    const partnerIds = new Set<string>();
-    if (employeeId) partnerIds.add(employeeId);
-    try {
-      const norm = (existing.data.extra_partners as unknown[]) || [];
-      for (const p of Array.isArray(norm) ? norm : []) {
-        const eid = String((p as { employee_id?: unknown }).employee_id || "");
-        if (eid) partnerIds.add(eid);
-      }
-    } catch {
-      /* ignore malformed extra_partners */
-    }
-    await Promise.all(
-      Array.from(partnerIds).map((empId) =>
-        payoutRepository.recomputeRpc(empId, period, access).catch((err) => {
-          console.error("[dutyService.hardDelete] recompute payout failed", { empId, period, err });
-        })
-      )
-    );
+    const fresh = await loadFreshDuty(id, ctx, updated.data ?? null);
 
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
         action: "delete",
         before: existing.data,
-        after: null,
-        stamp: "Hard delete (duty + diary)"
+        after: fresh.success ? fresh.data : updated.data,
+        stamp: "Soft delete (duty marked DELETED, diary rolled back)"
       }),
       { id, deleted: true as const }
     );

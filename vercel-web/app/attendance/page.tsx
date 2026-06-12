@@ -5,16 +5,18 @@
  * Date helpers: `@/lib/attendanceUi`. All writes via `/api/v1/attendance/*`.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useAuth } from "@/components/providers/auth-provider";
-import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { attendanceClient, lookupsClient } from "@/lib/clients";
 import { formatDate } from "@/lib/formatters";
+import { preOpenPrintWindow, PRINT_POPUP_BLOCKED_MESSAGE } from "@/lib/print";
 import { crmTodayIso } from "@/src/utils/crmToday";
 import {
   ATTENDANCE_DELETE_ROLES,
@@ -28,10 +30,38 @@ import {
   istDayKey,
   isoDateTime,
   startOfWeek,
-  todayDate
+  todayDate,
+  type AttendanceBoardData,
+  type AttendanceBoardRow,
+  type AttendanceLogRow,
+  type AttendanceLogSummary,
+  type AttendanceMarkForm,
+  type AttendanceMissingRow,
+  type LookupRow,
+  type QuickMarkDutyRow,
+  attendanceExpectedUpdatedAt,
+  apiErrorMessage,
+  isApiConflictError
 } from "@/lib/attendanceUi";
+import type { Role } from "@/business/rbac";
 
-function roleInList(role, list) {
+type AttendanceAuth = {
+  session?: { access_token?: string } | null;
+  profile?: { role?: string } | null;
+  supabase?: {
+    channel: (name: string) => {
+      on: (event: string, filter: object, handler: () => void) => { on: (event: string, filter: object, handler: () => void) => unknown; subscribe: () => void };
+      subscribe: () => void;
+    };
+    removeChannel: (channel: unknown) => void;
+  };
+};
+
+function sessionOrNull(auth: AttendanceAuth) {
+  return (auth.session ?? null) as import("@supabase/supabase-js").Session | null;
+}
+
+function roleInList(role: unknown, list: readonly Role[]): boolean {
   const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
@@ -39,24 +69,34 @@ function roleInList(role, list) {
 }
 
 export default function AttendancePage() {
-  const auth = useAuth();
+  const auth = useAuth() as unknown as AttendanceAuth;
+  const accessToken = auth.session?.access_token ?? "";
+  // P1-B: Supabase mints a fresh session object on every onAuthStateChange
+  // fire even when the access_token is unchanged. Pinning the latest session
+  // in a ref keeps memoized loaders structurally immune to stale-auth reads
+  // without re-firing every effect on session-object identity changes.
+  const sessionRef = useRef(auth.session ?? null);
+  sessionRef.current = auth.session ?? null;
+  const supabaseRef = useRef(auth.supabase);
+  supabaseRef.current = auth.supabase;
   const canWrite = roleInList(auth.profile?.role, ATTENDANCE_WRITE_ROLES);
   const canDelete = roleInList(auth.profile?.role, ATTENDANCE_DELETE_ROLES);
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState<AttendanceLogRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [employees, setEmployees] = useState([]);
-  const [patients, setPatients] = useState([]);
+  const [employees, setEmployees] = useState<LookupRow[]>([]);
+  const [patients, setPatients] = useState<LookupRow[]>([]);
   const [error, setErrorState] = useState("");
   const [message, setMessageState] = useState("");
   // Mirror local banner state into the centralized toast layer so users see
   // success/error feedback even when the inline banner is offscreen.
   const toast = useToast();
-  const setError = useCallback(function (msg) {
+  const confirm = useConfirm();
+  const setError = useCallback(function (msg: string) {
     const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  const setMessage = useCallback(function (msg) {
+  const setMessage = useCallback(function (msg: string) {
     const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
@@ -65,11 +105,13 @@ export default function AttendancePage() {
   const [to, setTo] = useState(todayDate());
   const [statusFilter, setStatusFilter] = useState("");
   const [employeeFilter, setEmployeeFilter] = useState("");
-  const [logSummary, setLogSummary] = useState(null);
-  const [missing, setMissing] = useState([]);
+  const [logSummary, setLogSummary] = useState<AttendanceLogSummary | null>(null);
+  const [missing, setMissing] = useState<AttendanceMissingRow[]>([]);
   const [missingFor, setMissingFor] = useState("");
-  const [form, setForm] = useState(emptyMarkForm());
+  const [form, setForm] = useState<AttendanceMarkForm>(emptyMarkForm);
   const [editingId, setEditingId] = useState("");
+  const [expectedUpdatedAt, setExpectedUpdatedAt] = useState("");
+  const [conflictPrompt, setConflictPrompt] = useState<{ message: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Day board — "all staff attendance for one day" synchronised with the
@@ -77,7 +119,7 @@ export default function AttendancePage() {
   // panel both writes attendance and flips the underlying SCHEDULED duty to
   // IN_PROGRESS.
   const [boardDate, setBoardDate] = useState(crmTodayIso());
-  const [boardData, setBoardData] = useState(null);
+  const [boardData, setBoardData] = useState<AttendanceBoardData | null>(null);
   const [boardLoading, setBoardLoading] = useState(false);
   const [boardEmpFilter, setBoardEmpFilter] = useState("");
   const [boardPatientFilter, setBoardPatientFilter] = useState("");
@@ -86,24 +128,29 @@ export default function AttendancePage() {
 
   const loadBoard = useCallback(
     async function () {
-      if (!auth.session?.access_token) return;
+      if (!accessToken) return;
+      const session = sessionRef.current;
+      if (!session) return;
       setBoardLoading(true);
       setBoardError("");
       try {
-        const qs = new URLSearchParams();
-        if (boardDate) qs.set("date", boardDate);
-        if (boardEmpFilter) qs.set("employee_id", boardEmpFilter);
-        if (boardPatientFilter) qs.set("patient_id", boardPatientFilter);
-        const data = await request("/attendance/day?" + qs.toString(), null, auth.session);
+        const data = (await attendanceClient.dayBoard(
+          session as import("@supabase/supabase-js").Session,
+          {
+            date: boardDate || undefined,
+            employee_id: boardEmpFilter || undefined,
+            patient_id: boardPatientFilter || undefined
+          }
+        )) as AttendanceBoardData;
         setBoardData(data || null);
-      } catch (err) {
+      } catch (err: unknown) {
         setBoardData(null);
-        setBoardError(err.message || "Could not load day board");
+        setBoardError(err instanceof Error ? err.message : "Could not load day board");
       } finally {
         setBoardLoading(false);
       }
     },
-    [auth.session, boardDate, boardEmpFilter, boardPatientFilter]
+    [accessToken, boardDate, boardEmpFilter, boardPatientFilter]
   );
 
   useEffect(
@@ -118,8 +165,9 @@ export default function AttendancePage() {
   // channel as the calendar, scoped to a single subscription.
   useEffect(
     function () {
-      if (!auth.session?.access_token || !auth.supabase) return undefined;
-      let debounce = null;
+      const supabase = supabaseRef.current;
+      if (!accessToken || !supabase) return undefined;
+      let debounce: ReturnType<typeof setTimeout> | null = null;
       function scheduleRefresh() {
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(function () {
@@ -127,7 +175,14 @@ export default function AttendancePage() {
           loadBoard();
         }, 300);
       }
-      const channel = auth.supabase.channel("crm-attendance_day_board");
+      const channel = supabase.channel("crm-attendance_day_board") as {
+        on: (
+          event: string,
+          filter: object,
+          handler: () => void
+        ) => { on: (event: string, filter: object, handler: () => void) => unknown; subscribe: () => void };
+        subscribe: () => void;
+      };
       ["hh_attendance", "hh_duties"].forEach(function (table) {
         channel.on(
           "postgres_changes",
@@ -138,21 +193,20 @@ export default function AttendancePage() {
       channel.subscribe();
       return function cleanup() {
         if (debounce) clearTimeout(debounce);
-        auth.supabase.removeChannel(channel);
+        supabase.removeChannel(channel);
       };
-      // P1-27: depend on the access_token, not the full session object;
-      // see app/duties/page.js for the full story.
+      // P1-27 / R4: depend on access_token only; supabase client via supabaseRef.
     },
-    [auth.session?.access_token, auth.supabase, loadBoard]
+    [accessToken, loadBoard]
   );
 
-  async function quickMarkBoard(row, status) {
+  async function quickMarkBoard(row: AttendanceBoardRow, status: string) {
     if (!canWrite) return;
-    if (!auth.session?.access_token) return;
+    if (!accessToken) return;
     setBoardBusyKey(row.key);
     setBoardError("");
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         date: boardData?.date || boardDate,
         employee_id: row.employee_id,
         duty_id: row.duty_id || undefined,
@@ -161,49 +215,67 @@ export default function AttendancePage() {
         status: status,
         sync_duty: true
       };
-      await requestWithOfflineFallback(
-        "/attendance/day/mark",
-        { method: "POST", body: payload },
-        auth.session
-      );
+      const version = attendanceExpectedUpdatedAt(row);
+      if (version) payload.expected_updated_at = version;
+      await attendanceClient.markDay(sessionOrNull(auth), payload);
       setMessage("Marked " + status);
       await loadBoard();
       // Existing log/stats also depend on attendance — refresh and await
       // so a fast double-click cannot interleave with stale rows.
       await reload();
-    } catch (err) {
-      const msg = err.message || "Could not mark";
-      setBoardError(msg);
-      toast.error(msg);
+    } catch (err: unknown) {
+      if (isApiConflictError(err)) {
+        const msg = apiErrorMessage(err, "Attendance was modified by another user.");
+        setConflictPrompt({ message: msg });
+        setBoardError(msg);
+        toast.error(msg);
+      } else {
+        const msg = err instanceof Error ? err.message : "Could not mark";
+        setBoardError(msg);
+        toast.error(msg);
+      }
     } finally {
       setBoardBusyKey("");
     }
   }
 
-  async function reload() {
-    if (!auth.session?.access_token) return;
-    setLoading(true);
-    try {
-      const qs = new URLSearchParams();
-      if (from) qs.set("from", from);
-      if (to) qs.set("to", to);
-      if (statusFilter) qs.set("status", statusFilter);
-      if (employeeFilter) qs.set("employee_id", employeeFilter);
-      const data = await request("/attendance/range?" + qs.toString(), null, auth.session);
-      setRows(Array.isArray(data?.rows) ? data.rows : []);
-      setLogSummary(data?.summary || null);
-      setError("");
-    } catch (err) {
-      setError(err.message || "Failed to load attendance");
-      setRows([]);
-      setLogSummary(null);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const reload = useCallback(
+    async function () {
+      if (!accessToken) return;
+      const session = sessionRef.current;
+      if (!session) return;
+      setLoading(true);
+      try {
+        const data = (await attendanceClient.range(
+          session as import("@supabase/supabase-js").Session,
+          {
+            from: from || undefined,
+            to: to || undefined,
+            status: statusFilter || undefined,
+            employee_id: employeeFilter || undefined
+          }
+        )) as { rows?: AttendanceLogRow[]; summary?: AttendanceLogSummary };
+        setRows(Array.isArray(data?.rows) ? data.rows : []);
+        setLogSummary(data?.summary || null);
+        setError("");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to load attendance");
+        setRows([]);
+        setLogSummary(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [accessToken, from, to, statusFilter, employeeFilter, setError]
+  );
 
   function downloadLogPdf() {
     if (!rows.length) return;
+    const preOpened = preOpenPrintWindow();
+    if (!preOpened) {
+      setError(PRINT_POPUP_BLOCKED_MESSAGE);
+      return;
+    }
     let employeeLabel = "All staff";
     if (employeeFilter) {
       const emp = employees.find(function (e) {
@@ -211,7 +283,7 @@ export default function AttendancePage() {
       });
       employeeLabel = (emp && (emp.full_name || emp.name)) || employeeFilter;
     }
-    const summary = logSummary || stats;
+    const summary = (logSummary || stats) as AttendanceLogSummary;
     const totalHours = Number(summary.total_hours || summary.TOTAL_HOURS || 0);
     const totalPayout = Number(summary.total_payout || summary.TOTAL_PAYOUT || 0);
     const counts = {
@@ -227,7 +299,7 @@ export default function AttendancePage() {
       Holiday: summary.holiday || summary.HOLIDAY || 0,
       Scheduled: summary.scheduled || summary.SCHEDULED || 0
     };
-    function escapeHtml(s) {
+    function escapeHtml(s: unknown) {
       return String(s == null ? "" : s)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
@@ -318,56 +390,70 @@ export default function AttendancePage() {
       "</div>" +
       "<script>window.onload=function(){setTimeout(function(){window.print();},250);};</script>" +
       "</body></html>";
-    const win = window.open("", "_blank");
-    if (!win) {
-      setError("Pop-up blocked — allow pop-ups to download the PDF");
-      return;
-    }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
+    preOpened.document.open();
+    preOpened.document.write(html);
+    preOpened.document.close();
   }
 
-  async function loadMissing() {
-    if (!auth.session?.access_token) return;
-    if (!missingFor || !from || !to) {
-      setMissing([]);
-      return;
-    }
-    try {
-      const qs = new URLSearchParams({ employee_id: missingFor, from: from, to: to });
-      const data = await request("/attendance/missing?" + qs.toString(), null, auth.session);
-      setMissing(Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : []);
-    } catch (err) {
-      setMissing([]);
-    }
-  }
+  const loadMissing = useCallback(
+    async function () {
+      if (!accessToken) return;
+      if (!missingFor || !from || !to) {
+        setMissing([]);
+        return;
+      }
+      const session = sessionRef.current;
+      if (!session) return;
+      try {
+        const data = (await attendanceClient.missing(
+          session as import("@supabase/supabase-js").Session,
+          {
+            employee_id: missingFor,
+            from: from,
+            to: to
+          }
+        )) as { rows?: AttendanceMissingRow[] } | AttendanceMissingRow[];
+        setMissing(
+          Array.isArray((data as { rows?: AttendanceMissingRow[] })?.rows)
+            ? (data as { rows: AttendanceMissingRow[] }).rows
+            : Array.isArray(data)
+              ? data
+              : []
+        );
+      } catch (_err: unknown) {
+        setMissing([]);
+      }
+    },
+    [accessToken, missingFor, from, to]
+  );
 
   useEffect(
     function () {
-      if (!auth.session?.access_token) return;
+      if (!accessToken) return;
+      const session = sessionRef.current;
+      if (!session) return;
       reload();
       Promise.all([
-        request("/lookups/employees", null, auth.session),
-        request("/lookups/patients", null, auth.session)
+        lookupsClient.employees(session as import("@supabase/supabase-js").Session),
+        lookupsClient.patients(session as import("@supabase/supabase-js").Session)
       ])
         .then(function (result) {
-          setEmployees(Array.isArray(result[0]) ? result[0] : []);
-          setPatients(Array.isArray(result[1]) ? result[1] : []);
+          setEmployees(Array.isArray(result[0]) ? (result[0] as LookupRow[]) : []);
+          setPatients(Array.isArray(result[1]) ? (result[1] as LookupRow[]) : []);
         })
         .catch(function () {
           setEmployees([]);
           setPatients([]);
         });
     },
-    [auth.session?.access_token, from, to, statusFilter, employeeFilter]
+    [accessToken, reload]
   );
 
   useEffect(
     function () {
       loadMissing();
     },
-    [missingFor, from, to, auth.session?.access_token]
+    [loadMissing]
   );
 
   const stats = useMemo(
@@ -400,7 +486,9 @@ export default function AttendancePage() {
       };
       rows.forEach(function (r) {
         const s = String(r.derived_status || r.status || "").toUpperCase();
-        if (counts[s] !== undefined) counts[s] += 1;
+        if (Object.prototype.hasOwnProperty.call(counts, s)) {
+          counts[s as keyof typeof counts] += 1;
+        }
         counts.TOTAL_HOURS += Number(r.hours || 0);
         counts.TOTAL_CHARGE += Number(r.charge || 0);
         counts.TOTAL_PAYOUT += Number(r.payout || 0);
@@ -410,8 +498,8 @@ export default function AttendancePage() {
     [rows, logSummary]
   );
 
-  function buildPayload() {
-    const payload = {
+  function buildPayload(): Record<string, unknown> {
+    const payload: Record<string, unknown> = {
       employee_id: form.employee_id,
       status: form.status,
       shift_type: form.shift_type || undefined,
@@ -426,10 +514,41 @@ export default function AttendancePage() {
         payload.check_out_at = isoDateTime(form.work_date, form.check_out_time);
       }
     }
+    if (expectedUpdatedAt) payload.expected_updated_at = expectedUpdatedAt;
     return payload;
   }
 
-  async function handleSubmit(event) {
+  function noteAttendanceConflict(err: unknown): boolean {
+    if (!isApiConflictError(err)) return false;
+    const msg = apiErrorMessage(err, "Attendance was modified by another user.");
+    setConflictPrompt({ message: msg });
+    setError(msg);
+    return true;
+  }
+
+  async function reloadAttendanceFromConflict() {
+    setConflictPrompt(null);
+    setError("");
+    await reload();
+    await loadBoard();
+    await loadMissing();
+    if (editingId) {
+      const row = rows.find(function (r) {
+        return r.id === editingId;
+      });
+      if (row) {
+        setExpectedUpdatedAt(attendanceExpectedUpdatedAt(row));
+        setMessage("Attendance reloaded — your previous edits were discarded.");
+      } else {
+        cancelEdit();
+        setMessage("Attendance was changed elsewhere — form closed.");
+      }
+    } else {
+      setMessage("Attendance list reloaded.");
+    }
+  }
+
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!canWrite) {
       setError("You do not have permission to mark attendance");
@@ -442,79 +561,52 @@ export default function AttendancePage() {
     setBusy(true);
     setError("");
     setMessage("");
+    setConflictPrompt(null);
     try {
       if (editingId) {
-        await requestWithOfflineFallback(
-          "/attendance/" + editingId,
-          { method: "PATCH", body: buildPayload() },
-          auth.session
-        );
+        await attendanceClient.update(sessionOrNull(auth), editingId, buildPayload());
         setMessage("Attendance updated");
       } else {
-        await requestWithOfflineFallback(
-          "/attendance/mark",
-          { method: "POST", body: buildPayload() },
-          auth.session
-        );
+        await attendanceClient.mark(sessionOrNull(auth), buildPayload());
         setMessage("Attendance saved");
       }
       setForm(emptyMarkForm());
       setEditingId("");
+      setExpectedUpdatedAt("");
       await reload();
       await loadMissing();
-    } catch (err) {
-      setError(err.message || "Could not save attendance");
+    } catch (err: unknown) {
+      if (!noteAttendanceConflict(err)) {
+        setError(err instanceof Error ? err.message : "Could not save attendance");
+      }
     } finally {
       setBusy(false);
     }
   }
 
-  function startEdit(row) {
-    if (!canWrite) return;
-    if (!row.updated_at) {
-      setMessage(
-        "Legacy row without server updated_at — save carefully; another user may have edited it."
-      );
-    }
-    // Prefer the persisted IST work_date when available, otherwise derive
-    // the IST date from the check-in timestamp. UTC-slicing check_in_at
-    // misreports the calendar day for any check-in after 18:30 UTC.
-    const date =
-      String(row.work_date || "").slice(0, 10) ||
-      istDayKey(row.check_in_at) ||
-      todayDate();
-    const checkIn = String(row.check_in_at || "").slice(11, 16) || "";
-    const checkOut = String(row.check_out_at || "").slice(11, 16) || "";
-    setForm({
-      duty_id: row.duty_id || "",
-      employee_id: row.employee_id || "",
-      patient_id: row.patient_id || "",
-      shift_type: row.shift_type || "DAY",
-      work_date: date,
-      check_in_time: checkIn,
-      check_out_time: checkOut,
-      status: row.status || "PRESENT",
-      notes: row.notes || row.remarks || ""
-    });
-    setEditingId(row.id);
-  }
-
   function cancelEdit() {
     setForm(emptyMarkForm());
     setEditingId("");
+    setExpectedUpdatedAt("");
+    setConflictPrompt(null);
   }
 
-  async function handleQuickMark(dutyRow, status) {
+  async function handleQuickMark(
+    dutyRow: QuickMarkDutyRow | AttendanceMissingRow,
+    status: string
+  ) {
     if (!canWrite) return;
     setBusy(true);
     setError("");
+    setConflictPrompt(null);
     try {
+      const dutyId = dutyRow.duty_id || dutyRow.id || "";
       // IST date for the duty (or today). Stripping the UTC ISO with
       // slice(0,10) misattributes late-evening duties to the prior day.
       const date = istDayKey(dutyRow.start_at) || String(dutyRow.date || "").slice(0, 10) || todayDate();
-      const payload = {
-        employee_id: dutyRow.employee_id,
-        duty_id: dutyRow.id,
+      const payload: Record<string, unknown> = {
+        employee_id: dutyRow.employee_id || "",
+        duty_id: dutyId,
         patient_id: dutyRow.patient_id || undefined,
         shift_type: dutyRow.shift_type || undefined,
         status: status,
@@ -523,38 +615,55 @@ export default function AttendancePage() {
       if (status === "PRESENT" || status === "LATE" || status === "HALF_DAY") {
         payload.check_in_at = dutyRow.start_at || isoDateTime(date, "09:00");
       }
-      await requestWithOfflineFallback(
-        "/attendance/mark",
-        { method: "POST", body: payload },
-        auth.session
-      );
+      const existing = rows.find(function (r) {
+        return r.duty_id === dutyId && r.employee_id === dutyRow.employee_id;
+      });
+      const version = attendanceExpectedUpdatedAt(existing);
+      if (version) payload.expected_updated_at = version;
+      await attendanceClient.mark(sessionOrNull(auth), payload);
       setMessage("Marked " + status);
       await reload();
       await loadMissing();
-    } catch (err) {
-      setError(err.message || "Could not mark attendance");
+    } catch (err: unknown) {
+      if (!noteAttendanceConflict(err)) {
+        setError(err instanceof Error ? err.message : "Could not mark attendance");
+      }
     } finally {
       setBusy(false);
     }
   }
 
-  async function handleDelete(id) {
+  async function handleDelete(id: string) {
     if (!canDelete) return;
-    if (!window.confirm("Delete this attendance row?")) return;
+    const ok = await confirm({
+      title: "Delete attendance row?",
+      description: "This removes the row from the log.",
+      confirmLabel: "Delete",
+      tone: "danger"
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
+    setConflictPrompt(null);
     try {
-      await requestWithOfflineFallback(
-        "/attendance/" + id,
-        { method: "DELETE" },
-        auth.session
-      );
+      const row = rows.find(function (r) {
+        return r.id === id;
+      });
+      const body: Record<string, unknown> = {};
+      const version =
+        id === editingId && expectedUpdatedAt
+          ? expectedUpdatedAt
+          : attendanceExpectedUpdatedAt(row);
+      if (version) body.expected_updated_at = version;
+      await attendanceClient.remove(sessionOrNull(auth), id, body);
       setMessage("Attendance deleted");
       if (editingId === id) cancelEdit();
       await reload();
       await loadMissing();
-    } catch (err) {
-      setError(err.message || "Could not delete attendance");
+    } catch (err: unknown) {
+      if (!noteAttendanceConflict(err)) {
+        setError(err instanceof Error ? err.message : "Could not delete attendance");
+      }
     } finally {
       setBusy(false);
     }
@@ -680,7 +789,8 @@ export default function AttendancePage() {
                 <tbody>
                   {boardRows.map(function (row) {
                     const style =
-                      DERIVED_STATUS_STYLES[row.derived_status] || DERIVED_STATUS_STYLES.UNMARKED;
+                      DERIVED_STATUS_STYLES[row.derived_status || "UNMARKED"] ||
+                      DERIVED_STATUS_STYLES.UNMARKED!;
                     const busyKey = boardBusyKey === row.key;
                     const checkIn = row.check_in_at ? String(row.check_in_at).slice(11, 16) : "";
                     const checkOut = row.check_out_at ? String(row.check_out_at).slice(11, 16) : "";
@@ -915,7 +1025,7 @@ export default function AttendancePage() {
                 <tbody>
                   {rows.map(function (r) {
                     const derived = String(r.derived_status || r.status || "UNMARKED").toUpperCase();
-                    const style = DERIVED_STATUS_STYLES[derived] || DERIVED_STATUS_STYLES.UNMARKED;
+                    const style = DERIVED_STATUS_STYLES[derived] || DERIVED_STATUS_STYLES.UNMARKED!;
                     return (
                       <tr key={r.key || r.id}>
                         <td>{r.date || (r.check_in_at ? String(r.check_in_at).slice(0, 10) : "—")}</td>
@@ -961,7 +1071,7 @@ export default function AttendancePage() {
                                 className="button danger"
                                 type="button"
                                 onClick={function () {
-                                  handleDelete(r.attendance_id);
+                                  handleDelete(r.attendance_id || r.id);
                                 }}
                               >
                                 Delete
@@ -1111,14 +1221,45 @@ export default function AttendancePage() {
                 <div className="field">
                   <label htmlFor="attendance-notes-20">Notes</label>
                   <textarea id="attendance-notes-20"
-                    rows="2"
+                    rows={2}
                     value={form.notes}
                     onChange={function (event) {
                       setForm({ ...form, notes: event.target.value });
                     }}
                   />
                 </div>
-                <ErrorBanner message={error} />
+                <ErrorBanner message={error && !conflictPrompt ? error : ""} />
+                {conflictPrompt ? (
+                  <div
+                    className="helper-box"
+                    style={{ marginBottom: 12, borderColor: "#f59e0b" }}
+                    role="alert"
+                  >
+                    <strong>Concurrent edit detected.</strong> {conflictPrompt.message}
+                    <div className="button-row" style={{ marginTop: 8 }}>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        onClick={function () {
+                          void reloadAttendanceFromConflict();
+                        }}
+                        disabled={busy}
+                      >
+                        Reload latest
+                      </button>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        onClick={function () {
+                          setConflictPrompt(null);
+                          setError("");
+                        }}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <SuccessBanner message={message} />
                 <div className="button-row">
                   <button className="button primary" type="submit" disabled={busy}>

@@ -37,13 +37,21 @@ Migrations live in `vercel-web/supabase/migrations/` — apply to production onl
 
 ---
 
-## Auth — leaked password protection
+## Auth — leaked password protection (R5 / B4)
 
 1. **Supabase Dashboard → Authentication → Providers → Email**
 2. Enable **Leaked password protection** (Have I Been Pwned check).
 3. Enforce minimum password length ≥ 12 for new users.
 
-This cannot be enabled via SQL; it is an Auth project setting.
+This cannot be enabled via SQL; it is an Auth project setting. The CRM reset-password page enforces 12 characters and surfaces GoTrue HIBP errors when protection is on.
+
+Verify after enabling (optional, needs a Supabase personal access token):
+
+```bash
+cd vercel-web
+export SUPABASE_ACCESS_TOKEN=sbp_...
+node scripts/verify-auth-hibp.mjs
+```
 
 ---
 

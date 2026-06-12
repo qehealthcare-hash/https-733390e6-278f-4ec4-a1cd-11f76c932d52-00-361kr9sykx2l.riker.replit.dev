@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   idSchema,
-  isoDate,
   moneySchema,
   monthPeriodSchema,
   optionalIsoDate
@@ -59,7 +58,9 @@ export const billingCloseSchema = z.object({
   reason: z.string().trim().max(500).optional().default(""),
   close_reason_other: z.string().trim().max(500).optional().default(""),
   /** If true, allow closing even with outstanding > 0 (Admin override). */
-  force: z.boolean().optional().default(false)
+  force: z.boolean().optional().default(false),
+  /** Optional optimistic-locking guard — see billingStatusSchema. */
+  expected_updated_at: z.string().trim().optional()
 });
 
 /**
@@ -81,7 +82,9 @@ export type BillingLegacySyncInput = z.infer<typeof billingLegacySyncSchema>;
 
 /** Reopening a Closed bill always requires an explicit reason for audit. */
 export const billingReopenSchema = z.object({
-  reason: z.string().trim().min(1, "reason is required to reopen a closed bill").max(500)
+  reason: z.string().trim().min(1, "reason is required to reopen a closed bill").max(500),
+  /** Optional optimistic-locking guard — see billingStatusSchema. */
+  expected_updated_at: z.string().trim().optional()
 });
 
 /** Editable bill body — same as billingSchema but every field is optional for PATCH. */

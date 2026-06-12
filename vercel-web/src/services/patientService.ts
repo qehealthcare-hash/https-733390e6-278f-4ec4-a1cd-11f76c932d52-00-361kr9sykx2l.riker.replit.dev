@@ -47,14 +47,13 @@ import {
   patientToRow
 } from "@/business/patientRules";
 import { phoneSuffix } from "@/business/phoneRules";
-import { assertNotStale } from "@/business/concurrencyRules";
+import { assertNotStale, requireExpectedVersion } from "@/business/concurrencyRules";
 import { patientNameKey } from "@/business/patientRules";
 import { phoneDigitsKey } from "@/business/phoneRules";
 import { newId } from "@/business/idRules";
 import { patientRepository } from "@/database/patientRepository";
 import { employeeRepository } from "@/database/employeeRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
-import { auditRepository } from "@/database/auditRepository";
 import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
@@ -304,6 +303,9 @@ export const patientService = {
     const parsed = parseInput(patientSchema, { ...(rawInput as Record<string, unknown>), id });
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as PatientInput;
+
+    const versionRequired = requireExpectedVersion("Patient", input.expected_updated_at);
+    if (!versionRequired.success) return passFailure(versionRequired);
 
     const stale = assertNotStale(
       "Patient",

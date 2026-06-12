@@ -57,8 +57,8 @@ export function currentPeriod(timeZone: string = APP_TIMEZONE): string {
 export function previousPeriod(period: string, timeZone: string = APP_TIMEZONE): string {
   const m = PERIOD_RE.exec(period);
   if (!m) return currentPeriod(timeZone);
-  const y = parseInt(m[1], 10);
-  const mo = parseInt(m[2], 10);
+  const y = parseInt(m[1] || "", 10);
+  const mo = parseInt(m[2] || "1", 10);
   if (mo === 1) return `${y - 1}-12`;
   return `${y}-${String(mo - 1).padStart(2, "0")}`;
 }
@@ -75,8 +75,8 @@ export function isValidPeriod(s: unknown): s is string {
 export function formatPeriodLabel(period: string): string {
   const m = PERIOD_RE.exec(period);
   if (!m) return period;
-  const y = parseInt(m[1], 10);
-  const mo = parseInt(m[2], 10);
+  const y = parseInt(m[1] || "", 10);
+  const mo = parseInt(m[2] || "1", 10);
   // Day-1 noon avoids any half-day timezone weirdness in `toLocaleString`.
   const date = new Date(Date.UTC(y, mo - 1, 1, 12, 0, 0));
   return new Intl.DateTimeFormat("en-IN", {

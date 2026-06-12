@@ -218,12 +218,33 @@ describe("employee lifecycle", () => {
     const id = (created.data as { id: string }).id;
     const result = await employeeService.update(
       id,
-      { fn: "Status", ln: "Guard", phone: "9876500009", status: "Inactive" },
+      {
+        fn: "Status",
+        ln: "Guard",
+        phone: "9876500009",
+        status: "Inactive",
+        expected_updated_at: String(employees[0].updated_at || "")
+      },
       { actor: ACTOR }
     );
     expect(result.success).toBe(false);
     expect(result.code).toBe("business_rule_violation");
     expect(employees[0].status).toBe("Active");
+  });
+
+  it("rejects update when expected_updated_at is omitted", async () => {
+    const created = await employeeService.create(
+      { fn: "No", ln: "Version", phone: "9876512346", status: "Active" },
+      { actor: ACTOR }
+    );
+    const id = (created.data as { id: string }).id;
+    const result = await employeeService.update(
+      id,
+      { fn: "No", ln: "Version", phone: "9876512346" },
+      { actor: ACTOR }
+    );
+    expect(result.success).toBe(false);
+    expect(result.code).toBe("validation_error");
   });
 
   it("returns conflict when expected_updated_at is stale", async () => {

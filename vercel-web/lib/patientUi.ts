@@ -6,6 +6,7 @@
  */
 
 import { formatDate, slugToText } from "@/lib/formatters";
+import type { PatientPermissionsDto } from "@/validation/patientDto";
 
 /** Row shape from `patientToApi` / list endpoint (includes legacy aliases). */
 export interface PatientListRow {
@@ -44,6 +45,11 @@ export interface PatientListRow {
   docs?: PatientDocRef[];
   photo?: PatientDocRef | null;
   updated_at?: string | null;
+  created?: string;
+  status_reason_other?: string;
+  close_reason_other?: string;
+  relative_contacts?: Array<{ name?: string; phone?: string }>;
+  permissions?: PatientPermissionsDto;
 }
 
 export interface PatientDocRef {

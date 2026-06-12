@@ -19,7 +19,9 @@ export const vendorCreateSchema = z
   })
   .passthrough();
 
-export const vendorPatchSchema = vendorCreateSchema.partial();
+export const vendorPatchSchema = vendorCreateSchema.partial().extend({
+  expected_updated_at: z.string().trim().optional()
+});
 
 export type VendorCreateInput = z.infer<typeof vendorCreateSchema>;
 export type VendorPatchInput = z.infer<typeof vendorPatchSchema>;

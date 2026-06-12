@@ -13,7 +13,7 @@ const PayoutsInner = dynamic(
     loading: function () {
       return (
         <div className="page-grid">
-          <p className="mini-muted" style={{ padding: "2rem 1rem" }}>
+          <p className="mini-muted" style={{ padding: "2rem 1rem" }} role="status" aria-live="polite">
             Loading payouts…
           </p>
         </div>

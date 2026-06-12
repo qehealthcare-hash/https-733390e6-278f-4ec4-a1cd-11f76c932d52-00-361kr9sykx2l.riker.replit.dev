@@ -5,20 +5,15 @@
     "src/**/*.ts",
     "lib/**/*.ts",
     "app/api/**/*.ts",
-    "components/ui/status-banner.tsx",
-    "components/ui/module-shell.tsx",
-    "app/login/page.tsx",
-    "app/reset-password/page.tsx",
-    "app/dashboard/page.tsx",
-    "app/inquiries/page.tsx",
-    "app/settings/page.tsx",
-    "app/users/page.tsx"
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "app/**/*.tsx",
+    "hooks/**/*.ts"
   ],
   "exclude": [
     "node_modules",
     "src/**/__tests__/**",
     "src/**/*.test.ts",
-    "src/integration/**",
-    "app/attendance/page.tsx"
+    "src/integration/**"
   ]
 }

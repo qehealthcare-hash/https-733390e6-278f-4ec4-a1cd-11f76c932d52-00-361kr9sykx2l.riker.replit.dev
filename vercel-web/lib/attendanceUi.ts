@@ -105,3 +105,128 @@ export function emptyMarkForm(): AttendanceMarkForm {
     notes: ""
   };
 }
+
+export interface LookupRow {
+  id: string;
+  name?: string;
+  full_name?: string;
+}
+
+export interface AttendanceLogRow {
+  id: string;
+  key?: string;
+  attendance_id?: string;
+  date?: string;
+  work_date?: string;
+  employee_id?: string;
+  employee_name?: string;
+  patient_id?: string;
+  patient_name?: string;
+  shift_type?: string;
+  status?: string;
+  derived_status?: string;
+  check_in_at?: string | null;
+  check_out_at?: string | null;
+  hours?: number | string;
+  payout?: number | string;
+  charge?: number | string;
+  notes?: string;
+  remarks?: string;
+  is_extra_partner?: boolean;
+  duty_id?: string;
+  updated_at?: string | null;
+}
+
+export interface AttendanceLogSummary {
+  present?: number;
+  in_progress?: number;
+  completed?: number;
+  absent?: number;
+  late?: number;
+  half_day?: number;
+  leave?: number;
+  holiday?: number;
+  scheduled?: number;
+  total_hours?: number;
+  total_charge?: number;
+  total_payout?: number;
+  PRESENT?: number;
+  ABSENT?: number;
+  LATE?: number;
+  HALF_DAY?: number;
+  LEAVE?: number;
+  HOLIDAY?: number;
+  SCHEDULED?: number;
+  TOTAL_HOURS?: number;
+  TOTAL_CHARGE?: number;
+  TOTAL_PAYOUT?: number;
+}
+
+export interface AttendanceBoardRow {
+  key: string;
+  employee_id: string;
+  employee_name?: string;
+  patient_id?: string;
+  patient_name?: string;
+  duty_id?: string;
+  shift_type?: string;
+  derived_status?: string;
+  attendance_id?: string | null;
+  attendance_updated_at?: string | null;
+  check_in_at?: string | null;
+  check_out_at?: string | null;
+  hours?: number | string;
+  notes?: string;
+  is_extra_partner?: boolean;
+}
+
+/** Optimistic-lock token from a log row or day-board slot. */
+export function attendanceExpectedUpdatedAt(
+  row: { updated_at?: string | null; attendance_updated_at?: string | null } | null | undefined
+): string {
+  if (!row) return "";
+  return String(row.attendance_updated_at || row.updated_at || "").trim();
+}
+
+export { apiErrorMessage, isApiConflictError } from "@/lib/apiClientErrors";
+
+export interface AttendanceBoardSummary {
+  total?: number;
+  unmarked?: number;
+  present?: number;
+  in_progress?: number;
+  completed?: number;
+  late?: number;
+  half_day?: number;
+  absent?: number;
+  leave?: number;
+  holiday?: number;
+}
+
+export interface AttendanceBoardData {
+  date?: string;
+  rows?: AttendanceBoardRow[];
+  summary?: AttendanceBoardSummary;
+}
+
+export interface AttendanceMissingRow {
+  date?: string;
+  duty_id?: string;
+  patient_id?: string;
+  patient_name?: string;
+  employee_id?: string;
+  shift_type?: string;
+  service_type?: string;
+  start_at?: string;
+  id?: string;
+}
+
+export interface QuickMarkDutyRow {
+  id?: string;
+  duty_id?: string;
+  employee_id: string;
+  patient_id?: string;
+  shift_type?: string;
+  start_at?: string;
+  date?: string;
+}

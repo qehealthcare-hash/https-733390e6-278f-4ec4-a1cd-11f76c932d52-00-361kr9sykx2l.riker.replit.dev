@@ -623,13 +623,33 @@ export const inquiryService = {
     const access = dbAccess(ctx);
     const rpc = await inquiryRepository.convertRpc(id, access);
     if (!rpc.success) return passFailure(rpc);
-    const patientId = rpc.data?.patient_id;
+    const rpcPayload = (rpc.data || {}) as {
+      patient_id?: string;
+      inquiry_id?: string;
+      already_converted?: boolean;
+    };
+    const patientId = rpcPayload.patient_id;
+    const rpcAlreadyConverted = Boolean(rpcPayload.already_converted);
+
     if (!patientId) {
       return failure(
         "hh_convert_inquiry_to_patient returned no patient_id",
         ErrorCodes.internal,
         { rpc: rpc.data }
       );
+    }
+
+    if (rpcAlreadyConverted || alreadyConverted) {
+      const fresh = await loadFreshInquiry(id, ctx, existing.data);
+      if (!fresh.success) {
+        return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
+      }
+      return success({
+        patient_id: String(patientId),
+        inquiry_id: id,
+        inquiry: inquiryToApi(fresh.data),
+        alreadyConverted: true
+      });
     }
 
     const patientPatch = inquiryToPatientPatch(existing.data);

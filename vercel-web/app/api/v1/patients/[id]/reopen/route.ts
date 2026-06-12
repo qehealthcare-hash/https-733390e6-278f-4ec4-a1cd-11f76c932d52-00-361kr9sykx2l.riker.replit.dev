@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { withAuth, parseJsonBody } from "@/lib/api/handler";
+import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { PATIENT_REOPEN_ROLES } from "@/business/rbac";
 import { patientService } from "@/services/patientService";

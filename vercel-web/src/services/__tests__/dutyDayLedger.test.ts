@@ -513,7 +513,64 @@ describe("billingService.replaceServiceEntries ledger sync", () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// 6. soft-delete cascade behaviour at the ledger helper
+// 6. Duty-calendar source-of-truth guards on slice-replace writers
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("billingService.replaceServiceEntries duty guard", () => {
+  it("rejects rows whose remarks are duty-calendar materialized keys", async () => {
+    const result = await billingService.replaceServiceEntries(
+      {
+        svc_key: "BILL1_Care Taker Services",
+        rows: [
+          {
+            billing_id: "BILL1",
+            service_name: "Care Taker Services",
+            partner_id: "EMP1",
+            date: "2026-05-01",
+            amt: 750,
+            count: 1,
+            disc: 0,
+            total: 750,
+            remarks: "duty:D1:2026-05-01:EMP1"
+          }
+        ]
+      },
+      ctx
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/read-only/i);
+    expect(billingRepository.replaceSvcEntriesRpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("payoutService.replacePayoutCharges duty guard", () => {
+  it("rejects rows whose remarks are duty-calendar materialized keys", async () => {
+    const result = await payoutService.replacePayoutCharges(
+      {
+        svc_key: "BILL1_Care Taker Services",
+        rows: [
+          {
+            date: "2026-05-01",
+            partner: "Alice",
+            partner_id: "EMP1",
+            term: "Daily",
+            amount: 566,
+            remarks: "duty:D1:2026-05-01:EMP1"
+          }
+        ]
+      },
+      ctx
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/read-only/i);
+    expect(payoutRepository.replacePayoutChargesRpc).not.toHaveBeenCalled();
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 7. soft-delete cascade behaviour at the ledger helper
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("dutyDayLedger.syncSvcEntryDeleted", () => {

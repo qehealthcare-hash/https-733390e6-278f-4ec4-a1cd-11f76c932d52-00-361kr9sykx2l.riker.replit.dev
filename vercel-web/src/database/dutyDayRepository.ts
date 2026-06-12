@@ -55,7 +55,7 @@ function nonZeroOrOne(value: number | string | null | undefined): number {
 }
 
 function addDays(ymd: string, offset: number): string {
-  const [y, m, d] = ymd.split("-").map((s) => parseInt(s, 10));
+  const [y = 0, m = 1, d = 1] = ymd.split("-").map((s) => parseInt(s, 10));
   const dt = new Date(Date.UTC(y, m - 1, d));
   dt.setUTCDate(dt.getUTCDate() + offset);
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;

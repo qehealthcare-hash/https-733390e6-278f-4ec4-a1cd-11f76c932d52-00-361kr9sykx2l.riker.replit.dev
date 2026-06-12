@@ -8,24 +8,28 @@
  * helpers in `@/lib/inquiryUi`.
  */
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { ModalDialog } from "@/components/ui/modal-dialog";
+import { confirmDiscardTyped } from "@/lib/modalDiscard";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
+import { useBusyGuard } from "@/hooks/use-busy-guard";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
-import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { inquiriesClient, lookupsClient } from "@/lib/clients";
 import {
   inquiryPotentialOptions,
   inquirySourceOptions,
   inquiryStatusOptions
 } from "@/lib/crm-options";
 import { formatDate } from "@/lib/formatters";
-import { openPrintWindow } from "@/lib/print";
+import { openPrintWindow, reportPrintBlocked } from "@/lib/print";
 import {
   buildInquiryPdfBody,
   buildInquiryWhatsAppUrl,
@@ -33,9 +37,10 @@ import {
   inquiryListPosition,
   type InquiryListRow
 } from "@/lib/inquiryUi";
+import { inquiryFollowupDateMin } from "@/lib/dateFieldBounds";
+import { crmTodayIso } from "@/src/utils/crmToday";
 import {
   INQUIRY_OPEN_STATUSES,
-  INQUIRY_CLOSED_STATUSES,
   type InquiryStatus
 } from "@/validation/inquiryValidation";
 import type { InquiryPermissionsDto } from "@/validation/inquiryDto";
@@ -55,8 +60,6 @@ function inquiryRowPermissions(row: InquiryListRow) {
     }
   );
 }
-const CLOSED_STATUSES = INQUIRY_CLOSED_STATUSES;
-
 interface InquiryFormState {
   id: string;
   patient_name: string;
@@ -173,39 +176,48 @@ export default function InquiriesPage() {
   // fire even when the token is unchanged, which would re-fire this effect
   // unnecessarily and risk a stale-response race.
   const accessToken = auth.session?.access_token || "";
+  const sessionRef = useRef(auth.session);
+  sessionRef.current = auth.session;
+
+  const loadEmployees = useCallback(function () {
+    if (!accessToken) {
+      setEmployees([]);
+      setEmployeesError("");
+      return undefined;
+    }
+    const session = sessionRef.current;
+    if (!session) {
+      setEmployees([]);
+      setEmployeesError("");
+      return undefined;
+    }
+    let cancelled = false;
+    setEmployeesError("");
+    lookupsClient
+      .employees(session)
+      .then(function (rows) {
+        if (cancelled) return;
+        setEmployees(Array.isArray(rows) ? rows : rows?.rows || rows?.data || []);
+      })
+      .catch(function (lookupError) {
+        if (cancelled) return;
+        setEmployees([]);
+        setEmployeesError(
+          lookupError && lookupError.message
+            ? "Could not load employees: " + lookupError.message
+            : "Could not load employees"
+        );
+      });
+    return function () {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
   useEffect(
     function () {
-      if (!accessToken) {
-        setEmployees([]);
-        setEmployeesError("");
-        return undefined;
-      }
-      let cancelled = false;
-      setEmployeesError("");
-      request("/lookups/employees", null, auth.session)
-        .then(function (rows) {
-          if (cancelled) return;
-          setEmployees(Array.isArray(rows) ? rows : rows?.rows || rows?.data || []);
-        })
-        .catch(function (lookupError) {
-          if (cancelled) return;
-          setEmployees([]);
-          // M4-M5: surface the underlying error so operators know the
-          // dropdown is empty because the lookup failed, not because the
-          // employees table is empty. Swallowing this caused field reports
-          // of "I can't assign inquiries".
-          setEmployeesError(
-            (lookupError && lookupError.message)
-              ? "Could not load employees: " + lookupError.message
-              : "Could not load employees"
-          );
-        });
-      return function () { cancelled = true; };
+      return loadEmployees();
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- accessToken is
-    // the real identity of auth.session for this fetch; depending on
-    // auth.session directly would defeat the point of this fix.
-    [accessToken]
+    [loadEmployees]
   );
 
   const listQuery = useMemo(
@@ -220,8 +232,8 @@ export default function InquiriesPage() {
     [debouncedSearch, statusFilter, sourceFilter, openOnly]
   );
 
-  const resource = usePaginatedResource({
-    basePath: "/inquiries",
+  const resource = usePaginatedResource<InquiryListRow>({
+    list: inquiriesClient.list,
     table: "hh_inquiries",
     channel: "inquiries",
     queryParams: listQuery,
@@ -230,10 +242,11 @@ export default function InquiriesPage() {
   });
   const [form, setForm] = useState<InquiryFormState>(createInitialForm);
   const [formPermissions, setFormPermissions] = useState<InquiryPermissionsDto | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, tryBegin, end } = useBusyGuard();
   const [error, setErrorState] = useState("");
   const [message, setMessageState] = useState("");
   const toast = useToast();
+  const confirm = useConfirm();
   const setError = useCallback(function (msg: string) {
     const text = String(msg || "");
     setErrorState(text);
@@ -257,7 +270,7 @@ export default function InquiriesPage() {
   } | null>(null);
 
   const filtered = useMemo((): InquiryListRow[] => {
-    const rows = (resource.data || []) as InquiryListRow[];
+    const rows = resource.data || [];
     if (!potentialFilter) return rows;
     return rows.filter((row) => row.potential === potentialFilter);
   }, [resource.data, potentialFilter]);
@@ -348,7 +361,7 @@ export default function InquiriesPage() {
   // `confirm_existing_patient` and then asked the user to click Save again.
   async function submitForm(formOverride?: InquiryFormState) {
     const current = formOverride || form;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     setMessage("");
     try {
@@ -381,11 +394,7 @@ export default function InquiriesPage() {
       if (current.confirm_existing_patient) {
         payload.confirm_existing_patient = true;
       }
-      await requestWithOfflineFallback(
-        current.id ? "/inquiries/" + current.id : "/inquiries",
-        { method: current.id ? "PUT" : "POST", body: payload },
-        auth.session
-      );
+      await inquiriesClient.save(auth.session, payload);
       await resource.reload();
       resetForm();
       setMessage(current.id ? "Inquiry updated" : "Inquiry created");
@@ -413,7 +422,7 @@ export default function InquiriesPage() {
         setError(errorMessage(submitError, "Unable to save inquiry"));
       }
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
@@ -427,16 +436,16 @@ export default function InquiriesPage() {
       setConflictPrompt(null);
       return;
     }
-    setBusy(true);
+    if (!tryBegin()) return;
     try {
-      const fresh = await request("/inquiries/" + form.id, null, auth.session);
+      const fresh = await inquiriesClient.get(auth.session, form.id);
       editInquiry(fresh);
       setConflictPrompt(null);
       setMessage("Inquiry reloaded — your previous edits were discarded.");
     } catch (reloadError: unknown) {
       setError(errorMessage(reloadError, "Could not reload inquiry."));
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
@@ -461,7 +470,7 @@ export default function InquiriesPage() {
       name: row.patient_name || row.name || row.id,
       nextStatus: nextStatus,
       reason: "",
-      followup_date: row.followup_date || new Date().toISOString().slice(0, 10),
+      followup_date: row.followup_date || crmTodayIso(),
       requiresReason:
         nextStatus === "Closed" || nextStatus === "Lost" || reopening
     });
@@ -480,21 +489,14 @@ export default function InquiriesPage() {
       setError("Please provide a reason");
       return;
     }
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
-      await requestWithOfflineFallback(
-        "/inquiries/" + statusDialog.id + "/status",
-        {
-          method: "POST",
-          body: {
-            status: statusDialog.nextStatus,
-            reason: statusDialog.reason.trim(),
-            followup_date: statusDialog.followup_date || ""
-          }
-        },
-        auth.session
-      );
+      await inquiriesClient.setStatus(auth.session, statusDialog.id, {
+        status: statusDialog.nextStatus,
+        reason: statusDialog.reason.trim(),
+        followup_date: statusDialog.followup_date || ""
+      });
       setMessage("Inquiry → " + statusDialog.nextStatus);
       setStatusDialog(null);
       await resource.reload();
@@ -502,7 +504,7 @@ export default function InquiriesPage() {
     } catch (statusError: unknown) {
       setError(errorMessage(statusError, "Unable to change status"));
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
@@ -517,15 +519,14 @@ export default function InquiriesPage() {
 
   async function submitDeleteDialog() {
     if (!deleteDialog) return;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
-      let path = "/inquiries/" + deleteDialog.id;
-      if (deleteDialog.hard) path += "?hard=1";
-      const result = await requestWithOfflineFallback(
-        path,
-        { method: "DELETE", body: { reason: deleteDialog.reason.trim() } },
-        auth.session
+      const result = await inquiriesClient.remove(
+        auth.session,
+        deleteDialog.id,
+        { reason: deleteDialog.reason.trim() },
+        deleteDialog.hard
       );
       await resource.reload();
       if (form.id === deleteDialog.id) resetForm();
@@ -538,7 +539,7 @@ export default function InquiriesPage() {
     } catch (deleteError: unknown) {
       setError(errorMessage(deleteError, "Unable to delete inquiry"));
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
@@ -552,14 +553,12 @@ export default function InquiriesPage() {
 
   async function submitConvertDialog() {
     if (!convertDialog) return;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
-      const data = await requestWithOfflineFallback(
-        "/inquiries/" + convertDialog.id + "/convert",
-        { method: "POST", body: { notes: convertDialog.notes } },
-        auth.session
-      );
+      const data = await inquiriesClient.convert(auth.session, convertDialog.id, {
+        notes: convertDialog.notes
+      });
       setMessage(
         data?.alreadyConverted
           ? "Already converted — patient " + (data.patient_id || "")
@@ -570,15 +569,19 @@ export default function InquiriesPage() {
     } catch (convertError: unknown) {
       setError(errorMessage(convertError, "Unable to convert inquiry"));
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
   function openInquiryPdf(row: InquiryListRow, hideMobile: boolean) {
-    openPrintWindow(
-      hideMobile ? "Inquiry PDF (without mobile)" : "Inquiry PDF",
-      buildInquiryPdfBody(row, hideMobile)
-    );
+    if (
+      !openPrintWindow(
+        hideMobile ? "Inquiry PDF (without mobile)" : "Inquiry PDF",
+        buildInquiryPdfBody(row, hideMobile)
+      )
+    ) {
+      reportPrintBlocked(setError);
+    }
   }
 
   function sendWhatsApp(row: InquiryListRow) {
@@ -670,6 +673,7 @@ export default function InquiriesPage() {
                   <label htmlFor="inquiries-follow-up-date-10">Follow-up date</label>
                   <input id="inquiries-follow-up-date-10"
                     type="date"
+                    min={inquiryFollowupDateMin()}
                     value={form.followup_date}
                     onChange={function (event) { updateField("followup_date", event.target.value); }}
                     required={form.status === "FollowUp" || form.status === "Negotiating"}
@@ -936,18 +940,33 @@ export default function InquiriesPage() {
       </AppShell>
 
       {statusDialog ? (
-        <div className="modal-backdrop" onClick={function () { if (!busy) setStatusDialog(null); }}>
-          <div className="card modal-card" onClick={function (e) { e.stopPropagation(); }}>
+        <ModalDialog
+          open
+          onClose={function () { setStatusDialog(null); }}
+          onRequestClose={function () {
+            confirmDiscardTyped(
+              confirm,
+              statusDialog.reason.trim().length > 0,
+              function () { setStatusDialog(null); }
+            );
+          }}
+          lockClose={busy}
+          className="card modal-card"
+          labelledBy="inquiries-status-title"
+          titleNode={
             <div className="modal-head">
-              <h3>Change status → {statusDialog.nextStatus}</h3>
+              <h3 id="inquiries-status-title">Change status → {statusDialog.nextStatus}</h3>
               <button className="button ghost" type="button" disabled={busy} onClick={function () { setStatusDialog(null); }}>×</button>
             </div>
+          }
+        >
             <p className="mini-muted">{statusDialog.name} — recorded in the audit log.</p>
             {statusDialog.nextStatus === "FollowUp" || statusDialog.nextStatus === "Negotiating" ? (
               <div className="field">
                 <label htmlFor="inquiries-follow-up-date-20">Follow-up date</label>
                 <input id="inquiries-follow-up-date-20"
                   type="date"
+                  min={inquiryFollowupDateMin()}
                   value={statusDialog.followup_date}
                   onChange={function (e) {
                     const v = e.target.value;
@@ -978,17 +997,30 @@ export default function InquiriesPage() {
                 {busy ? "Saving..." : "Confirm"}
               </button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       ) : null}
 
       {deleteDialog ? (
-        <div className="modal-backdrop" onClick={function () { if (!busy) setDeleteDialog(null); }}>
-          <div className="card modal-card" onClick={function (e) { e.stopPropagation(); }}>
+        <ModalDialog
+          open
+          onClose={function () { setDeleteDialog(null); }}
+          onRequestClose={function () {
+            confirmDiscardTyped(
+              confirm,
+              deleteDialog.reason.trim().length > 0,
+              function () { setDeleteDialog(null); }
+            );
+          }}
+          lockClose={busy}
+          className="card modal-card"
+          labelledBy="inquiries-delete-title"
+          titleNode={
             <div className="modal-head">
-              <h3>Delete / close inquiry</h3>
+              <h3 id="inquiries-delete-title">Delete / close inquiry</h3>
               <button className="button ghost" type="button" disabled={busy} onClick={function () { setDeleteDialog(null); }}>×</button>
             </div>
+          }
+        >
             <p className="mini-muted">
               By default the inquiry is closed (status Closed) so lead-source analytics are preserved.
               {isAdmin ? " Admins can permanently delete." : ""}
@@ -1025,17 +1057,30 @@ export default function InquiriesPage() {
                 {busy ? "Working..." : deleteDialog.hard ? "Delete permanently" : "Close inquiry"}
               </button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       ) : null}
 
       {convertDialog ? (
-        <div className="modal-backdrop" onClick={function () { if (!busy) setConvertDialog(null); }}>
-          <div className="card modal-card" onClick={function (e) { e.stopPropagation(); }}>
+        <ModalDialog
+          open
+          onClose={function () { setConvertDialog(null); }}
+          onRequestClose={function () {
+            confirmDiscardTyped(
+              confirm,
+              convertDialog.notes.trim().length > 0,
+              function () { setConvertDialog(null); }
+            );
+          }}
+          lockClose={busy}
+          className="card modal-card"
+          labelledBy="inquiries-convert-title"
+          titleNode={
             <div className="modal-head">
-              <h3>Convert to patient</h3>
+              <h3 id="inquiries-convert-title">Convert to patient</h3>
               <button className="button ghost" type="button" disabled={busy} onClick={function () { setConvertDialog(null); }}>×</button>
             </div>
+          }
+        >
             <p className="mini-muted">
               {convertDialog.name} — creates or links a patient by mobile via the server RPC.
             </p>
@@ -1056,8 +1101,7 @@ export default function InquiriesPage() {
                 {busy ? "Converting..." : "Confirm convert"}
               </button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       ) : null}
     </AuthGuard>
   );

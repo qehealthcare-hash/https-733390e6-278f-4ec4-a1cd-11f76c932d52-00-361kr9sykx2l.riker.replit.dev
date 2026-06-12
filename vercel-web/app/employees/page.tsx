@@ -5,17 +5,29 @@
  * PDF helpers live in `@/lib/employeeUi`.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent
+} from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { AuthGuard } from "@/components/state/auth-guard";
 import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { ModalDialog } from "@/components/ui/modal-dialog";
+import { confirmDiscardTyped } from "@/lib/modalDiscard";
 import { usePaginatedResource } from "@/hooks/use-paginated-resource";
+import { useBusyGuard } from "@/hooks/use-busy-guard";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { useAuth } from "@/components/providers/auth-provider";
-import { request, requestWithOfflineFallback } from "@/lib/api-client";
+import { auditsClient, employeesClient } from "@/lib/clients";
 import {
   departmentOptions,
   educationOptions,
@@ -26,29 +38,160 @@ import {
 } from "@/lib/crm-options";
 import { formatCurrency, formatDate, slugToText } from "@/lib/formatters";
 import { crmTodayIso } from "@/src/utils/crmToday";
+import { employeeLeaveDateMin } from "@/lib/dateFieldBounds";
+import {
+  parseValidationFieldErrors,
+  ValidatedInput,
+  ValidatedSelect,
+  ValidatedTextarea
+} from "@/lib/fieldErrorsUi";
+
+const EMPLOYEES_FORM_PREFIX = "employees";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
 import { CameraCaptureModal } from "@/components/ui/camera-capture-lazy";
 import { DocumentCard, DocumentList } from "@/components/ui/document-card";
-import { openPrintWindow } from "@/lib/print";
+import { openPrintWindow, preOpenPrintWindow, reportPrintBlocked } from "@/lib/print";
 import { hasPermission } from "@/lib/permissions";
 import { EMPLOYEE_LINKS_ROLES } from "@/business/rbac";
 import {
   buildEmployeePdfBody,
   buildEmployeeDirectoryPdfBody,
-  employeeListPosition,
-  rowScoreTotal
+  rowScoreTotal,
+  type EmployeeDocRef,
+  type EmployeeListRow
 } from "@/lib/employeeUi";
+import type { EmployeePermissionsDto } from "@/validation/employeeDto";
+import type { Role } from "@/business/rbac";
 
-function roleInList(role, list) {
+type CrmOption = { value: string; label: string };
+
+type EmployeesAuth = {
+  session?: { access_token?: string } | null;
+  profile?: { role?: string } | null;
+  supabase?: unknown;
+};
+
+interface EmployeeFormState {
+  id: string;
+  fn: string;
+  mn: string;
+  ln: string;
+  mobile: string;
+  phone2: string;
+  gender: string;
+  dob: string;
+  dept: string;
+  role: string;
+  emp_type: string;
+  education: string;
+  shift_type: string;
+  join_date: string;
+  leave_date: string;
+  exp: string;
+  salary: number | string;
+  aadhar: string;
+  pan: string;
+  permaddr: string;
+  presaddr: string;
+  area: string;
+  city: string;
+  pin: string;
+  district: string;
+  state: string;
+  ecname: string;
+  ecphone: string;
+  ecrel: string;
+  skills: string;
+  score_experience: number | null;
+  score_behaviour: number | null;
+  score_testimonial: number | null;
+  score_touched: {
+    score_experience: boolean;
+    score_behaviour: boolean;
+    score_testimonial: boolean;
+  };
+  status: string;
+  expected_updated_at: string;
+  confirm_duplicate_name: boolean;
+  photo: EmployeeDocRef | null;
+  documents: EmployeeDocRef[];
+}
+
+interface StatusDialogState {
+  id: string;
+  name: string;
+  nextStatus: string;
+  reason: string;
+  error?: string;
+}
+
+interface ActivateDialogState {
+  id: string;
+  name: string;
+  note: string;
+  error?: string;
+}
+
+interface DeleteDialogState {
+  id: string;
+  name: string;
+  reason: string;
+}
+
+interface HistoryDialogState {
+  id: string;
+  name: string;
+}
+
+interface ConflictPromptState {
+  actual?: string;
+  message?: string;
+}
+
+interface DuplicatePromptState {
+  field?: string;
+  message: string;
+}
+
+interface FieldErrorsState {
+  fields: Record<string, string[]>;
+  form: string[];
+}
+
+interface EmployeeLinkCounts {
+  duties?: number;
+  attendance?: number;
+  payouts?: number;
+}
+
+interface AuditHistoryEntry {
+  id?: string;
+  created_at?: string;
+  action?: string;
+  user_id?: string;
+  stamp?: string;
+  reason?: string;
+}
+
+interface EmployeeHistoryData {
+  counts?: EmployeeLinkCounts;
+  audit?: AuditHistoryEntry[];
+}
+
+function sessionOrNull(auth: EmployeesAuth) {
+  return (auth.session ?? null) as import("@supabase/supabase-js").Session | null;
+}
+
+function roleInList(role: unknown, list: readonly Role[]): boolean {
   const normalized = String(role || "").trim().toLowerCase();
   return list.some(function (r) {
     return r.toLowerCase() === normalized;
   });
 }
 
-function employeeRowPermissions(row) {
+function employeeRowPermissions(row: EmployeeListRow): EmployeePermissionsDto {
   return (
-    (row && row.permissions) || {
+    row.permissions || {
       canEdit: false,
       canDeactivate: false,
       canActivate: false,
@@ -58,7 +201,7 @@ function employeeRowPermissions(row) {
   );
 }
 
-function createInitialForm() {
+function createInitialForm(): EmployeeFormState {
   return {
     id: "",
     fn: "",
@@ -73,7 +216,7 @@ function createInitialForm() {
     emp_type: "FULL_TIME",
     education: "ILLITERATE",
     shift_type: "DAY",
-    join_date: new Date().toISOString().slice(0, 10),
+    join_date: crmTodayIso(),
     leave_date: "",
     exp: "",
     salary: 0,
@@ -105,7 +248,7 @@ function createInitialForm() {
   };
 }
 
-function clampScore(value) {
+function clampScore(value: number | string | null | undefined): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(10, n));
@@ -116,21 +259,23 @@ function clampScore(value) {
 // strict <select> dropdowns. Without normalisation those rows silently render the
 // first option and overwrite the stored value on save. Map them back to canonical
 // values so the form round-trips legacy data faithfully.
-function findOption(options, value) {
+function findOption(options: readonly CrmOption[], value: unknown): CrmOption | null {
   if (value == null) return null;
   const target = String(value).trim();
   if (!target) return null;
   for (let i = 0; i < options.length; i += 1) {
-    if (options[i].value === target) return options[i];
+    const option = options[i];
+    if (option && option.value === target) return option;
   }
   const upper = target.toUpperCase();
   for (let j = 0; j < options.length; j += 1) {
-    if (String(options[j].value).toUpperCase() === upper) return options[j];
+    const option = options[j];
+    if (option && String(option.value).toUpperCase() === upper) return option;
   }
   return null;
 }
 
-function normaliseRoleValue(raw) {
+function normaliseRoleValue(raw: unknown): string {
   if (!raw) return "NURSE";
   const match = findOption(employeeRoleOptions, raw);
   if (match) return match.value;
@@ -142,7 +287,7 @@ function normaliseRoleValue(raw) {
   return "OTHER";
 }
 
-function normaliseDeptValue(raw) {
+function normaliseDeptValue(raw: unknown): string {
   if (!raw) return "NURSING";
   const match = findOption(departmentOptions, raw);
   if (match) return match.value;
@@ -155,7 +300,7 @@ function normaliseDeptValue(raw) {
   return "ATTENDANT";
 }
 
-function normaliseEmpTypeValue(raw) {
+function normaliseEmpTypeValue(raw: unknown): string {
   if (!raw) return "FULL_TIME";
   const match = findOption(employeeTypeOptions, raw);
   if (match) return match.value;
@@ -171,7 +316,7 @@ function normaliseEmpTypeValue(raw) {
   return "FULL_TIME";
 }
 
-function normaliseShiftValue(raw) {
+function normaliseShiftValue(raw: unknown): string {
   if (!raw) return "DAY";
   const match = findOption(shiftOptions, raw);
   if (match) return match.value;
@@ -188,7 +333,7 @@ function normaliseShiftValue(raw) {
   return "DAY";
 }
 
-function normaliseEducationValue(raw) {
+function normaliseEducationValue(raw: unknown): string {
   if (!raw) return "ILLITERATE";
   const match = findOption(educationOptions, raw);
   if (match) return match.value;
@@ -200,7 +345,7 @@ function normaliseEducationValue(raw) {
   return "ILLITERATE";
 }
 
-function normaliseStatusValue(raw, active) {
+function normaliseStatusValue(raw: unknown, active: boolean): string {
   const fallback = active === false ? "Inactive" : "Active";
   if (!raw) return fallback;
   const match = findOption(employeeStatusOptions, raw);
@@ -216,14 +361,14 @@ function normaliseStatusValue(raw, active) {
 // Mobile values like "7874751265(son)" pollute the input box on edit and confuse
 // duplicate detection. Strip annotations to a clean dialable form before rendering
 // (server still re-normalises on save, but we want the field to display sanely).
-function sanitiseMobileForForm(raw) {
+function sanitiseMobileForForm(raw: unknown): string {
   if (raw == null) return "";
   const trimmed = String(raw).trim();
   if (!trimmed) return "";
   return trimmed.replace(/[^0-9+]/g, "");
 }
 
-function computeScoreTotal(form) {
+function computeScoreTotal(form: EmployeeFormState): number | null {
   const parts = [form.score_experience, form.score_behaviour, form.score_testimonial]
     .filter(function (v) { return v != null && Number.isFinite(Number(v)); })
     .map(function (v) { return Number(v); });
@@ -233,7 +378,7 @@ function computeScoreTotal(form) {
 }
 
 export default function EmployeesPage() {
-  const auth = useAuth();
+  const auth = useAuth() as unknown as EmployeesAuth;
   const isAdmin = String(auth.profile?.role || "").trim().toUpperCase() === "ADMIN";
   const canManage = hasPermission(auth.profile?.role, "employees.write");
   const canViewLinks = roleInList(auth.profile?.role, EMPLOYEE_LINKS_ROLES);
@@ -249,8 +394,8 @@ export default function EmployeesPage() {
     [search]
   );
 
-  const [form, setForm] = useState(createInitialForm());
-  const [formPermissions, setFormPermissions] = useState(null);
+  const [form, setForm] = useState<EmployeeFormState>(createInitialForm);
+  const [formPermissions, setFormPermissions] = useState<EmployeePermissionsDto | null>(null);
   // P1-36: stable draft id for uploads that fire before the employee row
   // has been persisted. Once form.id exists we prefer that.
   const employeeDraftIdRef = useRef(
@@ -259,7 +404,7 @@ export default function EmployeesPage() {
         ? crypto.randomUUID()
         : Math.random().toString(36).slice(2) + Date.now().toString(36))
   );
-  const [busy, setBusy] = useState(false);
+  const { busy, tryBegin, end } = useBusyGuard();
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [deptFilter, setDeptFilter] = useState("");
@@ -269,28 +414,29 @@ export default function EmployeesPage() {
   const [shiftFilter, setShiftFilter] = useState("");
   const [scoreFilter, setScoreFilter] = useState("");
   const [error, setErrorState] = useState("");
-  const [fieldErrors, setFieldErrors] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrorsState | null>(null);
   const [message, setMessageState] = useState("");
   const toast = useToast();
-  const setError = useCallback(function (msg) {
+  const confirm = useConfirm();
+  const setError = useCallback(function (msg: string) {
     const text = String(msg || "");
     setErrorState(text);
     if (text) toast.error(text);
   }, [toast]);
-  const setMessage = useCallback(function (msg) {
+  const setMessage = useCallback(function (msg: string) {
     const text = String(msg || "");
     setMessageState(text);
     if (text) toast.success(text);
   }, [toast]);
 
-  const [statusDialog, setStatusDialog] = useState(null);
-  const [activateDialog, setActivateDialog] = useState(null);
-  const [deleteDialog, setDeleteDialog] = useState(null);
-  const [conflictPrompt, setConflictPrompt] = useState(null);
-  const [duplicatePrompt, setDuplicatePrompt] = useState(null);
-  const [historyDialog, setHistoryDialog] = useState(null);
+  const [statusDialog, setStatusDialog] = useState<StatusDialogState | null>(null);
+  const [activateDialog, setActivateDialog] = useState<ActivateDialogState | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
+  const [conflictPrompt, setConflictPrompt] = useState<ConflictPromptState | null>(null);
+  const [duplicatePrompt, setDuplicatePrompt] = useState<DuplicatePromptState | null>(null);
+  const [historyDialog, setHistoryDialog] = useState<HistoryDialogState | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
-  const [historyData, setHistoryData] = useState(null);
+  const [historyData, setHistoryData] = useState<EmployeeHistoryData | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
 
@@ -305,8 +451,8 @@ export default function EmployeesPage() {
     [debouncedSearch, statusFilter, deptFilter]
   );
 
-  const resource = usePaginatedResource({
-    basePath: "/employees",
+  const resource = usePaginatedResource<EmployeeListRow>({
+    list: employeesClient.list,
     table: "hh_employees",
     channel: "employees",
     queryParams: listQuery,
@@ -314,7 +460,7 @@ export default function EmployeesPage() {
     pageSize: 50
   });
 
-  async function openHistory(row) {
+  async function openHistory(row: EmployeeListRow) {
     const name = (row.full_name || row.name || ((row.fn || "") + " " + (row.ln || ""))).trim() || row.id;
     setHistoryDialog({ id: row.id, name: name });
     setHistoryData(null);
@@ -322,33 +468,43 @@ export default function EmployeesPage() {
     setHistoryLoading(true);
     try {
       const results = await Promise.allSettled([
-        request("/employees/" + row.id + "/links", null, auth.session),
-        request("/audits?entity_id=" + encodeURIComponent(row.id) + "&limit=20", null, auth.session)
+        employeesClient.links(sessionOrNull(auth), row.id),
+        auditsClient.list(sessionOrNull(auth), { entity_id: row.id, limit: 20 })
       ]);
-      const linkCounts = results[0].status === "fulfilled" ? (results[0].value || {}) : {};
-      const auditPayload = results[1].status === "fulfilled" ? (results[1].value || {}) : {};
+      const linkCounts =
+        results[0].status === "fulfilled"
+          ? ((results[0].value || {}) as EmployeeLinkCounts)
+          : {};
+      const auditPayload =
+        results[1].status === "fulfilled" ? (results[1].value || {}) : {};
       const auditRows = Array.isArray(auditPayload)
         ? auditPayload
-        : auditPayload.rows || auditPayload.data || [];
+        : (auditPayload as { rows?: AuditHistoryEntry[]; data?: AuditHistoryEntry[] }).rows ||
+          (auditPayload as { data?: AuditHistoryEntry[] }).data ||
+          [];
       setHistoryData({ counts: linkCounts, audit: auditRows });
       if (results[0].status === "rejected" && results[1].status === "rejected") {
-        setHistoryError(results[0].reason?.message || results[1].reason?.message || "Could not load history");
+        const r0 = results[0].reason;
+        const r1 = results[1].reason;
+        setHistoryError(
+          (r0 instanceof Error ? r0.message : "") ||
+            (r1 instanceof Error ? r1.message : "") ||
+            "Could not load history"
+        );
       }
-    } catch (err) {
-      setHistoryError(err?.message || "Could not load employee history");
+    } catch (err: unknown) {
+      setHistoryError(
+        err instanceof Error ? err.message : "Could not load employee history"
+      );
     } finally {
       setHistoryLoading(false);
     }
   }
 
   const filtered = useMemo(
-    function () {
-      return resource.data.filter(function (row) {
-        const name = (row.full_name || row.name || (row.fn || "") + " " + (row.ln || "")).trim();
-        const hay = [name, row.mobile || row.phone, row.permaddr || row.addr, row.role || row.desig, row.dept, row.skills]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
+    function (): EmployeeListRow[] {
+      const data = resource.data || [];
+      return data.filter(function (row) {
         const matchesRole = !roleFilter || (row.role || row.desig) === roleFilter;
         const matchesStatus = true;
         const matchesDept = true;
@@ -379,11 +535,11 @@ export default function EmployeesPage() {
     [resource.data, roleFilter, typeFilter, genderFilter, eduFilter, shiftFilter, scoreFilter]
   );
 
-  function updateField(name, value) {
+  function updateField<K extends keyof EmployeeFormState>(name: K, value: EmployeeFormState[K]) {
     setForm(function (current) {
       const next = { ...current, [name]: value };
       if (name === "score_experience" || name === "score_behaviour" || name === "score_testimonial") {
-        next.score_touched = { ...(current.score_touched || {}), [name]: true };
+        next.score_touched = { ...current.score_touched, [name]: true };
       }
       return next;
     });
@@ -397,14 +553,14 @@ export default function EmployeesPage() {
     setMessage("");
   }
 
-  function editEmployee(row) {
+  function editEmployee(row: EmployeeListRow) {
     const fullName = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
     const parts = fullName.split(/\s+/).filter(Boolean);
     setForm({
       id: row.id,
       fn: row.fn || parts[0] || "",
       mn: row.mn || (parts.length > 2 ? parts.slice(1, -1).join(" ") : ""),
-      ln: row.ln || (parts.length > 1 ? parts[parts.length - 1] : ""),
+      ln: row.ln || (parts.length > 1 ? parts[parts.length - 1] || "" : ""),
       mobile: sanitiseMobileForForm(row.mobile || row.phone || ""),
       phone2: sanitiseMobileForForm(row.phone2 || ""),
       gender: row.gender || "Female",
@@ -442,7 +598,7 @@ export default function EmployeesPage() {
         score_behaviour: row.score_behaviour != null,
         score_testimonial: row.score_testimonial != null
       },
-      status: normaliseStatusValue(row.status, row.active),
+      status: normaliseStatusValue(row.status, row.active !== false),
       expected_updated_at: row.updated_at || "",
       confirm_duplicate_name: false,
       photo: row.photo && typeof row.photo === "object" ? row.photo : null,
@@ -458,19 +614,21 @@ export default function EmployeesPage() {
     }
   }
 
-  async function handleUpload(event) {
+  async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files || []);
     if (!files.length) return;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
-      const uploaded = [];
+      const uploaded: EmployeeDocRef[] = [];
       for (let i = 0; i < files.length; i += 1) {
+        const file = files[i];
+        if (!file) continue;
         uploaded.push(
           await uploadDocument({
             bucket: "employee-documents",
-            file: files[i],
-            session: auth.session,
+            file,
+            session: sessionOrNull(auth),
             supabase: auth.supabase,
             resource: "Employees",
             resourceId: form.id || employeeDraftIdRef.current
@@ -481,50 +639,56 @@ export default function EmployeesPage() {
         return { ...current, documents: current.documents.concat(uploaded) };
       });
       setMessage("Employee documents uploaded");
-    } catch (uploadError) {
-      setError(uploadError.message || "Unable to upload employee documents");
+    } catch (uploadError: unknown) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Unable to upload employee documents"
+      );
     } finally {
-      setBusy(false);
+      end();
       event.target.value = "";
     }
   }
 
-  async function uploadEmployeePhotoFile(file) {
+  async function uploadEmployeePhotoFile(file: File | null | undefined) {
     if (!file) return;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
       const uploaded = await uploadDocument({
         bucket: "employee-documents",
         file: file,
-        session: auth.session,
+        session: sessionOrNull(auth),
         supabase: auth.supabase,
         resource: "Employees",
         resourceId: form.id || employeeDraftIdRef.current
       });
       setForm(function (current) { return { ...current, photo: uploaded }; });
       setMessage("Photo uploaded");
-    } catch (uploadError) {
-      setError(uploadError.message || "Unable to upload photo");
+    } catch (uploadError: unknown) {
+      setError(
+        uploadError instanceof Error ? uploadError.message : "Unable to upload photo"
+      );
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
-  async function handlePhotoUpload(event) {
+  async function handlePhotoUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = (event.target.files || [])[0];
     event.target.value = "";
     await uploadEmployeePhotoFile(file);
   }
 
-  async function handleEmployeeCameraCapture(file) {
+  async function handleEmployeeCameraCapture(file: File) {
     setCameraOpen(false);
     await uploadEmployeePhotoFile(file);
   }
 
-  async function submitForm(formOverride) {
+  async function submitForm(formOverride?: EmployeeFormState) {
     const current = formOverride || form;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     setFieldErrors(null);
     setMessage("");
@@ -544,7 +708,7 @@ export default function EmployeesPage() {
       const cleanEducation = normaliseEducationValue(current.education);
       const cleanShift = normaliseShiftValue(current.shift_type);
       const cleanStatus = normaliseStatusValue(current.status, current.status !== "Inactive");
-      const payload = {
+      const payload: Record<string, unknown> = {
         fn: current.fn,
         mn: current.mn,
         ln: current.ln,
@@ -613,54 +777,54 @@ export default function EmployeesPage() {
       if (current.confirm_duplicate_name) {
         payload.confirm_duplicate_name = true;
       }
-      const saved = await requestWithOfflineFallback(
-        current.id ? "/employees/" + current.id : "/employees",
-        { method: current.id ? "PUT" : "POST", body: payload },
-        auth.session
-      );
+      const saved = await employeesClient.save(sessionOrNull(auth), payload);
       await resource.reload();
       if (current.id && saved) {
-        editEmployee(saved);
+        editEmployee(saved as EmployeeListRow);
         setMessage("Employee updated — fields reflect saved values");
       } else {
         resetForm();
         setMessage("Employee created successfully");
       }
-    } catch (submitError) {
-      const code = submitError?.code;
+    } catch (submitError: unknown) {
+      const err = submitError as {
+        code?: string;
+        message?: string;
+        details?: {
+          actual_updated_at?: string;
+          field?: string;
+          fieldErrors?: Record<string, string[]>;
+          formErrors?: string[];
+        };
+      };
+      const code = err?.code;
       if (code === "conflict") {
         setConflictPrompt({
-          actual: submitError?.details?.actual_updated_at,
+          actual: err?.details?.actual_updated_at,
           message:
-            submitError.message ||
+            err.message ||
             "Employee was modified by another user — reload to see their changes."
         });
       } else if (
         code === "duplicate" &&
-        (submitError?.details?.field === "name" || submitError?.details?.field === "aadhar") &&
+        (err?.details?.field === "name" || err?.details?.field === "aadhar") &&
         !current.id
       ) {
         setDuplicatePrompt({
-          field: submitError.details.field,
-          message: submitError.message || "An active employee with this identity already exists."
+          field: err.details?.field,
+          message: err.message || "An active employee with this identity already exists."
         });
       } else {
-        setError(submitError.message || "Unable to save employee");
-        if (code === "validation_error" && submitError?.details) {
-          setFieldErrors({
-            fields: submitError.details.fieldErrors || {},
-            form: submitError.details.formErrors || []
-          });
-        } else {
-          setFieldErrors(null);
-        }
+        setError(err.message || "Unable to save employee");
+        const parsedFields = parseValidationFieldErrors(err);
+        setFieldErrors(parsedFields);
       }
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
-  async function handleSubmit(event) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!canManage) {
       setError("You do not have permission to create or edit employees.");
@@ -674,17 +838,19 @@ export default function EmployeesPage() {
       setConflictPrompt(null);
       return;
     }
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
-      const fresh = await request("/employees/" + form.id, null, auth.session);
-      editEmployee(fresh);
+      const fresh = await employeesClient.get(sessionOrNull(auth), form.id);
+      editEmployee(fresh as EmployeeListRow);
       setConflictPrompt(null);
       setMessage("Employee reloaded — your previous edits were discarded.");
-    } catch (reloadError) {
-      setError(reloadError.message || "Could not reload employee.");
+    } catch (reloadError: unknown) {
+      setError(
+        reloadError instanceof Error ? reloadError.message : "Could not reload employee."
+      );
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
@@ -695,7 +861,7 @@ export default function EmployeesPage() {
     await submitForm(next);
   }
 
-  function changeStatus(id, nextStatus, rowName) {
+  function changeStatus(id: string, nextStatus: string, rowName?: string) {
     if (nextStatus === "Active") {
       setActivateDialog({ id: id, name: rowName || "", note: "" });
       return;
@@ -703,39 +869,38 @@ export default function EmployeesPage() {
     setStatusDialog({ id: id, name: rowName || "", nextStatus: nextStatus, reason: "" });
   }
 
-  async function applyStatusChange(id, nextStatus, reason) {
-    setBusy(true);
+  async function applyStatusChange(id: string, nextStatus: string, reason: string) {
+    if (!tryBegin()) return;
     setError("");
     setActivateDialog(function (current) { return current ? { ...current, error: "" } : current; });
     setStatusDialog(function (current) { return current ? { ...current, error: "" } : current; });
     try {
-      await requestWithOfflineFallback(
-        "/employees/" + id + "/status",
-        { method: "POST", body: { status: nextStatus, reason: reason } },
-        auth.session
-      );
+      await employeesClient.setStatus(sessionOrNull(auth), id, {
+        status: nextStatus,
+        reason: reason
+      });
       await resource.reload();
       if (form.id === id) resetForm();
       setMessage("Employee → " + nextStatus);
       setStatusDialog(null);
       setActivateDialog(null);
-    } catch (err) {
-      const msg = err && err.message ? err.message : "Unable to change status";
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unable to change status";
       setError(msg);
       setActivateDialog(function (current) { return current ? { ...current, error: msg } : current; });
       setStatusDialog(function (current) { return current ? { ...current, error: msg } : current; });
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
-  async function resolveDocLinks(docs) {
+  async function resolveDocLinks(docs: EmployeeDocRef[]) {
     if (!Array.isArray(docs) || !docs.length || !auth.session) return [];
-    const resolved = [];
+    const resolved: EmployeeDocRef[] = [];
     for (let i = 0; i < docs.length; i += 1) {
       const d = docs[i];
       try {
-        const data = await getDocumentSignedUrl(d, auth.session, { expiresIn: 1800 });
+        const data = await getDocumentSignedUrl(d, sessionOrNull(auth), { expiresIn: 1800 });
         resolved.push({ ...d, signedUrl: data && data.signedUrl ? data.signedUrl : "" });
       } catch (_e) {
         resolved.push({ ...d, signedUrl: "" });
@@ -744,12 +909,11 @@ export default function EmployeesPage() {
     return resolved;
   }
 
-  async function openEmployeePdf(row, hideSensitive) {
-    const preOpened = window.open("about:blank", "_blank", "width=1024,height=820");
-    if (preOpened && preOpened.document) {
-      try {
-        preOpened.document.write("<title>Preparing PDF…</title><body style='font-family:Segoe UI,Arial,sans-serif;padding:32px;color:#475569'>Loading employee profile…</body>");
-      } catch (_e) { /* opaque about:blank — ignore */ }
+  async function openEmployeePdf(row: EmployeeListRow, hideSensitive: boolean) {
+    const preOpened = preOpenPrintWindow();
+    if (!preOpened) {
+      reportPrintBlocked(setError);
+      return;
     }
     const rawDocs = row.employee_documents || row.docs || [];
     const photoDoc = row.photo && typeof row.photo === "object" && row.photo.path ? row.photo : null;
@@ -765,10 +929,12 @@ export default function EmployeesPage() {
   }
 
   function openEmployeeDirectoryPdf() {
-    openPrintWindow("Employee Directory", buildEmployeeDirectoryPdfBody(filtered));
+    if (!openPrintWindow("Employee Directory", buildEmployeeDirectoryPdfBody(filtered))) {
+      reportPrintBlocked(setError);
+    }
   }
 
-  function openDeleteDialog(row) {
+  function openDeleteDialog(row: EmployeeListRow) {
     setDeleteDialog({
       id: row.id,
       name: row.full_name || row.name || row.id,
@@ -778,26 +944,25 @@ export default function EmployeesPage() {
 
   async function submitDeleteDialog() {
     if (!deleteDialog) return;
-    setBusy(true);
+    if (!tryBegin()) return;
     setError("");
     try {
-      const result = await requestWithOfflineFallback(
-        "/employees/" + deleteDialog.id,
-        { method: "DELETE", body: { reason: deleteDialog.reason.trim() } },
-        auth.session
-      );
+      const result = await employeesClient.remove(sessionOrNull(auth), deleteDialog.id, {
+        reason: deleteDialog.reason.trim()
+      });
       await resource.reload();
       if (form.id === deleteDialog.id) resetForm();
+      const deleteResult = result as { mode?: string } | null;
       setMessage(
-        result && result.mode === "soft"
+        deleteResult && deleteResult.mode === "soft"
           ? "Employee deactivated (history preserved)"
           : "Employee deleted"
       );
       setDeleteDialog(null);
-    } catch (err) {
-      setError(err.message || "Unable to delete employee");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to delete employee");
     } finally {
-      setBusy(false);
+      end();
     }
   }
 
@@ -822,46 +987,50 @@ export default function EmployeesPage() {
             <fieldset
               className="stack"
               style={{ border: 0, padding: 0, margin: 0 }}
-              disabled={
+              disabled={Boolean(
                 !canManage || (form.id && formPermissions && !formPermissions.canEdit)
-              }
+              )}
             >
             <form className="stack" onSubmit={handleSubmit}>
+              {(() => {
+                const feMap = fieldErrors?.fields ?? null;
+                return (
+                  <>
               <strong>Personal</strong>
               <div className="grid-3">
                 <div className="field">
                   <label htmlFor="employees-first-name-1">First name</label>
-                  <input id="employees-first-name-1" value={form.fn} onChange={function (event) { updateField("fn", event.target.value); }} required />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="fn" fieldErrors={feMap} id="employees-first-name-1" value={form.fn} onChange={function (event) { updateField("fn", event.target.value); }} required />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-middle-name-2">Middle name</label>
-                  <input id="employees-middle-name-2" value={form.mn} onChange={function (event) { updateField("mn", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="mn" fieldErrors={feMap} id="employees-middle-name-2" value={form.mn} onChange={function (event) { updateField("mn", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-last-name-3">Last name</label>
-                  <input id="employees-last-name-3" value={form.ln} onChange={function (event) { updateField("ln", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="ln" fieldErrors={feMap} id="employees-last-name-3" value={form.ln} onChange={function (event) { updateField("ln", event.target.value); }} />
                 </div>
               </div>
               <div className="grid-3">
                 <div className="field">
                   <label htmlFor="employees-mobile-4">Mobile</label>
-                  <input id="employees-mobile-4" type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="mobile" aliasKeys={["phone"]} fieldErrors={feMap} id="employees-mobile-4" type="tel" inputMode="tel" value={form.mobile} onChange={function (event) { updateField("mobile", event.target.value); }} required />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-alternate-phone-5">Alternate phone</label>
-                  <input id="employees-alternate-phone-5" type="tel" inputMode="tel" value={form.phone2} onChange={function (event) { updateField("phone2", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="phone2" fieldErrors={feMap} id="employees-alternate-phone-5" type="tel" inputMode="tel" value={form.phone2} onChange={function (event) { updateField("phone2", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-date-of-birth-6">Date of birth</label>
-                  <input id="employees-date-of-birth-6" type="date" max={crmTodayIso()} value={form.dob} onChange={function (event) { updateField("dob", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="dob" fieldErrors={feMap} id="employees-date-of-birth-6" type="date" max={crmTodayIso()} value={form.dob} onChange={function (event) { updateField("dob", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-gender-7">Gender</label>
-                  <select id="employees-gender-7" value={form.gender} onChange={function (event) { updateField("gender", event.target.value); }}>
+                  <ValidatedSelect formPrefix={EMPLOYEES_FORM_PREFIX} name="gender" fieldErrors={feMap} id="employees-gender-7" value={form.gender} onChange={function (event) { updateField("gender", event.target.value); }}>
                     <option>Female</option>
                     <option>Male</option>
                     <option>Other</option>
-                  </select>
+                  </ValidatedSelect>
                 </div>
               </div>
 
@@ -869,7 +1038,7 @@ export default function EmployeesPage() {
               <div className="grid-2">
                 <div className="field">
                   <label htmlFor="employees-aadhar-8">Aadhar</label>
-                  <input id="employees-aadhar-8"
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="aadhar" fieldErrors={feMap} id="employees-aadhar-8"
                     value={form.aadhar}
                     onChange={function (event) { updateField("aadhar", event.target.value); }}
                     pattern="\d{12}"
@@ -880,7 +1049,7 @@ export default function EmployeesPage() {
                 </div>
                 <div className="field">
                   <label htmlFor="employees-pan-9">PAN</label>
-                  <input id="employees-pan-9"
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="pan" fieldErrors={feMap} id="employees-pan-9"
                     value={form.pan}
                     onChange={function (event) { updateField("pan", event.target.value.toUpperCase()); }}
                     pattern="[A-Z]{5}\d{4}[A-Z]"
@@ -893,32 +1062,32 @@ export default function EmployeesPage() {
               <strong>Address</strong>
               <div className="field">
                 <label htmlFor="employees-permanent-address-10">Permanent address</label>
-                <textarea id="employees-permanent-address-10" rows="2" value={form.permaddr} onChange={function (event) { updateField("permaddr", event.target.value); }} />
+                <ValidatedTextarea formPrefix={EMPLOYEES_FORM_PREFIX} name="permaddr" fieldErrors={feMap} id="employees-permanent-address-10" rows={2} value={form.permaddr} onChange={function (event) { updateField("permaddr", event.target.value); }} />
               </div>
               <div className="field">
                 <label htmlFor="employees-present-address-11">Present address</label>
-                <textarea id="employees-present-address-11" rows="2" value={form.presaddr} onChange={function (event) { updateField("presaddr", event.target.value); }} />
+                <ValidatedTextarea formPrefix={EMPLOYEES_FORM_PREFIX} name="presaddr" fieldErrors={feMap} id="employees-present-address-11" rows={2} value={form.presaddr} onChange={function (event) { updateField("presaddr", event.target.value); }} />
               </div>
               <div className="grid-3">
                 <div className="field">
                   <label htmlFor="employees-area-12">Area</label>
-                  <input id="employees-area-12" value={form.area} onChange={function (event) { updateField("area", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="area" fieldErrors={feMap} id="employees-area-12" value={form.area} onChange={function (event) { updateField("area", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-city-13">City</label>
-                  <input id="employees-city-13" value={form.city} onChange={function (event) { updateField("city", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="city" fieldErrors={feMap} id="employees-city-13" value={form.city} onChange={function (event) { updateField("city", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-pincode-14">Pincode</label>
-                  <input id="employees-pincode-14" value={form.pin} onChange={function (event) { updateField("pin", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="pin" fieldErrors={feMap} id="employees-pincode-14" value={form.pin} onChange={function (event) { updateField("pin", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-district-15">District</label>
-                  <input id="employees-district-15" value={form.district} onChange={function (event) { updateField("district", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="district" fieldErrors={feMap} id="employees-district-15" value={form.district} onChange={function (event) { updateField("district", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-state-16">State</label>
-                  <input id="employees-state-16" value={form.state} onChange={function (event) { updateField("state", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="state" fieldErrors={feMap} id="employees-state-16" value={form.state} onChange={function (event) { updateField("state", event.target.value); }} />
                 </div>
               </div>
 
@@ -926,83 +1095,95 @@ export default function EmployeesPage() {
               <div className="grid-3">
                 <div className="field">
                   <label htmlFor="employees-department-17">Department</label>
-                  <select id="employees-department-17" value={form.dept} onChange={function (event) { updateField("dept", event.target.value); }}>
+                  <ValidatedSelect formPrefix={EMPLOYEES_FORM_PREFIX} name="dept" aliasKeys={["department"]} fieldErrors={feMap} id="employees-department-17" value={form.dept} onChange={function (event) { updateField("dept", event.target.value); }}>
                     {departmentOptions.map(function (d) {
                       return <option key={d.value} value={d.value}>{d.label}</option>;
                     })}
-                  </select>
+                  </ValidatedSelect>
                 </div>
                 <div className="field">
                   <label htmlFor="employees-role-designation-18">Role / designation</label>
-                  <select id="employees-role-designation-18" value={form.role} onChange={function (event) { updateField("role", event.target.value); }}>
+                  <ValidatedSelect formPrefix={EMPLOYEES_FORM_PREFIX} name="role" aliasKeys={["desig"]} fieldErrors={feMap} id="employees-role-designation-18" value={form.role} onChange={function (event) { updateField("role", event.target.value); }}>
                     {employeeRoleOptions.map(function (r) {
                       return <option key={r.value} value={r.value}>{r.label}</option>;
                     })}
-                  </select>
+                  </ValidatedSelect>
                 </div>
                 <div className="field">
                   <label htmlFor="employees-employment-type-19">Employment type</label>
-                  <select id="employees-employment-type-19" value={form.emp_type} onChange={function (event) { updateField("emp_type", event.target.value); }}>
+                  <ValidatedSelect formPrefix={EMPLOYEES_FORM_PREFIX} name="emp_type" aliasKeys={["etype"]} fieldErrors={feMap} id="employees-employment-type-19" value={form.emp_type} onChange={function (event) { updateField("emp_type", event.target.value); }}>
                     {employeeTypeOptions.map(function (e) {
                       return <option key={e.value} value={e.value}>{e.label}</option>;
                     })}
-                  </select>
+                  </ValidatedSelect>
                 </div>
                 <div className="field">
                   <label htmlFor="employees-education-20">Education</label>
-                  <select id="employees-education-20" value={form.education} onChange={function (event) { updateField("education", event.target.value); }}>
+                  <ValidatedSelect formPrefix={EMPLOYEES_FORM_PREFIX} name="education" aliasKeys={["edu"]} fieldErrors={feMap} id="employees-education-20" value={form.education} onChange={function (event) { updateField("education", event.target.value); }}>
                     {educationOptions.map(function (e) {
                       return <option key={e.value} value={e.value}>{e.label}</option>;
                     })}
-                  </select>
+                  </ValidatedSelect>
                 </div>
                 <div className="field">
                   <label htmlFor="employees-shift-21">Shift</label>
-                  <select id="employees-shift-21" value={form.shift_type} onChange={function (event) { updateField("shift_type", event.target.value); }}>
+                  <ValidatedSelect formPrefix={EMPLOYEES_FORM_PREFIX} name="shift_type" aliasKeys={["shift"]} fieldErrors={feMap} id="employees-shift-21" value={form.shift_type} onChange={function (event) { updateField("shift_type", event.target.value); }}>
                     {shiftOptions.map(function (s) {
                       return <option key={s.value} value={s.value}>{s.label}</option>;
                     })}
-                  </select>
+                  </ValidatedSelect>
                 </div>
                 <div className="field">
                   <label htmlFor="employees-salary-monthly-22">Salary (monthly)</label>
-                  <input id="employees-salary-monthly-22" type="number" min="0" value={form.salary} onChange={function (event) { updateField("salary", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="salary" fieldErrors={feMap} id="employees-salary-monthly-22" type="number" min="0" value={form.salary} onChange={function (event) { updateField("salary", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-joining-date-23">Joining date</label>
-                  <input id="employees-joining-date-23" type="date" value={form.join_date} onChange={function (event) { updateField("join_date", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="join_date" aliasKeys={["join", "joining_date"]} fieldErrors={feMap} id="employees-joining-date-23" type="date" value={form.join_date} onChange={function (event) { updateField("join_date", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-leaving-date-24">Leaving date</label>
-                  <input id="employees-leaving-date-24" type="date" value={form.leave_date} onChange={function (event) { updateField("leave_date", event.target.value); }} />
+                  <ValidatedInput
+                    formPrefix={EMPLOYEES_FORM_PREFIX}
+                    name="leave_date"
+                    aliasKeys={["leave"]}
+                    fieldErrors={feMap}
+                    id="employees-leaving-date-24"
+                    type="date"
+                    min={employeeLeaveDateMin(form.join_date)}
+                    value={form.leave_date}
+                    onChange={function (event) { updateField("leave_date", event.target.value); }}
+                  />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-experience-25">Experience</label>
-                  <input id="employees-experience-25" value={form.exp} onChange={function (event) { updateField("exp", event.target.value); }} placeholder="e.g. 3 years" />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="exp" fieldErrors={feMap} id="employees-experience-25" value={form.exp} onChange={function (event) { updateField("exp", event.target.value); }} placeholder="e.g. 3 years" />
                 </div>
               </div>
               <div className="field">
                 <label htmlFor="employees-skills-26">Skills</label>
-                <textarea id="employees-skills-26" rows="2" value={form.skills} onChange={function (event) { updateField("skills", event.target.value); }} placeholder="e.g. Wound care, IV, BP, post-op care" />
+                <ValidatedTextarea formPrefix={EMPLOYEES_FORM_PREFIX} name="skills" fieldErrors={feMap} id="employees-skills-26" rows={2} value={form.skills} onChange={function (event) { updateField("skills", event.target.value); }} placeholder="e.g. Wound care, IV, BP, post-op care" />
               </div>
 
               <strong>Performance score (0-10)</strong>
               <div className="grid-3">
-                {["score_experience", "score_behaviour", "score_testimonial"].map(function (key) {
+                {(["score_experience", "score_behaviour", "score_testimonial"] as const).map(function (key) {
                   const label = key === "score_experience" ? "Experience" : key === "score_behaviour" ? "Behaviour" : "Testimonial";
                   const raw = form[key];
-                  const touched = !!(form.score_touched && form.score_touched[key]);
+                  const touched = form.score_touched[key];
                   const displayValue = raw == null ? 5 : Number(raw);
                   return (
                     <div className="field" key={key}>
-                      <label htmlFor="employees-label-27">{label}</label>
-                      <input id="employees-label-27"
+                      <label htmlFor={"employees-score-" + key}>{label}</label>
+                      <input id={"employees-score-" + key}
                         type="range"
                         min="0"
                         max="10"
                         step="0.5"
                         value={displayValue}
-                        onChange={function (event) { updateField(key, event.target.value); }}
+                        onChange={function (event) {
+                          updateField(key, Number(event.target.value));
+                        }}
                       />
                       <small>
                         {touched && raw != null ? Number(raw).toFixed(1) + "/10" : "Not rated"}
@@ -1049,17 +1230,20 @@ export default function EmployeesPage() {
               <div className="grid-3">
                 <div className="field">
                   <label htmlFor="employees-name-28">Name</label>
-                  <input id="employees-name-28" value={form.ecname} onChange={function (event) { updateField("ecname", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="ecname" fieldErrors={feMap} id="employees-name-28" value={form.ecname} onChange={function (event) { updateField("ecname", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-phone-29">Phone</label>
-                  <input id="employees-phone-29" value={form.ecphone} onChange={function (event) { updateField("ecphone", event.target.value); }} />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="ecphone" fieldErrors={feMap} id="employees-phone-29" value={form.ecphone} onChange={function (event) { updateField("ecphone", event.target.value); }} />
                 </div>
                 <div className="field">
                   <label htmlFor="employees-relation-30">Relation</label>
-                  <input id="employees-relation-30" value={form.ecrel} onChange={function (event) { updateField("ecrel", event.target.value); }} placeholder="e.g. Spouse, Father" />
+                  <ValidatedInput formPrefix={EMPLOYEES_FORM_PREFIX} name="ecrel" fieldErrors={feMap} id="employees-relation-30" value={form.ecrel} onChange={function (event) { updateField("ecrel", event.target.value); }} placeholder="e.g. Spouse, Father" />
                 </div>
               </div>
+                  </>
+                );
+              })()}
 
               <strong>Status & files</strong>
               <div className="grid-2">
@@ -1105,7 +1289,7 @@ export default function EmployeesPage() {
                   </div>
                   {form.photo ? (
                     <div style={{ marginTop: 8 }}>
-                      <DocumentCard doc={form.photo} session={auth.session} />
+                      <DocumentCard doc={form.photo} session={sessionOrNull(auth)} />
                     </div>
                   ) : (
                     <small>Mobile camera works from the file picker too.</small>
@@ -1124,8 +1308,8 @@ export default function EmployeesPage() {
               </div>
               <DocumentList
                 docs={form.documents}
-                session={auth.session}
-                onRemove={function (doc) {
+                session={sessionOrNull(auth)}
+                onRemove={function (doc: EmployeeDocRef) {
                   setForm(function (current) {
                     return {
                       ...current,
@@ -1214,23 +1398,10 @@ export default function EmployeesPage() {
               {error && !conflictPrompt && !duplicatePrompt ? (
                 <div className="error-text" role="alert" aria-live="assertive">
                   <div>{error}</div>
-                  {fieldErrors && (
-                    (fieldErrors.fields && Object.keys(fieldErrors.fields).length > 0) ||
-                    (fieldErrors.form && fieldErrors.form.length > 0)
-                  ) ? (
+                  {fieldErrors?.form?.length ? (
                     <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: "12px" }}>
-                      {(fieldErrors.form || []).map(function (msg, idx) {
+                      {fieldErrors.form.map(function (msg, idx) {
                         return <li key={"f" + idx}>{msg}</li>;
-                      })}
-                      {Object.entries(fieldErrors.fields || {}).map(function (entry) {
-                        const field = entry[0];
-                        const msgs = entry[1] || [];
-                        if (!msgs.length) return null;
-                        return (
-                          <li key={field}>
-                            <strong>{field}:</strong> {msgs.filter(Boolean).join(", ")}
-                          </li>
-                        );
                       })}
                     </ul>
                   ) : null}
@@ -1246,11 +1417,11 @@ export default function EmployeesPage() {
                 <button
                   className="button primary"
                   type="submit"
-                  disabled={
+                  disabled={Boolean(
                     busy ||
                     !canManage ||
                     (form.id && formPermissions && !formPermissions.canEdit)
-                  }
+                  )}
                   title={
                     formPermissions && formPermissions.blockReasons
                       ? formPermissions.blockReasons.canEdit
@@ -1371,6 +1542,7 @@ export default function EmployeesPage() {
                 total={resource.total}
                 onPageChange={resource.setPage}
                 onPageSizeChange={resource.setPageSize}
+                pageSizeOptions={undefined}
               />
               <div className="mini-muted" style={{ margin: "0.25rem 0 0.75rem" }}>
                 {debouncedSearch ? "Search: \"" + debouncedSearch + "\" — " : ""}
@@ -1392,7 +1564,6 @@ export default function EmployeesPage() {
               ) : (
                 <div className="record-list">
                   {filtered.map(function (row, index) {
-                    const rowNum = employeeListPosition(resource.page, resource.pageSize, index);
                     const name = row.full_name || row.name || ((row.fn || "") + " " + (row.ln || "")).trim();
                     const isActive = row.status ? row.status === "Active" : row.active !== false;
                     const score = rowScoreTotal(row);
@@ -1491,12 +1662,26 @@ export default function EmployeesPage() {
       />
 
       {activateDialog ? (
-        <div className="modal-backdrop" onClick={function () { if (!busy) setActivateDialog(null); }}>
-          <div className="card modal-card" onClick={function (e) { e.stopPropagation(); }}>
+        <ModalDialog
+          open
+          onClose={function () { setActivateDialog(null); }}
+          onRequestClose={function () {
+            confirmDiscardTyped(
+              confirm,
+              activateDialog.note.trim().length > 0,
+              function () { setActivateDialog(null); }
+            );
+          }}
+          lockClose={busy}
+          className="card modal-card"
+          labelledBy="employees-activate-title"
+          titleNode={
             <div className="modal-head">
-              <h3>Reactivate employee</h3>
+              <h3 id="employees-activate-title">Reactivate employee</h3>
               <button className="button ghost" type="button" disabled={busy} onClick={function () { setActivateDialog(null); }}>×</button>
             </div>
+          }
+        >
             <p className="mini-muted">
               {activateDialog.name ? activateDialog.name + " — " : ""}This will set status to Active and clear the leave date.
             </p>
@@ -1508,7 +1693,7 @@ export default function EmployeesPage() {
             <div className="field">
               <label htmlFor="employees-note-optional-43">Note (optional)</label>
               <textarea id="employees-note-optional-43"
-                rows="3"
+                rows={3}
                 value={activateDialog.note}
                 onChange={function (e) {
                   const value = e.target.value;
@@ -1525,17 +1710,30 @@ export default function EmployeesPage() {
                 {busy ? "Saving..." : "Confirm Active"}
               </button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       ) : null}
 
       {deleteDialog ? (
-        <div className="modal-backdrop" onClick={function () { if (!busy) setDeleteDialog(null); }}>
-          <div className="card modal-card" onClick={function (e) { e.stopPropagation(); }}>
+        <ModalDialog
+          open
+          onClose={function () { setDeleteDialog(null); }}
+          onRequestClose={function () {
+            confirmDiscardTyped(
+              confirm,
+              deleteDialog.reason.trim().length > 0,
+              function () { setDeleteDialog(null); }
+            );
+          }}
+          lockClose={busy}
+          className="card modal-card"
+          labelledBy="employees-delete-title"
+          titleNode={
             <div className="modal-head">
-              <h3>Delete employee</h3>
+              <h3 id="employees-delete-title">Delete employee</h3>
               <button className="button ghost" type="button" disabled={busy} onClick={function () { setDeleteDialog(null); }}>×</button>
             </div>
+          }
+        >
             <p className="mini-muted">
               {deleteDialog.name ? deleteDialog.name + " — " : ""}
               If this employee has duties, attendance, payouts, or patient assignments, they will be deactivated instead of permanently deleted.
@@ -1543,7 +1741,7 @@ export default function EmployeesPage() {
             <div className="field">
               <label htmlFor="employees-reason-optional-44">Reason (optional)</label>
               <textarea id="employees-reason-optional-44"
-                rows="3"
+                rows={3}
                 value={deleteDialog.reason}
                 onChange={function (e) {
                   const value = e.target.value;
@@ -1560,17 +1758,30 @@ export default function EmployeesPage() {
                 {busy ? "Working..." : "Confirm delete"}
               </button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       ) : null}
 
       {statusDialog ? (
-        <div className="modal-backdrop" onClick={function () { if (!busy) setStatusDialog(null); }}>
-          <div className="card modal-card" onClick={function (e) { e.stopPropagation(); }}>
+        <ModalDialog
+          open
+          onClose={function () { setStatusDialog(null); }}
+          onRequestClose={function () {
+            confirmDiscardTyped(
+              confirm,
+              statusDialog.reason.trim().length > 0,
+              function () { setStatusDialog(null); }
+            );
+          }}
+          lockClose={busy}
+          className="card modal-card"
+          labelledBy="employees-status-title"
+          titleNode={
             <div className="modal-head">
-              <h3>Change status → {statusDialog.nextStatus}</h3>
+              <h3 id="employees-status-title">Change status → {statusDialog.nextStatus}</h3>
               <button className="button ghost" type="button" disabled={busy} onClick={function () { setStatusDialog(null); }}>×</button>
             </div>
+          }
+        >
             <p className="mini-muted">
               {statusDialog.name ? statusDialog.name + " — " : ""}This change is written to the audit log.
             </p>
@@ -1582,7 +1793,7 @@ export default function EmployeesPage() {
             <div className="field">
               <label htmlFor="employees-reason-optional-45">Reason (optional)</label>
               <textarea id="employees-reason-optional-45"
-                rows="3"
+                rows={3}
                 value={statusDialog.reason}
                 onChange={function (e) {
                   const value = e.target.value;
@@ -1604,18 +1815,27 @@ export default function EmployeesPage() {
                 {busy ? "Saving..." : "Confirm " + statusDialog.nextStatus}
               </button>
             </div>
-          </div>
-        </div>
+        </ModalDialog>
       ) : null}
 
       {historyDialog ? (
-        <div className="modal-backdrop" onClick={function () { setHistoryDialog(null); }}>
-          <div className="card modal-card modal-wide" onClick={function (e) { e.stopPropagation(); }}>
+        <ModalDialog
+          open
+          onClose={function () { setHistoryDialog(null); }}
+          className="card modal-card modal-wide"
+          labelledBy="employees-history-title"
+          titleNode={
             <div className="modal-head">
-              <h3>History — {historyDialog.name}</h3>
+              <h3 id="employees-history-title">History — {historyDialog.name}</h3>
               <button className="button ghost" type="button" onClick={function () { setHistoryDialog(null); }}>×</button>
             </div>
-            {historyLoading ? <p className="mini-muted">Loading history…</p> : null}
+          }
+        >
+            {historyLoading ? (
+              <p className="mini-muted" role="status" aria-live="polite">
+                Loading history…
+              </p>
+            ) : null}
             {historyError ? <p style={{ color: "var(--danger)" }}>{historyError}</p> : null}
             {historyData ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -1650,8 +1870,7 @@ export default function EmployeesPage() {
                 )}
               </div>
             ) : null}
-          </div>
-        </div>
+        </ModalDialog>
       ) : null}
     </AuthGuard>
   );

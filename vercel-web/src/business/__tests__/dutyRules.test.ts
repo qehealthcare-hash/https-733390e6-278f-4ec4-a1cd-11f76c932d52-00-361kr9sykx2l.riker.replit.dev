@@ -14,6 +14,7 @@ import {
   payoutPeriodForDuty,
   selectOverlappingDuty,
   selectPatientOverlappingDuty,
+  selectSamePatientEmployeeOverlap,
   shouldCheckDutyOverlap
 } from "@/business/dutyRules";
 import { ErrorCodes } from "@/types/common";
@@ -85,6 +86,65 @@ describe("dutyRules — workflow matrix", () => {
     ];
     const hit = selectPatientOverlappingDuty(list, "PAT1", "2026-06-01T12:00:00Z", "2026-06-01T20:00:00Z");
     expect(hit?.id).toBe("D1");
+  });
+
+  it("hard-flags same (patient, employee) overlap — never a relief case", () => {
+    const list = [
+      slot("D1", "EMP1", "PAT1", "2026-06-01T08:00:00Z", "2026-06-01T16:00:00Z"),
+      // Same patient, DIFFERENT employee (legit relief / partner share)
+      slot("D2", "EMP2", "PAT1", "2026-06-01T08:00:00Z", "2026-06-01T16:00:00Z")
+    ];
+    const hit = selectSamePatientEmployeeOverlap(
+      list,
+      "PAT1",
+      "EMP1",
+      "2026-06-01T12:00:00Z",
+      "2026-06-01T20:00:00Z"
+    );
+    expect(hit?.id).toBe("D1");
+  });
+
+  it("does NOT flag a relief carer (same patient, different employee)", () => {
+    const list = [slot("D2", "EMP2", "PAT1", "2026-06-01T08:00:00Z", "2026-06-01T16:00:00Z")];
+    expect(
+      selectSamePatientEmployeeOverlap(
+        list,
+        "PAT1",
+        "EMP1",
+        "2026-06-01T12:00:00Z",
+        "2026-06-01T20:00:00Z"
+      )
+    ).toBeNull();
+  });
+
+  it("catches two open-ended duties for the same pair (the silent doubling bug)", () => {
+    // Both run to the far-future sentinel; starts are 12 days apart.
+    const list = [
+      slot("D1", "EMP1", "PAT1", "2026-05-15T03:30:00Z", OPEN_ENDED_END_AT)
+    ];
+    const hit = selectSamePatientEmployeeOverlap(
+      list,
+      "PAT1",
+      "EMP1",
+      "2026-05-27T03:30:00Z",
+      OPEN_ENDED_END_AT,
+      "D2"
+    );
+    expect(hit?.id).toBe("D1");
+  });
+
+  it("excludes self when re-saving the same pair (edit-in-place)", () => {
+    const list = [slot("D1", "EMP1", "PAT1", "2026-05-15T03:30:00Z", OPEN_ENDED_END_AT)];
+    expect(
+      selectSamePatientEmployeeOverlap(
+        list,
+        "PAT1",
+        "EMP1",
+        "2026-05-15T03:30:00Z",
+        OPEN_ENDED_END_AT,
+        "D1"
+      )
+    ).toBeNull();
   });
 
   it("skips CANCELLED and NO_SHOW duties when checking overlap", () => {

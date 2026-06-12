@@ -45,7 +45,8 @@ import {
   POST as DutiesPost
 } from "../../../app/api/v1/duties/route";
 import {
-  DELETE as DutyDelete
+  DELETE as DutyDelete,
+  PATCH as DutyPatch
 } from "../../../app/api/v1/duties/[id]/route";
 import { POST as DutyCancelPost } from "../../../app/api/v1/duties/[id]/cancel/route";
 
@@ -133,6 +134,32 @@ describe("POST /api/v1/duties", () => {
     const req = makeRequest("POST", "/api/v1/duties", { body: {} });
     const res = await DutiesPost(req, ctx({}));
     await expectErrorEnvelope(res, 409, "conflict");
+  });
+});
+
+describe("PATCH /api/v1/duties/[id]", () => {
+  beforeEach(() => {
+    setActor(null);
+    vi.clearAllMocks();
+  });
+
+  it("propagates stale version as 409 conflict", async () => {
+    setActor(ACTORS.admin);
+    m.update.mockResolvedValue({
+      success: false,
+      code: "conflict",
+      error: "Duty was modified by another user"
+    });
+    const req = makeRequest("PATCH", "/api/v1/duties/DUTY1", {
+      body: { expected_updated_at: "2020-01-01T00:00:00.000Z" }
+    });
+    const res = await DutyPatch(req, ctx({ id: "DUTY1" }));
+    await expectErrorEnvelope(res, 409, "conflict");
+    expect(m.update).toHaveBeenCalledWith(
+      "DUTY1",
+      { expected_updated_at: "2020-01-01T00:00:00.000Z" },
+      expect.objectContaining({ actor: expect.objectContaining({ role: "Admin" }) })
+    );
   });
 });
 

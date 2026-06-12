@@ -25,8 +25,7 @@ import {
   attendanceDayMarkSchema,
   type AttendanceInput,
   type AttendanceListQuery,
-  type AttendanceDayMarkInput,
-  type AttendanceStatus
+  type AttendanceDayMarkInput
 } from "@/validation/attendanceValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
@@ -66,6 +65,8 @@ import {
   passFailure,
   success
 } from "@/utils/apiResponse";
+import { assertNotStale } from "@/business/concurrencyRules";
+import { attendanceDeleteSchema } from "@/validation/attendanceValidation";
 
 import type { ServiceActor } from "@/types/serviceActor";
 
@@ -160,25 +161,8 @@ async function checkDuplicate(
   ctx: AttendanceServiceContext
 ): Promise<ApiResult<null>> {
   const access = dbAccess(ctx);
-
-  if (input.duty_id) {
-    const existing = await attendanceRepository.findByDutyAndEmployee(
-      input.duty_id,
-      input.employee_id,
-      access
-    );
-    if (!existing.success) return passFailure<null>(existing);
-    if (existing.data && String(existing.data.id) !== excludeId) {
-      return duplicateFailure(
-        "duty_employee",
-        `${input.duty_id}@${input.employee_id}`,
-        "Attendance already recorded for this duty and employee"
-      );
-    }
-    return success(null);
-  }
-
   const dateKey = attendanceDateKey(input.check_in_at, input.work_date);
+
   const candidates = await attendanceRepository.findByEmployeeAndDate(
     input.employee_id,
     dateKey,
@@ -193,6 +177,13 @@ async function checkDuplicate(
     excludeId
   );
   if (conflict) {
+    if (input.duty_id) {
+      return duplicateFailure(
+        "duty_employee_date",
+        `${input.duty_id}@${input.employee_id}@${dateKey}`,
+        "Attendance already recorded for this duty, employee, and date"
+      );
+    }
     return duplicateFailure(
       "employee_date",
       `${input.employee_id}@${dateKey}`,
@@ -334,6 +325,13 @@ export const attendanceService = {
     const parsed = parseInput(attendanceSchema, { ...(rawInput as object), id });
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as AttendanceInput;
+
+    const stale = assertNotStale(
+      "Attendance",
+      existing.data.updated_at,
+      input.expected_updated_at
+    );
+    if (!stale.success) return passFailure(stale);
 
     const existingRow = toAttendanceRow(existing.data);
     const merged: AttendancePersistInput = {
@@ -500,10 +498,25 @@ export const attendanceService = {
     );
   },
 
-  async remove(id: string, ctx: AttendanceServiceContext): Promise<ApiResult<{ id: string }>> {
+  async remove(
+    id: string,
+    ctx: AttendanceServiceContext,
+    rawInput?: unknown
+  ): Promise<ApiResult<{ id: string }>> {
     const existing = await loadAttendance(id, ctx);
     if (!existing.success) {
       return failure(existing.error || "Attendance not found", existing.code, existing.details);
+    }
+    if (rawInput && typeof rawInput === "object" && Object.keys(rawInput as object).length > 0) {
+      const parsed = parseInput(attendanceDeleteSchema, rawInput);
+      if (!parsed.success) return passFailure(parsed);
+      const deleteInput = parsed.data;
+      const stale = assertNotStale(
+        "Attendance",
+        existing.data.updated_at,
+        deleteInput?.expected_updated_at
+      );
+      if (!stale.success) return passFailure(stale);
     }
     const removed = await attendanceRepository.remove(id, dbAccess(ctx));
     if (!removed.success) return passFailure(removed);
@@ -785,6 +798,7 @@ export const attendanceService = {
       );
       loaded.forEach((r, idx) => {
         const empId = employeeIdList[idx];
+        if (!empId) return;
         if (r.success && r.data) {
           const d = r.data as Record<string, unknown>;
           const fromLookup = String(d.full_name || d.name || "").trim();
@@ -806,6 +820,7 @@ export const attendanceService = {
       );
       loaded.forEach((r, idx) => {
         const pid = patientIdList[idx];
+        if (!pid) return;
         if (r.success && r.data) {
           const d = r.data as Record<string, unknown>;
           patMap.set(pid, String(d.name || d.full_name || pid));
@@ -848,6 +863,7 @@ export const attendanceService = {
       end_at: string | null;
       is_extra_partner: boolean;
       attendance_id: string | null;
+      attendance_updated_at: string | null;
       attendance_status: string | null;
       check_in_at: string | null;
       check_out_at: string | null;
@@ -894,6 +910,9 @@ export const attendanceService = {
         end_at: (slot.duty.end_at as string | null) || null,
         is_extra_partner: slot.is_extra,
         attendance_id: att ? String(att.id) : null,
+        attendance_updated_at: att
+          ? String((att.updated_at as string | null) || "") || null
+          : null,
         attendance_status: att ? String(att.status || "") : null,
         check_in_at: att ? ((att.check_in_at as string | null) || null) : null,
         check_out_at: att ? ((att.check_out_at as string | null) || null) : null,
@@ -955,6 +974,7 @@ export const attendanceService = {
         end_at: null,
         is_extra_partner: false,
         attendance_id: aid,
+        attendance_updated_at: String((att.updated_at as string | null) || "") || null,
         attendance_status: String(att.status || ""),
         check_in_at: (att.check_in_at as string | null) || null,
         check_out_at: (att.check_out_at as string | null) || null,
@@ -1230,6 +1250,7 @@ export const attendanceService = {
       );
       loaded.forEach((r, idx) => {
         const empId = fullEmpList[idx];
+        if (!empId) return;
         if (r.success && r.data) {
           const d = r.data as Record<string, unknown>;
           const fromLookup = String(d.full_name || d.name || "").trim();
@@ -1251,6 +1272,7 @@ export const attendanceService = {
       );
       loaded.forEach((r, idx) => {
         const pid = fullPatList[idx];
+        if (!pid) return;
         if (r.success && r.data) {
           const d = r.data as Record<string, unknown>;
           patMap.set(pid, String(d.name || d.full_name || pid));
@@ -1489,6 +1511,9 @@ export const attendanceService = {
     if (!noTime) {
       payload.check_in_at = input.check_in_at || defaultCheckIn;
       if (input.check_out_at) payload.check_out_at = input.check_out_at;
+    }
+    if (input.expected_updated_at) {
+      payload.expected_updated_at = input.expected_updated_at;
     }
 
     const marked = await attendanceService.mark(payload, ctx);

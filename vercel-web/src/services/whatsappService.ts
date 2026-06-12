@@ -26,7 +26,6 @@ import {
   sendTextSchema,
   whatsappWebhookPayloadSchema,
   type SendBillInput,
-  type SendTemplateInput,
   type SendTextInput,
   type WhatsAppWebhookPayload
 } from "@/validation/whatsappValidation";

@@ -36,13 +36,14 @@ describe("attendanceRules", () => {
     ).toBe("2026-06");
   });
 
-  it("findAttendanceDuplicate matches duty + employee", () => {
+  it("findAttendanceDuplicate matches duty + employee + work date", () => {
     const dup = findAttendanceDuplicate(
       [
         {
           id: "A1",
           employee_id: "E1",
           duty_id: "D1",
+          work_date: "2026-05-01",
           status: "PRESENT",
           notes: ""
         },
@@ -50,6 +51,15 @@ describe("attendanceRules", () => {
           id: "A2",
           employee_id: "E2",
           duty_id: "D1",
+          work_date: "2026-05-01",
+          status: "PRESENT",
+          notes: ""
+        },
+        {
+          id: "A3",
+          employee_id: "E2",
+          duty_id: "D1",
+          work_date: "2026-05-02",
           status: "PRESENT",
           notes: ""
         }

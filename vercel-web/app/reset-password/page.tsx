@@ -56,8 +56,8 @@ export default function ResetPasswordPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+    if (password.length < 12) {
+      setError("Password must be at least 12 characters.");
       return;
     }
     if (password !== confirm) {
@@ -72,10 +72,13 @@ export default function ResetPasswordPage() {
       await auth.signOut();
       router.replace("/login?reset=1");
     } catch (submitError: unknown) {
-      const message =
+      const raw =
         submitError instanceof Error
           ? submitError.message
           : "Unable to update password.";
+      const message = /leaked|pwned|compromised|breach|weak password/i.test(raw)
+        ? "This password is not allowed (too weak or found in a public breach list). Choose a different password."
+        : raw;
       setError(message);
     } finally {
       setBusy(false);
@@ -85,7 +88,9 @@ export default function ResetPasswordPage() {
   if (auth.loading || !recoveryReady) {
     return (
       <div className="login-wrap">
-        <div className="panel login-card">Loading…</div>
+        <div className="panel login-card" role="status" aria-live="polite">
+          Loading…
+        </div>
       </div>
     );
   }
@@ -107,7 +112,7 @@ export default function ResetPasswordPage() {
                 setPassword(event.target.value);
               }}
               required
-              minLength={8}
+              minLength={12}
             />
           </label>
           <label htmlFor="reset-password-confirm-password-2">
@@ -121,7 +126,7 @@ export default function ResetPasswordPage() {
                 setConfirm(event.target.value);
               }}
               required
-              minLength={8}
+              minLength={12}
             />
           </label>
           {error ? (

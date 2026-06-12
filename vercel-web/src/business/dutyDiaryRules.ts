@@ -51,9 +51,24 @@ export function isDutyDiaryRemarks(remarks: string | null | undefined): boolean 
   return String(remarks || "").startsWith("duty:");
 }
 
+/**
+ * Guard for the legacy "replace whole slice" writers in Billing/Payout.
+ *
+ * Duty-calendar materialized rows (remarks `duty:<dutyId>:<date>:<employeeId>`)
+ * are owned solely by the Duty Calendar materializer. Billing and Payout must
+ * NEVER create, edit, or delete them through a slice-replace call — the calendar
+ * is the single source of truth. This returns the offending rows so callers can
+ * fail loudly instead of silently clobbering duty-derived charges.
+ */
+export function findDutyLedgerRows<T extends { remarks?: string | null }>(
+  rows: T[] | null | undefined
+): T[] {
+  return (rows || []).filter((r) => isDutyDiaryRemarks(r?.remarks));
+}
+
 export function dutyIdFromRemarks(remarks: string | null | undefined): string | null {
   const m = String(remarks || "").match(/^duty:([^:]+):/);
-  return m ? m[1] : null;
+  return m ? m[1] || null : null;
 }
 
 export function parseDutyDiaryRemarks(remarks: string | null | undefined): {
@@ -64,11 +79,69 @@ export function parseDutyDiaryRemarks(remarks: string | null | undefined): {
 } | null {
   const m = String(remarks || "").match(/^duty:([^:]+):(\d{4}-\d{2}-\d{2}):([^:]+?)(:m)?$/);
   if (!m) return null;
-  return { dutyId: m[1], isoDate: m[2], employeeId: m[3], manual: !!m[4] };
+  return { dutyId: m[1] || "", isoDate: m[2] || "", employeeId: m[3] || "", manual: !!m[4] };
 }
 
 export function diarySlotKey(isoDate: string, employeeId: string): string {
   return `${isoDate}:${employeeId}`;
+}
+
+/** Operator-skipped diary slot persisted on the duty row (survives sync/cron). */
+export interface DutyExcludedDaySlot {
+  date: string;
+  employee_id: string;
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Normalize `hh_duties.excluded_days` JSONB from API / DB reads. */
+export function normalizeExcludedDays(raw: unknown): DutyExcludedDaySlot[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DutyExcludedDaySlot[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const date = String((item as { date?: string }).date || "").trim();
+    const employee_id = String((item as { employee_id?: string }).employee_id || "").trim();
+    if (!ISO_DAY.test(date) || !employee_id) continue;
+    const key = diarySlotKey(date, employee_id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ date, employee_id });
+  }
+  return out;
+}
+
+export function excludedDaySet(slots: DutyExcludedDaySlot[]): Set<string> {
+  return new Set(slots.map((s) => diarySlotKey(s.date, s.employee_id)));
+}
+
+export function isDayExcluded(
+  excluded: Set<string>,
+  isoDate: string,
+  employeeId: string
+): boolean {
+  return excluded.has(diarySlotKey(isoDate, employeeId));
+}
+
+export function addExcludedDaySlot(
+  slots: DutyExcludedDaySlot[],
+  isoDate: string,
+  employeeId: string
+): DutyExcludedDaySlot[] {
+  if (!ISO_DAY.test(isoDate) || !employeeId) return slots;
+  const key = diarySlotKey(isoDate, employeeId);
+  if (slots.some((s) => diarySlotKey(s.date, s.employee_id) === key)) return slots;
+  return [...slots, { date: isoDate, employee_id: employeeId }];
+}
+
+export function removeExcludedDaySlot(
+  slots: DutyExcludedDaySlot[],
+  isoDate: string,
+  employeeId: string
+): DutyExcludedDaySlot[] {
+  const key = diarySlotKey(isoDate, employeeId);
+  return slots.filter((s) => diarySlotKey(s.date, s.employee_id) !== key);
 }
 
 /** Expected per-day × partner slots for a duty window (optional date clip). */
@@ -76,14 +149,17 @@ export function expectedDiarySlotKeys(
   startAt: string,
   endAt: string,
   partners: DutyPartnerAssignment[],
-  clip?: { from?: string; to?: string }
+  clip?: { from?: string; to?: string; excluded?: Set<string> }
 ): Set<string> {
   const keys = new Set<string>();
   for (const isoDate of eachDutyCalendarDay(startAt, endAt)) {
     if (clip?.from && isoDate < clip.from) continue;
     if (clip?.to && isoDate > clip.to) continue;
     for (const p of partners) {
-      if (p.employee_id) keys.add(diarySlotKey(isoDate, p.employee_id));
+      if (!p.employee_id) continue;
+      const key = diarySlotKey(isoDate, p.employee_id);
+      if (clip?.excluded?.has(key)) continue;
+      keys.add(key);
     }
   }
   return keys;

@@ -7,11 +7,37 @@ export const WEB = join(REPO, "vercel-web");
 
 /** Read a workspace file by repo-relative path. Throws a clear message if missing. */
 export function readWeb(relPath: string): string {
-  const full = join(WEB, relPath);
+  const resolved = resolveWebPath(relPath);
+  const full = join(WEB, resolved);
   if (!existsSync(full)) {
     throw new Error(`MISSING_FILE: vercel-web/${relPath}`);
   }
   return readFileSync(full, "utf8");
+}
+
+/** Prefer TS/TSX when the audit was written against legacy `.js` paths. */
+export function resolveWebPath(relPath: string): string {
+  if (existsWeb(relPath)) return relPath;
+  if (relPath.endsWith(".js")) {
+    const candidates = [
+      relPath.replace(/\.js$/, ".tsx"),
+      relPath.replace(/\.js$/, ".ts"),
+      relPath.replace(/\.js$/, ".jsx"),
+      relPath.replace(/\.js$/, ".mjs")
+    ];
+    for (const candidate of candidates) {
+      if (existsWeb(candidate)) return candidate;
+    }
+  }
+  if (relPath.endsWith(".ts")) {
+    const mjs = relPath.replace(/\.ts$/, ".mjs");
+    if (existsWeb(mjs)) return mjs;
+  }
+  return relPath;
+}
+
+export function readWebResolved(relPath: string): string {
+  return readWeb(resolveWebPath(relPath));
 }
 
 export function existsWeb(relPath: string): boolean {
@@ -100,6 +126,30 @@ export async function rpcAuditProbeOk(fn: string): Promise<boolean> {
   }
   const data: unknown = await res.json();
   return data === true;
+}
+
+/** Concatenated SQL from `vercel-web/supabase/migrations` (offline audit fallback). */
+export function readAllMigrations(): string {
+  const migDir = join(WEB, "supabase/migrations");
+  if (!existsSync(migDir)) return "";
+  return readdirSync(migDir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((f) => readFileSync(join(migDir, f), "utf8"))
+    .join("\n");
+}
+
+/**
+ * Pass when repo migrations already encode the fix, or live `audit_probe_*` RPC
+ * returns true (needs SUPABASE_URL + service role / anon key).
+ */
+export async function auditProbeOk(rpcName: string, staticOk: () => boolean): Promise<boolean> {
+  if (staticOk()) return true;
+  try {
+    return await rpcAuditProbeOk(rpcName);
+  } catch {
+    return false;
+  }
 }
 
 export function requireNurseJwt(): string {

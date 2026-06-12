@@ -28,10 +28,10 @@ describe("reportRules — test matrix", () => {
         service_rows: [{ total: 1000 }, { total: 500 }],
         receipt_rows: [{ amount: 1200 }],
         payout_rows: [
-          { net_amount: 800, gross_amount: 900, status: "PAID" },
-          { net_amount: 200, gross_amount: 250, status: "OPEN" }
+          { employee_id: "EMP1", net_amount: 800, gross_amount: 900, status: "PAID" },
+          { employee_id: "EMP2", net_amount: 200, gross_amount: 250, status: "OPEN" }
         ],
-        payout_charge_rows: [{ amount: 150 }]
+        payout_charge_rows: [{ partner_id: "EMP3", amount: 150 }]
       }
     );
 
@@ -53,11 +53,11 @@ describe("reportRules — test matrix", () => {
   it("dashboard `profit_loss_after_pending` matches buildProfitLoss for identical inputs (M3-H4 parity)", () => {
     const receipts = [{ amount: 5000 }, { amount: 250 }];
     const payouts = [
-      { net_amount: 1800, gross_amount: 2000, status: "PAID" },
-      { net_amount: 1200, gross_amount: 1300, status: "OPEN" },
-      { net_amount: 400, gross_amount: 450, status: "OPEN" }
+      { employee_id: "EMP1", net_amount: 1800, gross_amount: 2000, status: "PAID" },
+      { employee_id: "EMP2", net_amount: 1200, gross_amount: 1300, status: "OPEN" },
+      { employee_id: "EMP3", net_amount: 400, gross_amount: 450, status: "OPEN" }
     ];
-    const payoutCharges = [{ amount: 120 }];
+    const payoutCharges = [{ partner_id: "EMP4", amount: 120 }];
 
     const kpis = buildDashboardKpis(
       "2026-05",
@@ -101,10 +101,10 @@ describe("reportRules — test matrix", () => {
       {
         receipts: [{ amount: 1200 }],
         payouts: [
-          { net_amount: 800, status: "PAID" },
-          { net_amount: 200, status: "OPEN" }
+          { employee_id: "EMP1", net_amount: 800, status: "PAID" },
+          { employee_id: "EMP2", net_amount: 200, status: "OPEN" }
         ],
-        payout_charges: [{ amount: 100 }]
+        payout_charges: [{ partner_id: "EMP3", amount: 100 }]
       }
     );
 
@@ -140,12 +140,35 @@ describe("reportRules — test matrix", () => {
     const totals = buildPayoutTotals(
       "2026-05",
       { from: "2026-05-01T00:00:00.000Z", to: "2026-06-01T00:00:00.000Z" },
-      [{ net_amount: 500, gross_amount: 600, status: "OPEN" }],
-      [{ amount: 75 }]
+      [{ employee_id: "EMP1", net_amount: 500, gross_amount: 600, status: "OPEN" }],
+      [{ partner_id: "EMP2", amount: 75 }]
     );
     expect(totals.net).toBe(500);
     expect(totals.pending).toBe(575);
     expect(totals.partner_charge_ledger).toBe(75);
+  });
+
+  it("does not double count duty-calendar charges already represented by payout rows", () => {
+    const range = { from: "2026-05-01T00:00:00.000Z", to: "2026-06-01T00:00:00.000Z" };
+    const payouts = [
+      { employee_id: "EMP1", net_amount: 500, gross_amount: 500, status: "OPEN" }
+    ];
+    const charges = [
+      { partner_id: "EMP1", amount: 500 },
+      { partner_id: "EMP2", amount: 75 }
+    ];
+
+    const payoutTotals = buildPayoutTotals("2026-05", range, payouts, charges);
+    expect(payoutTotals.partner_charge_ledger).toBe(575);
+    expect(payoutTotals.pending).toBe(575);
+
+    const pl = buildProfitLoss("2026-05", range, {
+      receipts: [{ amount: 1000 }],
+      payouts,
+      payout_charges: charges
+    });
+    expect(pl.payouts_pending).toBe(575);
+    expect(pl.net_profit_after_pending_payouts).toBe(425);
   });
 
   it("receiptInYmdRange prefers business date over created_at", () => {
