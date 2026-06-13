@@ -332,6 +332,12 @@ describe("payoutService.pendingForEmployeePeriod", () => {
       success: true,
       data: [{ id: "PT1", amount: 3000 }]
     });
+    // pendingForEmployeePeriod now reads through the duty-ledger authority,
+    // which also lists the source charge rows.
+    vi.mocked(payoutRepository.listChargesByEmployeePeriod).mockResolvedValue({
+      success: true,
+      data: []
+    });
 
     const result = await payoutService.pendingForEmployeePeriod(
       { employee_id: "EMP1", period: "2026-05" },

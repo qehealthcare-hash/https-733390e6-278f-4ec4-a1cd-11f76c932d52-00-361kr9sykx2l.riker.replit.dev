@@ -1019,8 +1019,12 @@ export const payoutService = {
     const query = parsed.data as PayoutPendingQuery;
     const access = dbAccess(ctx);
 
-    const [rpc, existing, paidTx, nameMap] = await Promise.all([
-      payoutRepository.pendingPayoutRpc(query.employee_id, query.period, access),
+    // Single source of truth: the live "pending from duty calendar" number is
+    // read through the central duty-ledger authority (same function the Duty
+    // Calendar totals use), so the two screens can never disagree.
+    const { getEmployeePayoutLedger } = await import("@/src/lib/duty-ledger");
+    const [ledger, existing, paidTx, nameMap] = await Promise.all([
+      getEmployeePayoutLedger(query.employee_id, query.period, access),
       payoutRepository.findByEmployeePeriod(query.employee_id, query.period, access),
       payoutRepository.listPaidTransactionsByEmployeePeriod(
         query.employee_id,
@@ -1029,28 +1033,19 @@ export const payoutService = {
       ),
       hydrateEmployeeNames([query.employee_id], ctx)
     ]);
-    if (!rpc.success) return passFailure(rpc);
+    if (!ledger.success) return passFailure(ledger);
     if (!existing.success) return passFailure(existing);
     if (!paidTx.success) return passFailure(paidTx);
 
-    const data = rpc.data || {
-      employee_id: query.employee_id,
-      period_month: query.period,
-      charged: 0,
-      paid: 0,
-      pending: 0,
-      duty_count: 0,
-      hours: 0
-    };
     return success({
       employee_id: query.employee_id,
       employee_name: nameMap.get(query.employee_id) || query.employee_id,
       period: query.period,
-      charged: Number(data.charged || 0),
-      paid: Number(data.paid || 0),
-      pending: Number(data.pending || 0),
-      duty_count: Number(data.duty_count || 0),
-      hours: Number((data as { hours?: unknown }).hours || 0),
+      charged: Number(ledger.data?.gross || 0),
+      paid: Number(ledger.data?.paid || 0),
+      pending: Number(ledger.data?.outstanding || 0),
+      duty_count: Number(ledger.data?.duty_count || 0),
+      hours: Number(ledger.data?.hours || 0),
       payout: existing.data ?? null,
       paid_transactions: paidTx.data || []
     });

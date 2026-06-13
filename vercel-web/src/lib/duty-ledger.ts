@@ -23,6 +23,7 @@ import { success, passFailure } from "@/utils/apiResponse";
 import { payoutRepository } from "@/database/payoutRepository";
 import { billingRepository } from "@/database/billingRepository";
 import { dutyRepository } from "@/database/dutyRepository";
+import { sumServiceTotals, sumReceiptAmounts } from "@/business/billingRules";
 
 /** First/last calendar day (YYYY-MM-DD) for a YYYY-MM period. */
 function monthBounds(period: string): { from: string; to: string } {
@@ -51,6 +52,8 @@ export interface EmployeePayoutLedger {
   paid: number;
   /** gross − paid, floored at 0. */
   outstanding: number;
+  /** Payable hours rolled up for the period. */
+  hours: number;
   /** Source hh_payout_charges row ids that make up this ledger. */
   source_row_ids: string[];
   /** Distinct service days included. */
@@ -85,6 +88,7 @@ export async function getEmployeePayoutLedger(
     gross,
     paid,
     outstanding: Math.max(0, gross - paid),
+    hours: Number(pending.data?.hours || 0),
     source_row_ids: rows.map((r) => String(r.id)).filter(Boolean),
     dates: Array.from(new Set(rows.map((r) => String(r.date || "")).filter(Boolean))).sort()
   });
@@ -142,8 +146,10 @@ export async function getPatientBillingLedger(
 
   const svcRows = (svcAll.data || []).filter((s) => inPeriod(s.date, period));
   const rcptRows = (rcptAll.data || []).filter((r) => inPeriod(r.date, period));
-  const billed = svcRows.reduce((s, r) => s + Number(r.total || 0), 0);
-  const received = rcptRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  // Reuse the SAME billed/received formula reports + billing use, so there is
+  // exactly one definition of these totals across the whole app.
+  const billed = sumServiceTotals(svcRows);
+  const received = sumReceiptAmounts(rcptRows);
 
   return success({
     patient_id: patientId,
