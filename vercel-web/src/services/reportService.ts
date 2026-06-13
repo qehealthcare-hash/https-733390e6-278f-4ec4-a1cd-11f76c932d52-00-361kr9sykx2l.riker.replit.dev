@@ -756,17 +756,32 @@ export const reportService = {
     );
 
     // Build per-billing rows for the paginated slice.
+    //
+    // Per-bill paid_status / outstanding MUST reflect the bill's full lifetime
+    // ledger, not just the rows inside the report window. Otherwise a fully
+    // paid bill whose receipt was recorded in a different month than its
+    // services shows a phantom outstanding balance (window has the services
+    // but not the matching receipt). The windowed serviceRows/receiptRows are
+    // still used above for the period revenue aggregate (buildBillingSummary).
+    const billingIdsForRows = [...activeIds];
+    const [fullSvcRes, fullRcptRes] = await Promise.all([
+      billingRepository.listSvcByBillingIds(billingIdsForRows, access),
+      billingRepository.listActiveReceiptsByBillingIds(billingIdsForRows, access)
+    ]);
+    if (!fullSvcRes.success) return passFailure(fullSvcRes);
+    if (!fullRcptRes.success) return passFailure(fullRcptRes);
+
     const billingMap = new Map<string, JsonRow>();
     for (const b of billings.data || []) billingMap.set(String(b.id || ""), b);
     const svcByBilling = new Map<string, JsonRow[]>();
-    for (const s of serviceRows) {
+    for (const s of fullSvcRes.data || []) {
       const bid = String(s.billing_id || "");
       if (!bid) continue;
       if (!svcByBilling.has(bid)) svcByBilling.set(bid, []);
       svcByBilling.get(bid)!.push(s);
     }
     const rcptByBilling = new Map<string, JsonRow[]>();
-    for (const r of receiptRows) {
+    for (const r of fullRcptRes.data || []) {
       const bid = String(r.billing_id || "");
       if (!bid) continue;
       if (!rcptByBilling.has(bid)) rcptByBilling.set(bid, []);
@@ -806,7 +821,9 @@ export const reportService = {
         patient_name: patient?.name || "",
         patient_phone: patient?.phone || "",
         totals,
-        paid_status: (b.paid_status as string | null) || derivePaidStatus(totals)
+        // Derive from the full-lifetime totals so the badge and the outstanding
+        // figure can never disagree (a stored paid_status can go stale).
+        paid_status: derivePaidStatus(totals)
       });
     }
 

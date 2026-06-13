@@ -38,7 +38,9 @@ vi.mock("@/database/reportRepository", () => {
 
 vi.mock("@/database/billingRepository", () => ({
   billingRepository: {
-    listBillingsByIds: vi.fn()
+    listBillingsByIds: vi.fn(),
+    listSvcByBillingIds: vi.fn(),
+    listActiveReceiptsByBillingIds: vi.fn()
   }
 }));
 
@@ -291,6 +293,19 @@ describe("reportService.billingsSummary", () => {
         { id: "P2", name: "Rohan Mehta", phone: "9777766666" }
       ])
     );
+    // Per-row totals come from the bill's full lifetime ledger, not the window.
+    billings.listSvcByBillingIds.mockResolvedValueOnce(
+      ok([
+        { billing_id: "B1", total: 1000 },
+        { billing_id: "B2", total: 500 }
+      ])
+    );
+    billings.listActiveReceiptsByBillingIds.mockResolvedValueOnce(
+      ok([
+        { billing_id: "B1", amount: 600 },
+        { billing_id: "B2", amount: 500 }
+      ])
+    );
 
     const result = await reportService.billingsSummary({ period: "2026-05" }, actorCtx);
     expect(result.success).toBe(true);
@@ -309,11 +324,41 @@ describe("reportService.billingsSummary", () => {
     expect((b1?.totals as { outstanding: number }).outstanding).toBe(400);
   });
 
+  it("marks a bill PAID when its receipt was recorded outside the report window", async () => {
+    // Services fall in the window; the matching receipt was recorded in a
+    // later month, so it is NOT in the windowed receipt rows. The per-row
+    // totals must still use the bill's full ledger and report outstanding 0.
+    repo.listServicesInRange.mockResolvedValueOnce(
+      ok([{ billing_id: "B1", total: 1000, date: "2026-05-10" }])
+    );
+    repo.listReceiptsInRange.mockResolvedValueOnce(ok([]));
+    billings.listBillingsByIds.mockResolvedValueOnce(
+      ok([{ id: "B1", status: "Active", patient_id: "P1", sec_dep: 0 }])
+    );
+    billings.listSvcByBillingIds.mockResolvedValueOnce(
+      ok([{ billing_id: "B1", total: 1000 }])
+    );
+    // Full lifetime ledger: the bill was fully paid (receipt in June).
+    billings.listActiveReceiptsByBillingIds.mockResolvedValueOnce(
+      ok([{ billing_id: "B1", amount: 1000, date: "2026-06-02" }])
+    );
+    patients.findByIds.mockResolvedValueOnce(ok([]));
+
+    const result = await reportService.billingsSummary({ period: "2026-05" }, actorCtx);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const b1 = result.data.rows.find((r) => r.id === "B1");
+    expect((b1?.totals as { outstanding: number }).outstanding).toBe(0);
+    expect((b1 as { paid_status?: string })?.paid_status).toBe("PAID");
+  });
+
   it("returns an empty summary when no svc/receipt rows touch the window", async () => {
     repo.listServicesInRange.mockResolvedValueOnce(ok([]));
     repo.listReceiptsInRange.mockResolvedValueOnce(ok([]));
     // No active ids => repository should not be hit for billings.
     billings.listBillingsByIds.mockResolvedValueOnce(ok([]));
+    billings.listSvcByBillingIds.mockResolvedValueOnce(ok([]));
+    billings.listActiveReceiptsByBillingIds.mockResolvedValueOnce(ok([]));
     patients.findByIds.mockResolvedValueOnce(ok([]));
 
     const result = await reportService.billingsSummary({ period: "2030-12" }, actorCtx);
@@ -340,6 +385,15 @@ describe("reportService.billingsSummary", () => {
         { id: "B1", status: "Closed", patient_id: "P1", sec_dep: 0 },
         { id: "B2", status: "Active", patient_id: "P2", sec_dep: 0 }
       ])
+    );
+    billings.listSvcByBillingIds.mockResolvedValueOnce(
+      ok([
+        { billing_id: "B1", total: 1000 },
+        { billing_id: "B2", total: 500 }
+      ])
+    );
+    billings.listActiveReceiptsByBillingIds.mockResolvedValueOnce(
+      ok([{ billing_id: "B1", amount: 1000 }])
     );
     patients.findByIds.mockResolvedValueOnce(ok([]));
 
