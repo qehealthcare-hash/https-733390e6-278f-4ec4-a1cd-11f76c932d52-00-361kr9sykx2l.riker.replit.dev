@@ -1111,7 +1111,7 @@ export default function BillingsPage() {
         cancelled = true;
       };
     },
-    [billingPatientId, serviceViewPeriod, auth.session?.access_token]
+    [billingPatientId, serviceViewPeriod, auth.session]
   );
 
   const billingDesyncDetected = useMemo(

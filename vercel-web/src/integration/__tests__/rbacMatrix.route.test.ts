@@ -209,8 +209,8 @@ const CASES: Case[] = [
           makeRequest("POST", "/api/v1/payouts", { body: {} }),
           ctx({})
         ),
-    allow: [ACTORS.admin, ACTORS.manager, ACTORS.accountant],
-    deny: [ACTORS.staff, ACTORS.nurse, ACTORS.viewer]
+    allow: [ACTORS.admin, ACTORS.manager],
+    deny: [ACTORS.accountant, ACTORS.staff, ACTORS.nurse, ACTORS.viewer]
   },
   {
     route: "POST /payouts/pay",
@@ -233,9 +233,9 @@ const CASES: Case[] = [
           }),
           ctx({})
         ),
-    // Routes accept Supervisor too but our ACTORS only ships Nurse — sufficient.
-    allow: [ACTORS.admin, ACTORS.manager, ACTORS.staff, ACTORS.nurse],
-    deny: [ACTORS.accountant, ACTORS.viewer]
+    // Attendance writes are Admin-only break-glass; Duty Calendar is SSOT.
+    allow: [ACTORS.admin],
+    deny: [ACTORS.manager, ACTORS.staff, ACTORS.nurse, ACTORS.accountant, ACTORS.viewer]
   }
 ];
 

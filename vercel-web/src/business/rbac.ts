@@ -121,7 +121,6 @@ export const ROLE_CAPABILITIES: Readonly<Record<Role, readonly string[]>> = {
     "duties.read",
     "duties.write",
     "attendance.read",
-    "attendance.write",
     "payouts.read",
     "payouts.write",
     "doctors.read",
@@ -153,11 +152,9 @@ export const ROLE_CAPABILITIES: Readonly<Record<Role, readonly string[]>> = {
     "inquiries.read",
     "inquiries.write",
     "billings.read",
-    "billings.write",
     "duties.read",
     "duties.write",
     "attendance.read",
-    "attendance.write",
     "doctors.read",
     "vendors.read",
     "reports.read"
@@ -169,7 +166,6 @@ export const ROLE_CAPABILITIES: Readonly<Record<Role, readonly string[]>> = {
     "billings.read",
     "billings.write",
     "payouts.read",
-    "payouts.write",
     "attendance.read",
     "doctors.read",
     "vendors.read",
@@ -185,7 +181,6 @@ export const ROLE_CAPABILITIES: Readonly<Record<Role, readonly string[]>> = {
     "duties.read",
     "duties.write",
     "attendance.read",
-    "attendance.write",
     "billings.read"
   ],
   Nurse: [
@@ -194,7 +189,6 @@ export const ROLE_CAPABILITIES: Readonly<Record<Role, readonly string[]>> = {
     "patients.read",
     "payouts.read",
     "attendance.read",
-    "attendance.write",
     "duties.read",
     "duties.write"
   ]
@@ -331,12 +325,22 @@ export const BILLING_READ_ROLES: readonly Role[] = [
   "Supervisor"
 ];
 
-/** Roles allowed to create/update bills, invoices, and receipts. */
+/** Roles allowed to create/update bills, invoices, and close/reopen. */
 export const BILLING_WRITE_ROLES: readonly Role[] = [
   "Admin",
   "Manager",
-  "Accountant",
-  "Staff"
+  "Accountant"
+];
+
+/**
+ * Roles allowed to record payment receipts against calculated outstanding.
+ * Billing operators (Accountant) may receive payments but must not edit
+ * duty-derived service rows — those are owned by the Duty Calendar.
+ */
+export const BILLING_RECEIVE_ROLES: readonly Role[] = [
+  "Admin",
+  "Manager",
+  "Accountant"
 ];
 
 /* ------------------------ Inquiry role lists ------------------------------ */
@@ -538,14 +542,8 @@ export const ATTENDANCE_READ_ROLES: readonly Role[] = [
   "Supervisor"
 ];
 
-/** Mark present/absent, day board quick-mark, PATCH rows. */
-export const ATTENDANCE_WRITE_ROLES: readonly Role[] = [
-  "Admin",
-  "Manager",
-  "Staff",
-  "Nurse",
-  "Supervisor"
-];
+/** Mark present/absent — Duty Calendar is the operational source; API writes Admin-only break-glass. */
+export const ATTENDANCE_WRITE_ROLES: readonly Role[] = ["Admin"];
 
 /** Permanent row removal (`DELETE /attendance/:id`). */
 export const ATTENDANCE_DELETE_ROLES: readonly Role[] = ["Admin", "Manager"];
@@ -562,8 +560,8 @@ export const PAYOUT_READ_ROLES: readonly Role[] = [
   "Nurse"
 ];
 
-/** Roles that may ensure, adjust, lock, pay, or record advances. */
-export const PAYOUT_WRITE_ROLES: readonly Role[] = ["Admin", "Manager", "Accountant"];
+/** Roles that may ensure, recompute, lock, or set rates (not disburse). */
+export const PAYOUT_WRITE_ROLES: readonly Role[] = ["Admin", "Manager"];
 
 /** Final disbursement, advance cash-out, and ledger adjustments. */
 export const PAYOUT_PAY_ROLES: readonly Role[] = ["Admin", "Accountant"];

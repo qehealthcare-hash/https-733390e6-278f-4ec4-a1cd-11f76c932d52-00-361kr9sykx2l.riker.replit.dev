@@ -45,7 +45,7 @@ describe("Attendance module smoke — optimistic concurrency at HTTP layer", () 
   });
 
   it("POST /attendance/mark forwards expected_updated_at and surfaces 409", async () => {
-    setActor(ACTORS.staff);
+    setActor(ACTORS.admin);
     m.mark.mockResolvedValue({
       success: false,
       code: "conflict",
@@ -69,7 +69,7 @@ describe("Attendance module smoke — optimistic concurrency at HTTP layer", () 
   });
 
   it("PATCH /attendance/[id] forwards expected_updated_at and surfaces 409", async () => {
-    setActor(ACTORS.staff);
+    setActor(ACTORS.admin);
     m.update.mockResolvedValue({
       success: false,
       code: "conflict",
@@ -112,7 +112,7 @@ describe("Attendance module smoke — optimistic concurrency at HTTP layer", () 
   });
 
   it("POST /attendance/day/mark forwards expected_updated_at", async () => {
-    setActor(ACTORS.nurse);
+    setActor(ACTORS.admin);
     m.dayMark.mockResolvedValue({ success: true, data: { id: "ATT1" } });
     const req = makeRequest("POST", "/api/v1/attendance/day/mark", {
       body: {

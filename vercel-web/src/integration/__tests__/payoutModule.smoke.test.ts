@@ -68,7 +68,7 @@ describe("Payout module smoke — optimistic concurrency at HTTP layer", () => {
   });
 
   it("POST /payouts/[id]/lock forwards expected_updated_at and surfaces 409", async () => {
-    setActor(ACTORS.accountant);
+    setActor(ACTORS.manager);
     m.lock.mockResolvedValue({
       success: false,
       code: "conflict",

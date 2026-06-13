@@ -7,4 +7,4 @@
  * `@/business/rbac` in new code.
  */
 
-export { BILLING_READ_ROLES, BILLING_WRITE_ROLES } from "@/business/rbac";
+export { BILLING_READ_ROLES, BILLING_WRITE_ROLES, BILLING_RECEIVE_ROLES } from "@/business/rbac";

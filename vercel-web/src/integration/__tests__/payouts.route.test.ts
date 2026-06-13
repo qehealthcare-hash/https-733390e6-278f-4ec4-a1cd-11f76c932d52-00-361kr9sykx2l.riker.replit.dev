@@ -115,8 +115,18 @@ describe("POST /api/v1/payouts", () => {
     expect(m.ensure).not.toHaveBeenCalled();
   });
 
-  it("creates a payout for Accountant", async () => {
+  it("denies Accountant (disbursement-only; ensure is Admin/Manager)", async () => {
     setActor(ACTORS.accountant);
+    const req = makeRequest("POST", "/api/v1/payouts", {
+      body: { employee_id: "EMP1", period_month: "2026-05" }
+    });
+    const res = await PayoutsPost(req, ctx({}));
+    await expectErrorEnvelope(res, 403, "forbidden");
+    expect(m.ensure).not.toHaveBeenCalled();
+  });
+
+  it("creates a payout for Manager", async () => {
+    setActor(ACTORS.manager);
     m.ensure.mockResolvedValue({ success: true, data: { id: "PAY1" } });
     const req = makeRequest("POST", "/api/v1/payouts", {
       body: { employee_id: "EMP1", period_month: "2026-05" }
@@ -141,7 +151,7 @@ describe("POST /api/v1/payouts/[id]/recompute", () => {
   });
 
   it("propagates not_found from payoutService.getById", async () => {
-    setActor(ACTORS.accountant);
+    setActor(ACTORS.manager);
     m.getById.mockResolvedValue({
       success: false,
       code: "not_found",
@@ -469,7 +479,7 @@ describe("POST /api/v1/payouts/set-rate", () => {
   });
 
   it("propagates validation failure for non-positive rate", async () => {
-    setActor(ACTORS.accountant);
+    setActor(ACTORS.manager);
     m.setEmployeePeriodPayoutRate.mockResolvedValue({
       success: false,
       code: "validation_error",
@@ -482,8 +492,8 @@ describe("POST /api/v1/payouts/set-rate", () => {
     await expectErrorEnvelope(res, 422, "validation_error");
   });
 
-  it("returns the refreshed PayoutDetail envelope for Accountant", async () => {
-    setActor(ACTORS.accountant);
+  it("returns the refreshed PayoutDetail envelope for Manager", async () => {
+    setActor(ACTORS.manager);
     m.setEmployeePeriodPayoutRate.mockResolvedValue({
       success: true,
       data: {

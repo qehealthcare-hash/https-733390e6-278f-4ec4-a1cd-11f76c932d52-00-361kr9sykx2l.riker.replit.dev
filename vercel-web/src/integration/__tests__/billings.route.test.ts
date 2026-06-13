@@ -209,7 +209,7 @@ describe("Billing receipts endpoints", () => {
   });
 
   it("POST records a payment and merges billing_id from params", async () => {
-    setActor(ACTORS.staff);
+    setActor(ACTORS.accountant);
     m.recordPayment.mockResolvedValue({ success: true, data: { id: "RCT1", amount: 500 } });
     const req = makeRequest("POST", "/api/v1/billings/BILL1/receipts", {
       body: { amount: 500, invoice_id: "INV1", mode: "Cash" }

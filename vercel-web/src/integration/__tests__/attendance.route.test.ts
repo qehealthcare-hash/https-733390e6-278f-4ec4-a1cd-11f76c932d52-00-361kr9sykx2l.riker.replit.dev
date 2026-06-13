@@ -87,7 +87,7 @@ describe("POST /api/v1/attendance", () => {
   });
 
   it("creates and returns 201", async () => {
-    setActor(ACTORS.staff);
+    setActor(ACTORS.admin);
     m.create.mockResolvedValue({ success: true, data: { id: "ATT1" } });
     const req = makeRequest("POST", "/api/v1/attendance", {
       body: {
@@ -119,8 +119,24 @@ describe("POST /api/v1/attendance/day/mark", () => {
     expect(m.dayMark).not.toHaveBeenCalled();
   });
 
-  it("marks the day for Nurse and forwards sync_duty", async () => {
+  it("denies Nurse for day mark (attendance writes are Admin-only)", async () => {
     setActor(ACTORS.nurse);
+    const req = makeRequest("POST", "/api/v1/attendance/day/mark", {
+      body: {
+        employee_id: "EMP1",
+        duty_id: "DUTY1",
+        date: "2026-05-25",
+        status: "Present",
+        sync_duty: true
+      }
+    });
+    const res = await AttendanceDayMark(req, ctx({}));
+    await expectErrorEnvelope(res, 403, "forbidden");
+    expect(m.dayMark).not.toHaveBeenCalled();
+  });
+
+  it("marks the day for Admin and forwards sync_duty", async () => {
+    setActor(ACTORS.admin);
     m.dayMark.mockResolvedValue({
       success: true,
       data: { id: "ATT1", duty_status: "IN_PROGRESS" }

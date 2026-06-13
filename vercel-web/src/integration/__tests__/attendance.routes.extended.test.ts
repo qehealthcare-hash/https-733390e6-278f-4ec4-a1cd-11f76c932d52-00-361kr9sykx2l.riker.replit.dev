@@ -85,8 +85,8 @@ describe("PATCH /api/v1/attendance/[id]", () => {
     expect(m.update).not.toHaveBeenCalled();
   });
 
-  it("forwards body for Nurse", async () => {
-    setActor(ACTORS.nurse);
+  it("forwards body for Admin", async () => {
+    setActor(ACTORS.admin);
     m.update.mockResolvedValue({ success: true, data: { id: "ATT1", status: "LATE" } });
     const req = makeRequest("PATCH", "/api/v1/attendance/ATT1", {
       body: { status: "LATE" }
@@ -181,8 +181,8 @@ describe("POST /api/v1/attendance/mark", () => {
     expect(m.mark).not.toHaveBeenCalled();
   });
 
-  it("marks for Staff", async () => {
-    setActor(ACTORS.staff);
+  it("marks for Admin", async () => {
+    setActor(ACTORS.admin);
     m.mark.mockResolvedValue({ success: true, data: { id: "ATT1" } });
     const req = makeRequest("POST", "/api/v1/attendance/mark", {
       body: { employee_id: "EMP1", status: "PRESENT", duty_id: "DUTY1" }
