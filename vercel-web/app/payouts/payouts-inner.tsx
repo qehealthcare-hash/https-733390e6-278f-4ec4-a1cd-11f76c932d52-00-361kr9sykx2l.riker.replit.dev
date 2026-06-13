@@ -27,6 +27,7 @@ import { paymentMethodOptions } from "@/lib/crm-options";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { openPrintWindow, preOpenPrintWindow, reportPrintBlocked } from "@/lib/print";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
+import { DUTY_LEDGER_READONLY_MESSAGE } from "@/lib/dutyLedgerUi";
 import {
   PAYOUT_PAY_ROLES,
   PAYOUT_REOPEN_ROLES,
@@ -35,6 +36,7 @@ import {
 import {
   PAYOUT_STATUS_OPTIONS,
   currentPeriod,
+  detectPayoutDesync,
   emptyAdjustForm,
   emptyAdvanceForm,
   emptyEnsureForm,
@@ -712,6 +714,12 @@ function PayoutsPageContent() {
   async function handleLock() {
     if (!canWrite) return;
     if (!selectedId) return;
+    if (desyncDetected) {
+      setError(
+        "PAYOUT DESYNC DETECTED — RECOMPUTE REQUIRED before locking. Press Recompute to sync from the Duty Calendar."
+      );
+      return;
+    }
     const reason = String(lockReason || "").trim();
     if (!reason) {
       setError("Enter a reason for locking this payout before payment");
@@ -1568,6 +1576,22 @@ function PayoutsPageContent() {
     : [];
   const multiPatient = patientBreakdown.length > 1;
 
+  const cachedGross = Number(payout?.gross_amount || 0);
+  const cachedDutyCount = Number(payout?.duty_count || 0);
+  const liveGross = pendingMatchesDetail ? Number(pending?.charged || 0) : cachedGross;
+  const liveDutyCount = pendingMatchesDetail
+    ? Number(pending?.duty_count || 0)
+    : cachedDutyCount;
+  const chargeRowCount = Number(diagnostics?.charge_row_count ?? liveDutyCount);
+  const desyncDetected = detectPayoutDesync({
+    liveGross,
+    liveDutyCount,
+    cachedGross,
+    cachedDutyCount,
+    status,
+    comparable: pendingMatchesDetail
+  });
+
   return (
     <AuthGuard permission="payouts.read">
       <AppShell title="Payouts">
@@ -2243,6 +2267,38 @@ function PayoutsPageContent() {
                         {status}
                       </span>
                     </div>
+                    <div
+                      className="helper-box"
+                      style={{ marginTop: 10, background: "#f8fafc", borderColor: "#cbd5e1" }}
+                    >
+                      {DUTY_LEDGER_READONLY_MESSAGE}{" "}
+                      <a href="/duties" style={{ fontWeight: 600 }}>
+                        Open Duty Calendar →
+                      </a>
+                    </div>
+                    {desyncDetected ? (
+                      <div
+                        role="alert"
+                        style={{
+                          marginTop: 10,
+                          padding: "10px 12px",
+                          borderRadius: 8,
+                          background: "#fef2f2",
+                          border: "2px solid #dc2626",
+                          color: "#991b1b",
+                          fontSize: 13,
+                          fontWeight: 600
+                        }}
+                      >
+                        PAYOUT DESYNC DETECTED — RECOMPUTE REQUIRED
+                        <div style={{ fontWeight: 400, marginTop: 4 }}>
+                          Cached payout ({formatCurrency(cachedGross)} · {cachedDutyCount} duties)
+                          does not match the live duty calendar ({formatCurrency(liveGross)} ·{" "}
+                          {liveDutyCount} duties). Payment locking is blocked until you press{" "}
+                          <strong>Recompute</strong>.
+                        </div>
+                      </div>
+                    ) : null}
                     <div className="grid-2" style={{ marginTop: 8 }}>
                       <div>
                         <strong>Gross:</strong> {formatCurrency(displayedGross)}
@@ -2280,6 +2336,52 @@ function PayoutsPageContent() {
                       </div>
                       <div>
                         <strong>Paid on:</strong> {payout.paid_at ? formatDate(payout.paid_at) : "-"}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        background: desyncDetected ? "#fef2f2" : "#f0fdf4",
+                        border: "1px solid " + (desyncDetected ? "#fecaca" : "#bbf7d0"),
+                        fontSize: 12,
+                        color: "#334155"
+                      }}
+                    >
+                      <strong style={{ color: "#0f172a" }}>
+                        Reconciliation · duty calendar = source of truth
+                      </strong>
+                      <div
+                        style={{
+                          marginTop: 6,
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: "4px 16px"
+                        }}
+                      >
+                        <span>Duty calendar rows (live)</span>
+                        <strong>{liveDutyCount}</strong>
+                        <span>Gross payout (live)</span>
+                        <strong>{formatCurrency(liveGross)}</strong>
+                        <span>Cached aggregate</span>
+                        <strong style={{ color: desyncDetected ? "#dc2626" : "#15803d" }}>
+                          {formatCurrency(cachedGross)} · {cachedDutyCount} duties
+                          {desyncDetected ? " (stale)" : " (in sync)"}
+                        </strong>
+                        <span>Paid amount</span>
+                        <strong>{formatCurrency(paidTotal)}</strong>
+                        <span>Outstanding</span>
+                        <strong>{formatCurrency(outstanding)}</strong>
+                        <span>Source ledger</span>
+                        <strong>
+                          <code>hh_payout_charges</code> · {chargeRowCount} row
+                          {chargeRowCount === 1 ? "" : "s"}
+                        </strong>
+                        <span>Last recomputed</span>
+                        <strong>
+                          {payout.updated_at ? formatDate(String(payout.updated_at)) : "—"}
+                        </strong>
                       </div>
                     </div>
                     <div
@@ -2592,8 +2694,12 @@ function PayoutsPageContent() {
                               type="button"
                               className="button primary"
                               onClick={handleLock}
-                              disabled={busy || !String(lockReason || "").trim()}
-                              title="Lock the period so the final Mark as paid form appears"
+                              disabled={busy || desyncDetected || !String(lockReason || "").trim()}
+                              title={
+                                desyncDetected
+                                  ? "Payout is out of sync with the duty calendar — Recompute before locking"
+                                  : "Lock the period so the final Mark as paid form appears"
+                              }
                             >
                               Lock → Mark as paid with proof
                             </button>
@@ -2667,7 +2773,12 @@ function PayoutsPageContent() {
                           className="button secondary"
                           type="button"
                           onClick={handleLock}
-                          disabled={busy || !String(lockReason || "").trim()}
+                          disabled={busy || desyncDetected || !String(lockReason || "").trim()}
+                          title={
+                            desyncDetected
+                              ? "Payout is out of sync with the duty calendar — Recompute before locking"
+                              : undefined
+                          }
                         >
                           Lock for payment
                         </button>

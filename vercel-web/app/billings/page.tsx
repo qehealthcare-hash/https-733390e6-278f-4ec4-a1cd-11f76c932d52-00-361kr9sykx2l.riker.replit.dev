@@ -57,6 +57,11 @@ import type {
   PatientSnapshotDto,
   ReceiptRowDto
 } from "@/validation/billingDto";
+import {
+  DESYNC_ALERT_HEADLINE,
+  DUTY_LEDGER_READONLY_MESSAGE,
+  detectLedgerDesync
+} from "@/lib/dutyLedgerUi";
 
 type BillingsAuth = {
   session?: { access_token?: string } | null;
@@ -157,6 +162,10 @@ export default function BillingsPage() {
   const [conflictPrompt, setConflictPrompt] = useState<{ message: string } | null>(null);
   const [createPatientId, setCreatePatientId] = useState("");
   const [createSecDep, setCreateSecDep] = useState<number | string>(0);
+  const [dutyLedger, setDutyLedger] = useState<{
+    billed: number;
+    duty_count: number;
+  } | null>(null);
   const { busy, tryBegin, end } = useBusyGuard();
 
   async function reloadList() {
@@ -426,6 +435,10 @@ export default function BillingsPage() {
   async function handleReceiptSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedId) return;
+    if (billingDesyncDetected) {
+      setError(DESYNC_ALERT_HEADLINE + " Sync duty ledger from the Duty Calendar before recording receipts.");
+      return;
+    }
     if (!tryBegin()) return;
     setError("");
     try {
@@ -1070,6 +1083,51 @@ export default function BillingsPage() {
     [visibleServices]
   );
 
+  const billingPatientId = String(
+    bundle?.billing?.patient_id || bundle?.patient?.id || ""
+  ).trim();
+
+  useEffect(
+    function () {
+      if (!billingPatientId || !serviceViewPeriod || !auth.session?.access_token) {
+        setDutyLedger(null);
+        return;
+      }
+      let cancelled = false;
+      billingsClient
+        .patientDutyLedger(auth.session, billingPatientId, serviceViewPeriod)
+        .then(function (data) {
+          if (cancelled || !data || typeof data !== "object") return;
+          const row = data as { billed?: number; duty_count?: number };
+          setDutyLedger({
+            billed: Number(row.billed || 0),
+            duty_count: Number(row.duty_count || 0)
+          });
+        })
+        .catch(function () {
+          if (!cancelled) setDutyLedger(null);
+        });
+      return function () {
+        cancelled = true;
+      };
+    },
+    [billingPatientId, serviceViewPeriod, auth.session?.access_token]
+  );
+
+  const billingDesyncDetected = useMemo(
+    function () {
+      if (!dutyLedger || !bundle || status === "Cancelled") return false;
+      return detectLedgerDesync({
+        liveAmount: dutyLedger.billed,
+        cachedAmount: visibleServicesTotal,
+        liveCount: dutyLedger.duty_count,
+        cachedCount: visibleServices.length,
+        comparable: true
+      });
+    },
+    [dutyLedger, bundle, status, visibleServicesTotal, visibleServices.length]
+  );
+
   return (
     <AuthGuard permission="billings.read">
       <AppShell title="Billing">
@@ -1640,6 +1698,40 @@ export default function BillingsPage() {
                     </div>
                   </form>
 
+                  <div
+                    className="helper-box"
+                    style={{ marginBottom: 10, background: "#f8fafc", borderColor: "#cbd5e1" }}
+                  >
+                    {DUTY_LEDGER_READONLY_MESSAGE}{" "}
+                    <a href="/duties" style={{ fontWeight: 600 }}>
+                      Open Duty Calendar →
+                    </a>
+                  </div>
+                  {billingDesyncDetected ? (
+                    <div
+                      role="alert"
+                      style={{
+                        marginBottom: 10,
+                        padding: "10px 12px",
+                        borderRadius: 8,
+                        background: "#fef2f2",
+                        border: "2px solid #dc2626",
+                        color: "#991b1b",
+                        fontSize: 13,
+                        fontWeight: 600
+                      }}
+                    >
+                      {DESYNC_ALERT_HEADLINE}
+                      <div style={{ fontWeight: 400, marginTop: 4 }}>
+                        Duty calendar ledger ({formatCurrency(dutyLedger?.billed || 0)} ·{" "}
+                        {dutyLedger?.duty_count || 0} days) does not match this bill&apos;s displayed
+                        services ({formatCurrency(visibleServicesTotal)} · {visibleServices.length}{" "}
+                        days). Receipt entry is blocked until the ledger is reconciled from the Duty
+                        Calendar.
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="table-wrap">
                     <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
                       <div>
@@ -1851,13 +1943,16 @@ export default function BillingsPage() {
                         type="submit"
                         disabled={
                           busy ||
+                          billingDesyncDetected ||
                           !permissions.canReceive ||
                           (selectedInvoiceOutstanding != null &&
                             Number(receiptForm.amount || 0) >
                               selectedInvoiceOutstanding + 0.005)
                         }
                         title={
-                          receiveBlockReason ||
+                          billingDesyncDetected
+                            ? DESYNC_ALERT_HEADLINE
+                            : receiveBlockReason ||
                           (selectedInvoiceOutstanding != null &&
                           Number(receiptForm.amount || 0) >
                             selectedInvoiceOutstanding + 0.005
@@ -1867,6 +1962,11 @@ export default function BillingsPage() {
                       >
                         Record receipt
                       </button>
+                      {billingDesyncDetected ? (
+                        <span className="mini-muted" style={{ color: "#dc2626" }}>
+                          Blocked — duty ledger desync
+                        </span>
+                      ) : null}
                     </div>
                   </form>
 

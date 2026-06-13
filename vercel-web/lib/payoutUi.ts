@@ -33,6 +33,36 @@ export function currentPeriod(): string {
   return crmTodayIso().slice(0, 7);
 }
 
+export interface PayoutReconciliation {
+  /** Live duty-calendar gross (sum of hh_payout_charges.amount for the month). */
+  liveGross: number;
+  /** Live duty-calendar day count for the month. */
+  liveDutyCount: number;
+  /** Cached hh_payouts.gross_amount. */
+  cachedGross: number;
+  /** Cached hh_payouts.duty_count. */
+  cachedDutyCount: number;
+  /** Period status (PAID periods are frozen snapshots and never flagged). */
+  status: string;
+  /** True only when the live duty ledger can be compared to the cache. */
+  comparable: boolean;
+}
+
+/**
+ * Single source of truth check: the Duty Calendar (live `hh_payout_charges`
+ * ledger) is authoritative. A non-PAID payout whose cached aggregate disagrees
+ * with the live ledger is desynced and must be recomputed before it can be
+ * locked / paid.
+ */
+export function detectPayoutDesync(r: PayoutReconciliation): boolean {
+  if (!r.comparable) return false;
+  if (String(r.status || "").toUpperCase() === "PAID") return false;
+  return (
+    Math.round(r.liveGross) !== Math.round(r.cachedGross) ||
+    Number(r.liveDutyCount) !== Number(r.cachedDutyCount)
+  );
+}
+
 export interface PayoutEnsureForm {
   employee_id: string;
   period_month: string;

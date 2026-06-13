@@ -18,6 +18,8 @@ import { attendanceClient, lookupsClient } from "@/lib/clients";
 import { formatDate } from "@/lib/formatters";
 import { preOpenPrintWindow, PRINT_POPUP_BLOCKED_MESSAGE } from "@/lib/print";
 import { crmTodayIso } from "@/src/utils/crmToday";
+import { DUTY_LEDGER_READONLY_MESSAGE } from "@/lib/dutyLedgerUi";
+import Link from "next/link";
 import {
   ATTENDANCE_DELETE_ROLES,
   ATTENDANCE_WRITE_ROLES
@@ -671,15 +673,31 @@ export default function AttendancePage() {
 
   const boardSummary = boardData?.summary || {};
   const boardRows = Array.isArray(boardData?.rows) ? boardData.rows : [];
+  /** Attendance status is generated from the Duty Calendar — corrections happen there only. */
+  const dutyDerivedReadOnly = true;
 
   return (
     <AuthGuard permission="attendance.read">
       <AppShell title="Attendance">
         <ModuleShell
           title={"All staff attendance — " + (boardData?.date || boardDate)}
-          description="Synchronised with the duty calendar. Mark Present / Absent / Late and the underlying duty status updates automatically."
+          description="Read-only view generated from the Duty Calendar. To change duty days, rates, or attendance status, edit the Duty Calendar entry."
         >
-          {!canWrite ? (
+          <div
+            className="helper-box"
+            style={{ marginBottom: 12, background: "#f8fafc", borderColor: "#cbd5e1" }}
+          >
+            {DUTY_LEDGER_READONLY_MESSAGE}{" "}
+            <Link href="/duties" style={{ fontWeight: 600 }}>
+              Open Duty Calendar →
+            </Link>
+          </div>
+          {dutyDerivedReadOnly ? (
+            <div className="helper-box" style={{ marginBottom: 12, background: "#eff6ff", borderColor: "#93c5fd" }}>
+              Quick-mark buttons are disabled here. Present / absent / duty corrections must be made on
+              the Duty Calendar so billing and payout stay in sync.
+            </div>
+          ) : !canWrite ? (
             <div className="helper-box" style={{ marginBottom: 12 }}>
               You have read-only access. Only Admin, Manager, Staff, Nurse, and Supervisor can mark
               attendance.
@@ -845,11 +863,17 @@ export default function AttendancePage() {
                               className="button success"
                               type="button"
                               disabled={
+                                dutyDerivedReadOnly ||
                                 !canWrite ||
                                 busyKey ||
                                 row.derived_status === "PRESENT" ||
                                 row.derived_status === "IN_PROGRESS" ||
                                 row.derived_status === "COMPLETED"
+                              }
+                              title={
+                                dutyDerivedReadOnly
+                                  ? "Edit this duty on the Duty Calendar"
+                                  : undefined
                               }
                               onClick={function () {
                                 quickMarkBoard(row, "PRESENT");
@@ -861,7 +885,12 @@ export default function AttendancePage() {
                             <button
                               className="button secondary"
                               type="button"
-                              disabled={!canWrite || busyKey || row.derived_status === "LATE"}
+                              disabled={dutyDerivedReadOnly || !canWrite || busyKey || row.derived_status === "LATE"}
+                              title={
+                                dutyDerivedReadOnly
+                                  ? "Edit this duty on the Duty Calendar"
+                                  : undefined
+                              }
                               onClick={function () {
                                 quickMarkBoard(row, "LATE");
                               }}
@@ -872,7 +901,12 @@ export default function AttendancePage() {
                             <button
                               className="button secondary"
                               type="button"
-                              disabled={!canWrite || busyKey || row.derived_status === "HALF_DAY"}
+                              disabled={dutyDerivedReadOnly || !canWrite || busyKey || row.derived_status === "HALF_DAY"}
+                              title={
+                                dutyDerivedReadOnly
+                                  ? "Edit this duty on the Duty Calendar"
+                                  : undefined
+                              }
                               onClick={function () {
                                 quickMarkBoard(row, "HALF_DAY");
                               }}
@@ -883,7 +917,12 @@ export default function AttendancePage() {
                             <button
                               className="button danger"
                               type="button"
-                              disabled={!canWrite || busyKey || row.derived_status === "ABSENT"}
+                              disabled={dutyDerivedReadOnly || !canWrite || busyKey || row.derived_status === "ABSENT"}
+                              title={
+                                dutyDerivedReadOnly
+                                  ? "Edit this duty on the Duty Calendar"
+                                  : undefined
+                              }
                               onClick={function () {
                                 quickMarkBoard(row, "ABSENT");
                               }}
@@ -894,7 +933,12 @@ export default function AttendancePage() {
                             <button
                               className="button secondary"
                               type="button"
-                              disabled={!canWrite || busyKey}
+                              disabled={dutyDerivedReadOnly || !canWrite || busyKey}
+                              title={
+                                dutyDerivedReadOnly
+                                  ? "Edit this duty on the Duty Calendar"
+                                  : undefined
+                              }
                               onClick={function () {
                                 quickMarkBoard(row, "LEAVE");
                               }}
@@ -913,7 +957,7 @@ export default function AttendancePage() {
           )}
         </ModuleShell>
 
-        <ModuleShell title="Attendance log" description="Historical log — filter by date range, status, or employee.">
+        <ModuleShell title="Attendance log" description="Historical log — read-only when generated from the Duty Calendar.">
           <div className="toolbar" style={{ flexWrap: "wrap" }}>
             <div className="field">
               <label htmlFor="attendance-from-6">From</label>
@@ -1065,7 +1109,7 @@ export default function AttendancePage() {
                         </td>
                         <td className="mini-muted">{r.notes || r.remarks || "—"}</td>
                         <td>
-                          {r.attendance_id && canDelete ? (
+                          {r.attendance_id && canDelete && !dutyDerivedReadOnly ? (
                             <div className="button-row">
                               <button
                                 className="button danger"
@@ -1097,7 +1141,11 @@ export default function AttendancePage() {
               description="Per-duty or standalone clock-in/out. Status auto-handles timestamp rules."
             >
               <form className="stack" onSubmit={handleSubmit}>
-                <fieldset className="stack" disabled={!canWrite} style={{ border: 0, margin: 0, padding: 0 }}>
+                <fieldset
+                  className="stack"
+                  disabled={dutyDerivedReadOnly || !canWrite}
+                  style={{ border: 0, margin: 0, padding: 0 }}
+                >
                 <div className="grid-2">
                   <div className="field">
                     <label htmlFor="attendance-employee-12">Employee</label>
@@ -1262,7 +1310,7 @@ export default function AttendancePage() {
                 ) : null}
                 <SuccessBanner message={message} />
                 <div className="button-row">
-                  <button className="button primary" type="submit" disabled={busy}>
+                  <button className="button primary" type="submit" disabled={busy || dutyDerivedReadOnly}>
                     {editingId ? "Save changes" : "Mark attendance"}
                   </button>
                   {editingId ? (
@@ -1277,7 +1325,7 @@ export default function AttendancePage() {
 
             <ModuleShell
               title="Missing attendance"
-              description="Duties scheduled in the range that don't yet have an attendance row."
+              description="Duties without attendance rows — edit on the Duty Calendar to correct duty status."
             >
               <div className="toolbar">
                 <div className="field">
@@ -1330,7 +1378,12 @@ export default function AttendancePage() {
                               onClick={function () {
                                 handleQuickMark(d, "PRESENT");
                               }}
-                              disabled={busy || !canWrite}
+                              disabled={busy || dutyDerivedReadOnly || !canWrite}
+                              title={
+                                dutyDerivedReadOnly
+                                  ? "Edit this duty on the Duty Calendar"
+                                  : undefined
+                              }
                             >
                               Present
                             </button>
@@ -1340,7 +1393,12 @@ export default function AttendancePage() {
                               onClick={function () {
                                 handleQuickMark(d, "ABSENT");
                               }}
-                              disabled={busy || !canWrite}
+                              disabled={busy || dutyDerivedReadOnly || !canWrite}
+                              title={
+                                dutyDerivedReadOnly
+                                  ? "Edit this duty on the Duty Calendar"
+                                  : undefined
+                              }
                             >
                               Absent
                             </button>

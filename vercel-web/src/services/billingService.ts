@@ -2949,6 +2949,39 @@ export const billingService = {
       receipts,
       secDep: Number(billing.sec_dep || 0)
     });
+  },
+
+  /**
+   * Authoritative patient billing ledger for a month (duty-materialized
+   * hh_svc_entries). Billing UI compares this to the displayed bundle to
+   * detect desync before recording receipts.
+   */
+  async patientDutyLedger(
+    patientId: string,
+    period: string,
+    ctx: BillingServiceContext
+  ): Promise<
+    ApiResult<{
+      patient_id: string;
+      period: string;
+      duty_count: number;
+      billed: number;
+      received: number;
+      outstanding: number;
+    }>
+  > {
+    const { getPatientBillingLedger } = await import("@/src/lib/duty-ledger");
+    const result = await getPatientBillingLedger(patientId, period, dbAccess(ctx));
+    if (!result.success) return passFailure(result);
+    const row = result.data;
+    return success({
+      patient_id: patientId,
+      period,
+      duty_count: row?.duty_count ?? 0,
+      billed: row?.billed ?? 0,
+      received: row?.received ?? 0,
+      outstanding: row?.outstanding ?? 0
+    });
   }
 };
 

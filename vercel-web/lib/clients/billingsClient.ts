@@ -114,5 +114,14 @@ export const billingsClient = {
       { method: "POST", body: { patient_id: patientId } },
       session
     );
+  },
+
+  /** Live duty-calendar billing ledger for desync checks. */
+  patientDutyLedger(session: ApiSession, patientId: string, period: string) {
+    return request(
+      withQuery(BILLINGS_BASE + "/ledger", { patient_id: patientId, period }),
+      null,
+      session
+    );
   }
 };
