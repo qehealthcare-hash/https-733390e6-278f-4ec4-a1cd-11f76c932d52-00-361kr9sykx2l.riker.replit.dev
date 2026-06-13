@@ -843,15 +843,16 @@ export const dutyService = {
     if (employeeId) {
       const period = String(options?.period || "").trim();
       if (period) {
-        const { payoutRepository } = await import("@/database/payoutRepository");
-        const pending = await payoutRepository.pendingPayoutRpc(employeeId, period, access);
-        if (!pending.success) return passFailure(pending);
-        const data = pending.data;
+        // Single source of truth: read the period payout via the central
+        // duty-ledger authority (same hh_payout_charges math everywhere).
+        const { getEmployeePayoutLedger } = await import("@/src/lib/duty-ledger");
+        const ledger = await getEmployeePayoutLedger(employeeId, period, access);
+        if (!ledger.success) return passFailure(ledger);
         partnerSummary = {
           employee_id: employeeId,
-          charged: Number(data?.charged || 0),
-          paid: Number(data?.paid || 0),
-          pending: Number(data?.pending || 0),
+          charged: Number(ledger.data?.gross || 0),
+          paid: Number(ledger.data?.paid || 0),
+          pending: Number(ledger.data?.outstanding || 0),
           period_month: period
         };
       } else {
