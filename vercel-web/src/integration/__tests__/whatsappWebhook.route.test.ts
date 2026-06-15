@@ -18,7 +18,7 @@ vi.mock("@/services/whatsappService", () => ({
   whatsappService: {
     recordWebhook: vi
       .fn()
-      .mockResolvedValue({ success: true, data: { ok: true, verified: true, inserted: 1 } })
+      .mockResolvedValue({ success: true, data: { ok: true as const, verified: true } })
   }
 }));
 

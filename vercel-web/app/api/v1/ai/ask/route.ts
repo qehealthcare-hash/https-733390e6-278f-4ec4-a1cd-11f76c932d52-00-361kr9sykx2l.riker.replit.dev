@@ -3,7 +3,8 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { enforceRateLimit } from "@/lib/api/security";
 import { toServiceContext } from "@/lib/api/serviceContext";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { aiAskResultDtoSchema } from "@/validation/aiDto";
 import { aiService } from "@/services/aiService";
 
 export const runtime = "nodejs";
@@ -17,5 +18,5 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   enforceRateLimit(req, "ai-ask", 30, 60_000);
   const body = await parseJsonBody(req);
   const result = await aiService.ask(body, toServiceContext(actor));
-  return respond(result);
+  return respondValidated(result, aiAskResultDtoSchema);
 });

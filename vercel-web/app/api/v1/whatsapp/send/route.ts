@@ -3,7 +3,8 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { toServiceContext } from "@/lib/api/serviceContext";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { whatsappSendResultDtoSchema } from "@/validation/whatsappDto";
 import { whatsappService } from "@/services/whatsappService";
 
 export const runtime = "nodejs";
@@ -14,6 +15,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /whatsapp/send" }, async () => {
     const body = await parseJsonBody(req);
     const result = await whatsappService.sendText(body, toServiceContext(actor));
-    return respond(result);
+    return respondValidated(result, whatsappSendResultDtoSchema);
   });
 });

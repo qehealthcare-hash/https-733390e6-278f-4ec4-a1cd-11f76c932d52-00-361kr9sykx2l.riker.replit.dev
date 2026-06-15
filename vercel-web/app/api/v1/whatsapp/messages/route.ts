@@ -2,7 +2,8 @@ import type { NextRequest } from "next/server";
 import { withAuth, pageParams } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { WHATSAPP_READ_ROLES } from "@/lib/api/crmRoles";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { whatsappListResponseDtoSchema } from "@/validation/whatsappDto";
 import { whatsappService } from "@/services/whatsappService";
 
 export const runtime = "nodejs";
@@ -18,5 +19,5 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     relatedModule: url.searchParams.get("module") || undefined,
     relatedId: url.searchParams.get("related_id") || undefined
   });
-  return respond(result);
+  return respondValidated(result, whatsappListResponseDtoSchema);
 });

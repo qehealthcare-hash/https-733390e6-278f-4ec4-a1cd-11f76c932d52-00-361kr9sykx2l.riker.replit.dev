@@ -1,5 +1,6 @@
 import { withAuth } from "@/lib/api/handler";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { actorMeDtoSchema } from "@/validation/authDto";
 import { success } from "@/utils/apiResponse";
 
 export const runtime = "nodejs";
@@ -16,13 +17,14 @@ export const dynamic = "force-dynamic";
  * role→permission map in `lib/permissions.js`.
  */
 export const GET = withAuth(async (_req, { actor }) => {
-  return respond(
+  return respondValidated(
     success({
       id: actor.userId,
       email: actor.email,
       username: actor.username,
       role: actor.role,
       permissions: [] as string[]
-    })
+    }),
+    actorMeDtoSchema
   );
 });

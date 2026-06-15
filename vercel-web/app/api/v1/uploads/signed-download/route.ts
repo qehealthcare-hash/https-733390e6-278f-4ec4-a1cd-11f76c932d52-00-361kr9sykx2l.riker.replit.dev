@@ -1,7 +1,8 @@
 import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { toServiceContext } from "@/lib/api/serviceContext";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { signedDownloadUrlDtoSchema } from "@/validation/storageDto";
 import { storageService } from "@/services/storageService";
 
 export const runtime = "nodejs";
@@ -23,5 +24,5 @@ export const POST = withAuth(async (req, { actor }) => {
   requireRole(actor, ["Admin", "Manager", "Accountant", "Staff", "Executive", "Nurse"]);
   const body = await parseJsonBody(req);
   const result = await storageService.createSignedDownload(body, toServiceContext(actor));
-  return respond(result);
+  return respondValidated(result, signedDownloadUrlDtoSchema);
 });

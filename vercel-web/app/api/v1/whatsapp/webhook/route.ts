@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "@/lib/api/env";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { whatsappWebhookResultDtoSchema } from "@/validation/whatsappDto";
 import { enforceRateLimit, timingSafeEqualString } from "@/lib/api/security";
 import { whatsappService } from "@/services/whatsappService";
 import { whatsappWebhookPayloadSchema } from "@/validation/whatsappValidation";
@@ -51,7 +52,7 @@ function verifySignature(rawBody: string, headerSignature: string | null): boole
 /**
  * Meta sends raw HTTP responses for non-2xx, so the few short-circuit
  * responses below also stay as plain text to match the protocol contract.
- * Successful processing uses the canonical envelope via `respond()`.
+ * Successful processing uses the canonical envelope via `respondValidated()`.
  */
 export async function POST(req: NextRequest) {
   if (!env.whatsappAppSecret) {
@@ -87,5 +88,5 @@ export async function POST(req: NextRequest) {
     return new NextResponse("invalid payload shape", { status: 400 });
   }
   const result = await whatsappService.recordWebhook(parsed.data, { verified });
-  return respond(result);
+  return respondValidated(result, whatsappWebhookResultDtoSchema);
 }

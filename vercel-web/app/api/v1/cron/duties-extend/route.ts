@@ -4,7 +4,8 @@ import { timingSafeEqualString } from "@/lib/api/security";
 import { withIdempotency } from "@/lib/api/idempotency";
 import type { ActorContext } from "@/lib/api/auth";
 import { dutyService } from "@/services/dutyService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respond, respondValidated } from "@/lib/api/apiResultBridge";
+import { dutiesExtendCronResultDtoSchema } from "@/validation/cronDto";
 import { failure, success } from "@/utils/apiResponse";
 import { ErrorCodes } from "@/types/common";
 import { crmTodayIso } from "@/utils/crmToday";
@@ -112,13 +113,16 @@ export const GET = withoutAuth(async (req: NextRequest) => {
         );
       }
 
-      return respond(success({
-        ok: true,
-        summary: result.data,
-        ledger: ledger.data,
-        error: null,
-        ranAt
-      }));
+      return respondValidated(
+        success({
+          ok: true as const,
+          summary: result.data,
+          ledger: ledger.data,
+          error: null,
+          ranAt
+        }),
+        dutiesExtendCronResultDtoSchema
+      );
     }
   );
 });

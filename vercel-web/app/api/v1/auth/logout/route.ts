@@ -2,7 +2,8 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { withAuth } from "@/lib/api/handler";
 import { authService } from "@/services/authService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { logoutResultDtoSchema } from "@/validation/authDto";
 import { clearRefreshCookie } from "@/lib/auth/refreshCookie";
 
 export const runtime = "nodejs";
@@ -64,6 +65,6 @@ export const POST = withAuth(async (req, { actor }) => {
     }
   );
 
-  const response = respond(result);
+  const response = respondValidated(result, logoutResultDtoSchema);
   return clearRefreshCookie(response);
 });
