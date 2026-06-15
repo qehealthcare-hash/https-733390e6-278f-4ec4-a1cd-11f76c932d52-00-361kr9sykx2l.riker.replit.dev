@@ -16,6 +16,7 @@ import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
 import { doctorsClient } from "@/lib/clients";
+import { useRealtimeTableReload } from "@/hooks/use-realtime-table-reload";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { crmTodayIso } from "@/src/utils/crmToday";
 import {
@@ -89,6 +90,8 @@ export default function DoctorsPage() {
       setLoading(false);
     }
   }, [accessToken, auth.session, city, search, setError]);
+
+  useRealtimeTableReload(["hh_doctors"], "doctors", reload);
 
   useEffect(
     function () {

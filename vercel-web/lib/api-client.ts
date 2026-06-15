@@ -1,7 +1,9 @@
 import { appConfig } from "./config";
+import { dispatchDataInvalidated } from "./data-invalidation";
 
 const offlineQueueKey = "hhcrm-offline-queue";
 const OFFLINE_RETRY_CAP = 5;
+export const OFFLINE_QUEUED_CODE = "offline_queued";
 
 export type ApiSession = { access_token?: string } | null | undefined;
 
@@ -179,11 +181,13 @@ export async function flushOfflineQueue(session: ApiSession): Promise<void> {
   const queue = readQueue();
   if (!queue.length || !session?.access_token) return;
   const failed: OfflineQueueEntry[] = [];
+  let flushed = 0;
   for (let i = 0; i < queue.length; i += 1) {
     const entry = queue[i] || ({} as OfflineQueueEntry);
     const attempts = Number(entry.attempts || 0);
     try {
       await request(entry.path, entry.options, session);
+      flushed += 1;
     } catch {
       if (attempts + 1 < OFFLINE_RETRY_CAP) {
         entry.attempts = attempts + 1;
@@ -192,6 +196,7 @@ export async function flushOfflineQueue(session: ApiSession): Promise<void> {
     }
   }
   saveQueue(failed);
+  if (flushed > 0) dispatchDataInvalidated("offline-queue");
 }
 
 export async function request<T = any>(
@@ -230,11 +235,21 @@ export async function request<T = any>(
   }
 }
 
+function queueFingerprint(path: string, options: ApiRequestOptions): string {
+  const method = options?.method || "GET";
+  const body =
+    options?.body == null ? "" : JSON.stringify(canonicalizeForHash(options.body));
+  return method + "|" + path + "|" + body;
+}
+
 function enqueueRetry(path: string, options: ApiRequestOptions): void {
   if (typeof window === "undefined") return;
   if (!options || !options.method || options.method === "GET") return;
   if (path === "/auth/login") return;
-  const queue = readQueue();
+  const fingerprint = queueFingerprint(path, options);
+  const queue = readQueue().filter(function (entry) {
+    return queueFingerprint(entry.path, entry.options) !== fingerprint;
+  });
   queue.push({ path, options, attempts: 0, queued_at: Date.now() });
   saveQueue(queue);
 }
@@ -253,6 +268,11 @@ export async function requestWithOfflineFallback<T = any>(
     if (typeof window !== "undefined" && options?.method && options.method !== "GET") {
       if (transient5xx || networkReject || !navigator.onLine) {
         enqueueRetry(path, options);
+        const queued: ApiClientError = new Error(
+          "Saved offline — will sync automatically when connection returns"
+        );
+        queued.code = OFFLINE_QUEUED_CODE;
+        throw queued;
       }
     }
     throw error;

@@ -15,6 +15,7 @@ import { ErrorBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
 import { reportsClient } from "@/lib/clients";
+import { onDataInvalidated } from "@/lib/data-invalidation";
 import { downloadCsv } from "@/lib/csv";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { openPrintWindow, reportPrintBlocked } from "@/lib/print";
@@ -141,17 +142,28 @@ export default function ReportsPage() {
       const periodKey = periodFromMonthInput(period);
       setLoading(true);
       setError("");
+      const datasetErrors: string[] = [];
       Promise.all([
-        reportsClient.billingTotals(session, periodKey).catch(function () {
+        reportsClient.billingTotals(session, periodKey).catch(function (e: unknown) {
+          datasetErrors.push(
+            "billing totals: " + (e instanceof Error ? e.message : "load failed")
+          );
           return null;
         }) as Promise<BillingTotalsReport | null>,
-        reportsClient.payoutTotals(session, periodKey).catch(function () {
+        reportsClient.payoutTotals(session, periodKey).catch(function (e: unknown) {
+          datasetErrors.push(
+            "payout totals: " + (e instanceof Error ? e.message : "load failed")
+          );
           return null;
         }) as Promise<PayoutTotalsReport | null>,
-        reportsClient.profitLoss(session, periodKey).catch(function () {
+        reportsClient.profitLoss(session, periodKey).catch(function (e: unknown) {
+          datasetErrors.push(
+            "profit/loss: " + (e instanceof Error ? e.message : "load failed")
+          );
           return null;
         }) as Promise<ProfitLossReport | null>,
-        reportsClient.payroll(session, periodKey).catch(function () {
+        reportsClient.payroll(session, periodKey).catch(function (e: unknown) {
+          datasetErrors.push("payroll: " + (e instanceof Error ? e.message : "load failed"));
           return null;
         }) as Promise<PayrollReportPayload | null>
       ])
@@ -160,6 +172,9 @@ export default function ReportsPage() {
           setPayout(result[1]);
           setProfitLoss(result[2]);
           setPayroll(result[3]);
+          if (datasetErrors.length) {
+            setError("Some overview datasets failed to load — " + datasetErrors.join("; "));
+          }
         })
         .catch(function (err: unknown) {
           setError(err instanceof Error ? err.message : "Unable to load reports");
@@ -224,6 +239,13 @@ export default function ReportsPage() {
     },
     [loadOverview]
   );
+
+  useEffect(function () {
+    return onDataInvalidated(function () {
+      loadOverview();
+      loadDetailDatasets();
+    });
+  }, [loadOverview, loadDetailDatasets]);
 
   useEffect(
     function () {

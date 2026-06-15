@@ -16,6 +16,7 @@ import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
 import { vendorsClient } from "@/lib/clients";
+import { useRealtimeTableReload } from "@/hooks/use-realtime-table-reload";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   apiErrorMessage,
@@ -88,6 +89,8 @@ export default function VendorsPage() {
       setLoading(false);
     }
   }, [accessToken, auth.session, city, search, setError]);
+
+  useRealtimeTableReload(["hh_vendors"], "vendors", reload);
 
   useEffect(
     function () {

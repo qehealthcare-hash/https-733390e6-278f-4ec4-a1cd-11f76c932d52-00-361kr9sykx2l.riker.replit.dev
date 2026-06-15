@@ -25,6 +25,8 @@ import { ModalDialog } from "@/components/ui/modal-dialog";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useAuth } from "@/components/providers/auth-provider";
 import { billingsClient, dutiesClient, lookupsClient } from "@/lib/clients";
+import { OFFLINE_QUEUED_CODE } from "@/lib/api-client";
+import { onDataInvalidated } from "@/lib/data-invalidation";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { crmDayStartIso, crmDayEndIso } from "@/src/utils/crmToday";
 import {
@@ -770,6 +772,20 @@ export default function DutiesPage() {
       }
       setRows(list);
       setRowsTotal(serverTotal);
+      setDiaryByDuty(function (cur) {
+        const visible = new Set(
+          list
+            .map(function (r) {
+              return r.id;
+            })
+            .filter(Boolean)
+        );
+        const next = { ...cur };
+        Object.keys(next).forEach(function (id) {
+          if (!visible.has(id)) delete next[id];
+        });
+        return next;
+      });
       setError("");
       loadDiariesForVisible(list);
     } catch (err: unknown) {
@@ -792,6 +808,12 @@ export default function DutiesPage() {
   useEffect(function () {
     reloadRef.current = reload;
   }, [reload]);
+
+  useEffect(function () {
+    return onDataInvalidated(function () {
+      void reloadRef.current();
+    });
+  }, []);
 
   async function refreshFormTotals() {
     const data = await loadTotals(form.patient_id, form.employee_id, viewMonth);
@@ -1383,7 +1405,12 @@ export default function DutiesPage() {
       }
       setMessage(newEmp ? "Day entry reassigned and saved (marked manual)" : "Day entry saved (marked manual — will resist next sync)");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Could not save day entry");
+      const e = err as { code?: string; message?: string };
+      if (e.code === OFFLINE_QUEUED_CODE) {
+        setMessage(e.message || "Day entry queued — will sync when back online");
+      } else {
+        setError(e.message || "Could not save day entry");
+      }
     } finally {
       setDiaryBusy(function (cur) { const n = { ...cur }; delete n[k]; return n; });
     }
@@ -1400,7 +1427,12 @@ export default function DutiesPage() {
       await loadDiaryFor(dutyId);
       setMessage("Manual lock removed — next sync will reconcile this day");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Could not unlock day entry");
+      const e = err as { code?: string; message?: string };
+      if (e.code === OFFLINE_QUEUED_CODE) {
+        setMessage(e.message || "Unlock queued — will sync when back online");
+      } else {
+        setError(e.message || "Could not unlock day entry");
+      }
     } finally {
       setDiaryBusy(function (cur) { const n = { ...cur }; delete n[k]; return n; });
     }
@@ -1433,7 +1465,12 @@ export default function DutiesPage() {
       }
       setMessage("Day excluded — sync will not recreate this entry");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Could not delete day entry");
+      const e = err as { code?: string; message?: string };
+      if (e.code === OFFLINE_QUEUED_CODE) {
+        setMessage(e.message || "Delete queued — will sync when back online");
+      } else {
+        setError(e.message || "Could not delete day entry");
+      }
     } finally {
       setDiaryBusy(function (cur) { const n = { ...cur }; delete n[k]; return n; });
     }
