@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { REPORT_READ_ROLES } from "@/lib/api/crmRoles";
 import { reportService } from "@/services/reportService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { attendanceSummaryReportDtoSchema } from "@/validation/reportDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,5 +35,5 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     offset: url.searchParams.get("offset") ?? undefined
   };
   const result = await reportService.attendanceSummary(query, { actor });
-  return respond(result);
+  return respondValidated(result, attendanceSummaryReportDtoSchema);
 });

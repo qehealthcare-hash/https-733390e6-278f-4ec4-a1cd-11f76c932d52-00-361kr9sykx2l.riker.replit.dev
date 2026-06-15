@@ -87,6 +87,11 @@ describe("GET /api/v1/reports/payout-totals", () => {
   });
 });
 
+const reportRange = {
+  from: "2026-05-01T00:00:00.000Z",
+  to: "2026-06-01T00:00:00.000Z"
+};
+
 describe("GET /api/v1/reports/profit-loss", () => {
   beforeEach(() => {
     setActor(null);
@@ -97,7 +102,16 @@ describe("GET /api/v1/reports/profit-loss", () => {
     setActor(ACTORS.manager);
     m.profitLoss.mockResolvedValue({
       success: true,
-      data: { period: "2026-05", revenue: 10000, net_profit: 2000 }
+      data: {
+        period: "2026-05",
+        range: reportRange,
+        revenue: 10000,
+        payouts_paid: 8000,
+        payouts_pending: 500,
+        partner_charge_ledger: 150,
+        net_profit: 2000,
+        net_profit_after_pending_payouts: 1500
+      }
     });
     const req = makeRequest("GET", "/api/v1/reports/profit-loss?period=2026-05");
     const res = await ProfitLossGet(req, ctx({}));
@@ -124,7 +138,17 @@ describe("GET /api/v1/reports/payroll", () => {
     setActor(ACTORS.admin);
     m.payroll.mockResolvedValue({
       success: true,
-      data: { period: "2026-05", rows: [{ employee_id: "EMP1" }] }
+      data: {
+        period: "2026-05",
+        range: reportRange,
+        rows: [
+          {
+            employee_id: "EMP1",
+            attendance: { present: 20, absent: 1, late: 0, hours: 160 }
+          }
+        ],
+        totals: { gross: 5000, net: 4500, advance: 0, deduction: 0, bonus: 0 }
+      }
     });
     const req = makeRequest("GET", "/api/v1/reports/payroll?period=2026-05");
     const res = await PayrollGet(req, ctx({}));
@@ -147,13 +171,16 @@ describe("GET /api/v1/reports/reconciliation", () => {
         ok: true,
         from: "2026-05-01",
         to: "2026-05-31",
+        rules: ["duty-calendar-ssot"],
         summary: {
           expected_duty_day_rows: 40,
           missing_service_rows: 0,
           missing_payout_rows: 0,
           duplicate_service_groups: 0,
           duplicate_payout_groups: 0
-        }
+        },
+        patient_billing_mismatches: [],
+        employee_payout_mismatches: []
       }
     });
 

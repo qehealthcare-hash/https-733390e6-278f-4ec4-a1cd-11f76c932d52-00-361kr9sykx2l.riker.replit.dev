@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { DASHBOARD_READ_ROLES } from "@/lib/api/crmRoles";
 import { reportService } from "@/services/reportService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { dashboardReportDtoSchema } from "@/validation/reportDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,5 +22,5 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     status: url.searchParams.get("status") ?? undefined
   };
   const result = await reportService.dashboard(query, { actor });
-  return respond(result);
+  return respondValidated(result, dashboardReportDtoSchema);
 });
