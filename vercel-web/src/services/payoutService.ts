@@ -42,6 +42,7 @@ import {
   type PayoutPendingQuery
 } from "@/validation/payoutValidation";
 import { parseInput } from "@/validation/parseValidation";
+import { roundMoney } from "@/utils/money";
 import {
   buildPayoutPermissions,
   canEditPayout,
@@ -380,7 +381,7 @@ function buildDiagnostics(
     const updated = String(c.updated_at || c.created_at || "");
     if (updated && updated > lastUpdated) lastUpdated = updated;
   }
-  diagnostics.charge_sum = Math.round(sum * 100) / 100;
+  diagnostics.charge_sum = roundMoney(sum);
   diagnostics.charge_zero_rate_rows = zero;
   diagnostics.charge_distinct_svc_keys = svcKeys.size;
   diagnostics.charge_last_updated_at = lastUpdated || null;
@@ -515,7 +516,7 @@ async function buildPatientBreakdown(
       days_worked: acc.days.size,
       hours: Math.round(acc.hours * 100) / 100,
       charged_days: acc.days.size,
-      amount: Math.round(acc.amount * 100) / 100,
+      amount: roundMoney(acc.amount),
       first_date: acc.first_date,
       last_date: acc.last_date,
       duty_ids: Array.from(acc.duty_ids)
@@ -628,14 +629,14 @@ async function loadPayoutDetail(
       duties: dutyRows,
       attendance: attendanceRows,
       paid_transactions: paidRows,
-      paid_total: Math.round(paidTotal * 100) / 100,
-      outstanding: Math.round(outstanding * 100) / 100,
+      paid_total: roundMoney(paidTotal),
+      outstanding: roundMoney(outstanding),
       employee_name: employeeName,
       patient_breakdown: patientBreakdown,
       diagnostics,
       permissions: payoutDetailPermissions(
         payout,
-        Math.round(outstanding * 100) / 100,
+        roundMoney(outstanding),
         dutyCount
       ),
       // Legacy `breakdown` mirrors patient_breakdown so consumers never see
@@ -974,7 +975,7 @@ export const payoutService = {
     return success({
       period,
       rows,
-      total_pending: Math.round(totalPending * 100) / 100,
+      total_pending: roundMoney(totalPending),
       source
     });
   },

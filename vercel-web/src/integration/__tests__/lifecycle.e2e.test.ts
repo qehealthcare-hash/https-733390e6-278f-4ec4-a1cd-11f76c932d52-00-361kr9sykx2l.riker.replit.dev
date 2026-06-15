@@ -242,7 +242,7 @@ describe("E2E lifecycle — duty creation and cancellation", () => {
 
     dut.cancel.mockResolvedValue({
       success: true,
-      data: { id: "DUTY1", status: "CANCELLED" }
+      data: dutyDetailFixture({ id: "DUTY1", status: "CANCELLED" })
     });
     const cancelRes = await DutyCancelPost(
       makeRequest("POST", `/api/v1/duties/${duty.id}/cancel`, {

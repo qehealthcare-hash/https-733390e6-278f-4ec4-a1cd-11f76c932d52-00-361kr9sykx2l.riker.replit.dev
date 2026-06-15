@@ -503,6 +503,19 @@ async function dutyFreezeSignals(
   return { billHasReceipt, totalSlots, paidSlots, hasBillingServiceLine: totalSlots > 0 };
 }
 
+/** Attach server-computed permissions for duty mutation/read responses. */
+async function decorateDutyPermissions(
+  row: JsonRow,
+  ctx: DutyServiceContext
+): Promise<DutyApiRow> {
+  const signals = await dutyFreezeSignals(row, ctx);
+  const permissions = buildDutyPermissions({
+    status: String(row.status || "SCHEDULED"),
+    ...signals
+  });
+  return { ...row, permissions } as DutyApiRow;
+}
+
 async function payoutPeriodsTouchedByDuty(
   duty: JsonRow,
   ctx: DutyServiceContext
@@ -730,9 +743,10 @@ export const dutyService = {
       await recomputeAffectedPayoutPeriods(affected, ctx, "create");
     }
 
+    const decorated = await decorateDutyPermissions(fresh.data, ctx);
     return finalizeWithAudit(
-      await fireAudit(ctx, { entity_id: id, action: "create", after: fresh.data }),
-      fresh.data
+      await fireAudit(ctx, { entity_id: id, action: "create", after: decorated }),
+      decorated
     );
   },
 
@@ -862,14 +876,15 @@ export const dutyService = {
       await recomputeAffectedPayoutPeriods(affected, ctx, "update");
     }
 
+    const decorated = await decorateDutyPermissions(fresh.data, ctx);
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
         action: "update",
         before: existing.data,
-        after: fresh.data
+        after: decorated
       }),
-      fresh.data
+      decorated
     );
   },
 
@@ -1284,15 +1299,16 @@ export const dutyService = {
     // do not leave ghost pending payout balances after refresh.
     await recomputeAffectedPayoutPeriods(affectedPayoutPeriods, ctx, "cancel");
 
+    const decorated = await decorateDutyPermissions(fresh.data, ctx);
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
         action: "delete",
         before: existing.data,
-        after: fresh.data,
+        after: decorated,
         stamp: `Cancelled: ${input.reason}`
       }),
-      fresh.data
+      decorated
     );
   },
 
@@ -1390,15 +1406,16 @@ export const dutyService = {
     const fresh = await loadFreshDuty(id, ctx, updated.data ?? null);
     if (!fresh.success) return passFailure(fresh);
 
+    const decorated = await decorateDutyPermissions(fresh.data, ctx);
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
         action: "update",
         before: existing.data,
-        after: fresh.data,
+        after: decorated,
         stamp: "Check-in"
       }),
-      fresh.data
+      decorated
     );
   },
 
@@ -1463,15 +1480,16 @@ export const dutyService = {
       );
     }
 
+    const decorated = await decorateDutyPermissions(fresh.data, ctx);
     return finalizeWithAudit(
       await fireAudit(ctx, {
         entity_id: id,
         action: "update",
         before: existing.data,
-        after: fresh.data,
+        after: decorated,
         stamp: `Check-out (${hours.toFixed(2)}h)`
       }),
-      fresh.data
+      decorated
     );
   }
 };

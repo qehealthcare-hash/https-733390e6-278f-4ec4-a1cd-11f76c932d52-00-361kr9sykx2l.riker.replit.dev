@@ -1,6 +1,7 @@
 import { monthRangeUTC } from "@/business/dateRules";
 import { payoutOutstanding, computePayoutNet } from "@/business/payoutRules";
 import { sumReceiptAmounts, sumServiceTotals } from "@/business/billingRules";
+import { clampMoneyNonNegative, roundMoney } from "@/utils/money";
 import {
   aggregateAttendanceByEmployee,
   type AttendanceRollup,
@@ -178,7 +179,7 @@ export function buildDashboardKpis(
   // Profit/loss for the window — collected receipts minus payouts already paid.
   // Don't subtract payable-but-unpaid payouts; that hides a liability and
   // makes the dashboard inconsistent with finance reports.
-  const profitLoss = round2(collected - payoutPaid);
+  const profitLoss = roundMoney(collected - payoutPaid);
 
   // M3-H4: conservative companion to `profitLoss`. Mirrors the formula in
   // `buildProfitLoss().net_profit_after_pending_payouts` exactly:
@@ -186,7 +187,7 @@ export function buildDashboardKpis(
   // Surfacing this alongside `profit_loss` ends the long-standing UX trap
   // where owners read "Profit / Loss" as accrual profit when it was only
   // cash-basis (paid payouts only).
-  const profitLossAfterPending = round2(
+  const profitLossAfterPending = roundMoney(
     collected - payoutNet - unrepresentedPartnerChargeLedger
   );
 
@@ -205,14 +206,14 @@ export function buildDashboardKpis(
     billings_total: raw.billings_total,
     billings_open: raw.billings_open,
     billings_closed: raw.billings_closed,
-    billing_total_amount: round2(billingTotal),
-    billing_collected_amount: round2(collected),
-    billing_pending_amount: round2(pendingBilling),
-    payout_total_amount: round2(payoutNet),
-    payout_gross_amount: round2(payoutGross),
-    payout_paid_amount: round2(payoutPaid),
-    payout_pending_amount: round2(payoutPending),
-    partner_charge_ledger: round2(partnerChargeLedger),
+    billing_total_amount: roundMoney(billingTotal),
+    billing_collected_amount: roundMoney(collected),
+    billing_pending_amount: roundMoney(pendingBilling),
+    payout_total_amount: roundMoney(payoutNet),
+    payout_gross_amount: roundMoney(payoutGross),
+    payout_paid_amount: roundMoney(payoutPaid),
+    payout_pending_amount: roundMoney(payoutPending),
+    partner_charge_ledger: roundMoney(partnerChargeLedger),
     profit_loss: profitLoss,
     profit_loss_after_pending: profitLossAfterPending
   };
@@ -265,9 +266,9 @@ export function buildBillingTotals(
     period,
     range,
     billings_count: activeBillingIds.size,
-    service_total: round2(serviceTotal),
-    collected: round2(collected),
-    pending: round2(Math.max(0, serviceTotal - collected)),
+    service_total: roundMoney(serviceTotal),
+    collected: roundMoney(collected),
+    pending: clampMoneyNonNegative(serviceTotal - collected),
     byStatus
   };
 }
@@ -326,14 +327,14 @@ export function buildPayoutTotals(
     period,
     range,
     rows_count: rows.length,
-    gross: round2(gross),
-    net: round2(net),
-    paid: round2(paid),
-    pending: round2(payoutOutstanding(net, paid) + unrepresentedPartnerChargeLedger),
-    partner_charge_ledger: round2(partnerChargeLedger),
-    advance: round2(advance),
-    deduction: round2(deduction),
-    bonus: round2(bonus)
+    gross: roundMoney(gross),
+    net: roundMoney(net),
+    paid: roundMoney(paid),
+    pending: roundMoney(payoutOutstanding(net, paid) + unrepresentedPartnerChargeLedger),
+    partner_charge_ledger: roundMoney(partnerChargeLedger),
+    advance: roundMoney(advance),
+    deduction: roundMoney(deduction),
+    bonus: roundMoney(bonus)
   };
 }
 
@@ -389,12 +390,12 @@ export function buildProfitLoss(
   return {
     period,
     range,
-    revenue: round2(revenue),
-    payouts_paid: round2(payoutPaid),
-    payouts_pending: round2(payoutPending),
-    partner_charge_ledger: round2(partnerChargeLedger),
-    net_profit: round2(revenue - payoutPaid),
-    net_profit_after_pending_payouts: round2(
+    revenue: roundMoney(revenue),
+    payouts_paid: roundMoney(payoutPaid),
+    payouts_pending: roundMoney(payoutPending),
+    partner_charge_ledger: roundMoney(partnerChargeLedger),
+    net_profit: roundMoney(revenue - payoutPaid),
+    net_profit_after_pending_payouts: roundMoney(
       revenue - payoutAll - unrepresentedPartnerChargeLedger
     )
   };
@@ -463,14 +464,6 @@ export function attachLedgerAttendanceToPayrollRows<T extends PayrollPayoutRow>(
         : empty
     };
   });
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Helpers
-// ───────────────────────────────────────────────────────────────────────────
-
-function round2(n: number): number {
-  return Math.round(Number(n || 0) * 100) / 100;
 }
 
 /** Business date for receipts: `date` when YYYY-MM-DD, else `created_at` day. */

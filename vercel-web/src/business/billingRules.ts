@@ -1,5 +1,6 @@
 import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
+import { moneyOutstanding, roundMoney, sumMoney } from "@/utils/money";
 import type { BillingPermissionsDto } from "@/validation/billingDto";
 import type { BillingStatus, ShiftRates } from "@/validation/billingValidation";
 import {
@@ -45,11 +46,11 @@ export interface BillingTotals {
 }
 
 export function sumServiceTotals(lines: BillingLine[]): number {
-  return lines.reduce((sum, r) => sum + Number(r.total || 0), 0);
+  return sumMoney(lines.map((r) => r.total));
 }
 
 export function sumReceiptAmounts(lines: BillingLine[]): number {
-  return lines.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  return sumMoney(lines.map((r) => r.amount));
 }
 
 export interface BillingTotalsInput {
@@ -85,14 +86,17 @@ export function computeBillingTotals(
 
   const servicesTotal = sumServiceTotals(services);
   const receiptsTotal = sumReceiptAmounts(r);
-  const outstanding = Math.max(0, servicesTotal - receiptsTotal - discount - advance);
+  const outstanding = moneyOutstanding(
+    servicesTotal,
+    roundMoney(receiptsTotal + discount + advance)
+  );
   return {
     services: servicesTotal,
     billed: servicesTotal,
     receipts: receiptsTotal,
-    sec_dep: sec,
-    discount,
-    advance,
+    sec_dep: roundMoney(sec),
+    discount: roundMoney(discount),
+    advance: roundMoney(advance),
     outstanding
   };
 }
@@ -118,7 +122,7 @@ export function billingPeriodsFromDates(dates: Array<string | null | undefined>)
 }
 
 export function invoiceOutstanding(amount: number, received: number): number {
-  return Math.max(0, Number(amount || 0) - Number(received || 0));
+  return moneyOutstanding(amount, received);
 }
 
 export function derivePaidStatus(totals: BillingTotals): BillingPaidStatus {

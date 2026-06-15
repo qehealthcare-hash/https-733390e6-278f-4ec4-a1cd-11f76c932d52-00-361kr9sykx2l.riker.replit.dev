@@ -21,6 +21,7 @@
  *   - Every mutation refetches the persisted row + writes an audit log.
  */
 
+import { invoiceLineSvcEntryRefs } from "@/utils/ledgerIds";
 import type { ApiResult } from "@/types/common";
 import { ErrorCodes } from "@/types/common";
 import {
@@ -1773,6 +1774,7 @@ export const billingService = {
     // Build line snapshots.
     type LineSnapshot = {
       svc_entry_id: number | null;
+      svc_entry_uuid: string | null;
       date: string;
       service_name: string;
       partner: string;
@@ -1818,8 +1820,7 @@ export const billingService = {
       }
       lines = matching
         .map((s) => ({
-          svc_entry_id:
-            typeof s.id === "number" ? s.id : s.id ? Number(s.id) : null,
+          ...invoiceLineSvcEntryRefs(s.id),
           date: String(s.date || ""),
           service_name: String(s.service_name || ""),
           partner: String(s.partner || ""),
@@ -1833,6 +1834,7 @@ export const billingService = {
     } else {
       lines = (input.manual_lines || []).map((l) => ({
         svc_entry_id: null,
+        svc_entry_uuid: null,
         date: String(l.date || ""),
         service_name: String(l.service_name || ""),
         partner: String(l.partner || ""),
@@ -2118,7 +2120,7 @@ export const billingService = {
 
     const lines = matching
       .map((s) => ({
-        svc_entry_id: typeof s.id === "number" ? s.id : s.id ? Number(s.id) : null,
+        ...invoiceLineSvcEntryRefs(s.id),
         date: String(s.date || ""),
         service_name: String(s.service_name || ""),
         partner: String(s.partner || ""),

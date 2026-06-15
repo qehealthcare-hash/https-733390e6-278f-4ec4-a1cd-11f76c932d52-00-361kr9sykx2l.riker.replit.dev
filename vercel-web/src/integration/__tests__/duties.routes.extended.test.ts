@@ -85,7 +85,10 @@ describe("POST /api/v1/duties/[id]/check-in", () => {
 
   it("permits Nurse", async () => {
     setActor(ACTORS.nurse);
-    mDuty.checkIn.mockResolvedValue({ success: true, data: { id: "DUTY1", status: "IN_PROGRESS" } });
+    mDuty.checkIn.mockResolvedValue({
+      success: true,
+      data: dutyDetailFixture({ id: "DUTY1", status: "IN_PROGRESS" })
+    });
     const req = makeRequest("POST", "/api/v1/duties/DUTY1/check-in", { body: {} });
     const res = await DutyCheckInPost(req, ctx({ id: "DUTY1" }));
     await expectOkEnvelope(res);
@@ -113,6 +116,30 @@ describe("POST /api/v1/duties/[id]/materialize", () => {
     const res = await DutyMaterializePost(req, ctx({ id: "DUTY1" }));
     await expectErrorEnvelope(res, 403, "forbidden");
     expect(mDuty.materialize).not.toHaveBeenCalled();
+  });
+
+  it("returns validated materialize stats for Manager", async () => {
+    setActor(ACTORS.manager);
+    mDuty.materialize.mockResolvedValue({
+      success: true,
+      data: {
+        billing_id: "BIL2026050001",
+        svc_key: "Care Taker Services",
+        created_svc: 2,
+        created_payout: 2,
+        updated_svc: 0,
+        updated_payout: 0,
+        deleted_svc: 0,
+        deleted_payout: 0,
+        skipped: 0,
+        days: 2
+      }
+    });
+    const req = makeRequest("POST", "/api/v1/duties/DUTY1/materialize", { body: {} });
+    const res = await DutyMaterializePost(req, ctx({ id: "DUTY1" }));
+    const data = await expectOkEnvelope<{ created_svc: number }>(res);
+    expect(data.created_svc).toBe(2);
+    expect(mDuty.materialize).toHaveBeenCalled();
   });
 });
 

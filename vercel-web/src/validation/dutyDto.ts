@@ -101,3 +101,44 @@ export const diaryDayDeleteResponseDtoSchema = z.object({
   payout_deleted: z.boolean()
 });
 export type DiaryDayDeleteResponseDto = z.infer<typeof diaryDayDeleteResponseDtoSchema>;
+
+const diaryRowActionDtoSchema = z.enum(["create", "update", "skip", "delete"]);
+
+export const materializePreviewRowDtoSchema = z
+  .object({
+    date: z.string(),
+    employee_id: z.string(),
+    employee_name: z.string(),
+    charge: z.number(),
+    payout: z.number(),
+    svc_action: diaryRowActionDtoSchema,
+    payout_action: diaryRowActionDtoSchema
+  })
+  .passthrough();
+
+/** POST /duties/:id/materialize response body. */
+export const dutyMaterializeResultDtoSchema = z
+  .object({
+    billing_id: z.string(),
+    svc_key: z.string(),
+    created_svc: z.number().int().nonnegative(),
+    created_payout: z.number().int().nonnegative(),
+    updated_svc: z.number().int().nonnegative(),
+    updated_payout: z.number().int().nonnegative(),
+    deleted_svc: z.number().int().nonnegative(),
+    deleted_payout: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+    days: z.number().int().nonnegative(),
+    duplicate_skipped_svc: z.number().int().nonnegative().optional(),
+    duplicate_skipped_payout: z.number().int().nonnegative().optional(),
+    dry_run: z.boolean().optional(),
+    preview: z.array(materializePreviewRowDtoSchema).optional(),
+    would_create_svc: z.number().int().nonnegative().optional(),
+    would_create_payout: z.number().int().nonnegative().optional(),
+    would_update_svc: z.number().int().nonnegative().optional(),
+    would_update_payout: z.number().int().nonnegative().optional(),
+    would_delete_svc: z.number().int().nonnegative().optional(),
+    would_delete_payout: z.number().int().nonnegative().optional()
+  })
+  .passthrough();
+export type DutyMaterializeResultDto = z.infer<typeof dutyMaterializeResultDtoSchema>;

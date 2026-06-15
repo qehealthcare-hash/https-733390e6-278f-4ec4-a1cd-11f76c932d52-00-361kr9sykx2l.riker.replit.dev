@@ -7,6 +7,7 @@
 
 import { billingSvcKey } from "@/business/billingRules";
 import { crmAddDaysIso, crmDateKeyFromTimestamp } from "@/utils/crmToday";
+import { clampMoneyNonNegative, roundMoney } from "@/utils/money";
 
 export interface DutyPartnerAssignment {
   employee_id: string;
@@ -239,7 +240,7 @@ export function collectDutyPartners(
 
 export function buildSvcEntryRow(input: DutyDiaryDayRowInput, actorEmail?: string) {
   const disc = 0;
-  const total = Math.max(0, input.chargePerDay - disc);
+  const total = clampMoneyNonNegative(input.chargePerDay - disc);
   return {
     svc_key: billingSvcKey(input.billingId, input.serviceName),
     billing_id: input.billingId,
@@ -248,7 +249,7 @@ export function buildSvcEntryRow(input: DutyDiaryDayRowInput, actorEmail?: strin
     partner_id: input.employeeId,
     date: input.isoDate,
     freq: input.freq || input.shiftType || "Daily",
-    amt: input.chargePerDay,
+    amt: roundMoney(input.chargePerDay),
     count: 1,
     disc,
     total,
@@ -267,7 +268,7 @@ export function buildPayoutChargeRow(input: DutyDiaryDayRowInput, actorEmail?: s
     partner_id: input.employeeId,
     date: input.isoDate,
     term: input.payoutTerm || "Daily",
-    amount: input.payoutPerDay,
+    amount: roundMoney(input.payoutPerDay),
     remarks: dutyDiaryRemarks(input.dutyId, input.isoDate, input.employeeId),
     duty_id: input.dutyId,
     ...(actorEmail ? { created_by: actorEmail, updated_by: actorEmail } : {})

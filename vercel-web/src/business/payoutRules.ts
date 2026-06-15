@@ -1,5 +1,6 @@
 import type { ApiResult } from "@/types/common";
 import { businessFailure, businessOk } from "@/business/businessResult";
+import { clampMoneyNonNegative, roundMoney } from "@/utils/money";
 import type { PayoutPermissionsDto } from "@/validation/payoutDto";
 import type { PayoutStatus } from "@/validation/payoutValidation";
 import { PAYOUT_CLOSED_STATUSES, PAYOUT_STATUSES } from "@/validation/payoutValidation";
@@ -30,7 +31,7 @@ export function computePayoutNet(
     Number(advance || 0) -
     Number(deduction || 0);
   // Net never negative — under-collection becomes a charge, not a refund.
-  return Math.round(Math.max(net, 0) * 100) / 100;
+  return clampMoneyNonNegative(net);
 }
 
 export interface MergedPayoutPatch {
@@ -355,7 +356,7 @@ export function sumPayoutTotals(rows: Array<Record<string, unknown>>): PayoutTot
   }
   // Round to 2dp.
   for (const k of Object.keys(t) as (keyof PayoutTotals)[]) {
-    t[k] = Math.round(Number(t[k]) * 100) / 100;
+    t[k] = roundMoney(t[k]);
   }
   return t;
 }

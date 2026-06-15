@@ -24,6 +24,7 @@ import { payoutRepository } from "@/database/payoutRepository";
 import { billingRepository } from "@/database/billingRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { sumServiceTotals, sumReceiptAmounts } from "@/business/billingRules";
+import { moneyOutstanding, roundMoney } from "@/utils/money";
 import { isPayoutLocked } from "@/business/payoutRules";
 import {
   dutyIdFromRemarks,
@@ -161,9 +162,9 @@ export async function getPatientBillingLedger(
     patient_id: patientId,
     period,
     duty_count: dutySvcRows.length,
-    billed: Math.round(billed * 100) / 100,
-    received: Math.round(received * 100) / 100,
-    outstanding: Math.max(0, Math.round((billed - received) * 100) / 100),
+    billed: roundMoney(billed),
+    received: roundMoney(received),
+    outstanding: moneyOutstanding(billed, received),
     source_row_ids: dutySvcRows.map((r) => String(r.id)).filter(Boolean)
   });
 }
