@@ -7,7 +7,11 @@ import {
   USER_UPDATE_ROLES
 } from "@/lib/api/crmRoles";
 import { toServiceContext } from "@/lib/api/serviceContext";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import {
+  userDeactivateResultDtoSchema,
+  userRowDtoSchema
+} from "@/validation/userDto";
 import { userService } from "@/services/userService";
 
 export const runtime = "nodejs";
@@ -18,14 +22,14 @@ type Params = { id: string };
 export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, [...USER_ADMIN_ROLES]);
   const result = await userService.getUser(params.id, toServiceContext(actor));
-  return respond(result);
+  return respondValidated(result, userRowDtoSchema);
 });
 
 export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   requireRole(actor, [...USER_UPDATE_ROLES]);
   const body = await parseJsonBody(req);
   const result = await userService.updateUser(params.id, body, toServiceContext(actor));
-  return respond(result);
+  return respondValidated(result, userRowDtoSchema);
 });
 
 export const PUT = PATCH;
@@ -33,5 +37,5 @@ export const PUT = PATCH;
 export const DELETE = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, [...USER_DEACTIVATE_ROLES]);
   const result = await userService.deactivateUser(params.id, toServiceContext(actor));
-  return respond(result);
+  return respondValidated(result, userDeactivateResultDtoSchema);
 });

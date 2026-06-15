@@ -88,7 +88,7 @@ describe("POST /api/v1/users", () => {
 
   it("creates for Admin", async () => {
     setActor(ACTORS.admin);
-    m.createUser.mockResolvedValue({ success: true, data: { id: "U1" } });
+    m.createUser.mockResolvedValue({ success: true, data: { id: "U1", username: "x" } });
     const req = makeRequest("POST", "/api/v1/users", {
       body: { email: "x@test.com", username: "x", role: "Staff" }
     });
@@ -127,7 +127,10 @@ describe("GET /api/v1/roles", () => {
 
   it("lists for Manager", async () => {
     setActor(ACTORS.manager);
-    m.listRoles.mockResolvedValue({ success: true, data: { rows: [{ name: "Staff" }] } });
+    m.listRoles.mockResolvedValue({
+      success: true,
+      data: { rows: [{ id: "ROL1", name: "Staff" }], total: 1 }
+    });
     const req = makeRequest("GET", "/api/v1/roles");
     const res = await RolesGet(req, ctx({}));
     await expectOkEnvelope(res);

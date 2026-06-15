@@ -70,7 +70,10 @@ describe("PUT /api/v1/settings/[key]", () => {
 
   it("allows Manager write", async () => {
     setActor(ACTORS.manager);
-    m.setKey.mockResolvedValue({ success: true, data: { key: "company" } });
+    m.setKey.mockResolvedValue({
+      success: true,
+      data: { key: "company", value: { name: "Hominal" } }
+    });
     const req = makeRequest("PUT", "/api/v1/settings/company", {
       body: { value: { name: "Hominal" } }
     });
@@ -105,7 +108,10 @@ describe("DELETE /api/v1/settings/[key]", () => {
 
   it("deletes for Admin", async () => {
     setActor(ACTORS.admin);
-    m.deleteKey.mockResolvedValue({ success: true, data: { key: "company" } });
+    m.deleteKey.mockResolvedValue({
+      success: true,
+      data: { key: "company", deleted: true as const }
+    });
     const req = makeRequest("DELETE", "/api/v1/settings/company");
     const res = await SettingsKeyDelete(req, ctx({ key: "company" }));
     await expectOkEnvelope(res);
@@ -120,7 +126,10 @@ describe("POST /api/v1/settings bulk", () => {
 
   it("bulk set for Manager", async () => {
     setActor(ACTORS.manager);
-    m.bulkSet.mockResolvedValue({ success: true, data: {} });
+    m.bulkSet.mockResolvedValue({
+      success: true,
+      data: [{ key: "company", value: { name: "X" } }]
+    });
     const req = makeRequest("POST", "/api/v1/settings", { body: { company: { name: "X" } } });
     const res = await SettingsPost(req, ctx({}));
     await expectOkEnvelope(res);

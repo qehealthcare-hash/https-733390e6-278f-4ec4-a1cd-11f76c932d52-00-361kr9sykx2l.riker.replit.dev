@@ -7,7 +7,12 @@ import {
   SETTINGS_WRITE_ROLES
 } from "@/lib/api/crmRoles";
 import { toServiceContext } from "@/lib/api/serviceContext";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respond, respondValidated } from "@/lib/api/apiResultBridge";
+import {
+  settingsDeleteResultDtoSchema,
+  settingsKeyValueDtoSchema,
+  settingsRowDtoSchema
+} from "@/validation/settingsDto";
 import { settingsService } from "@/services/settingsService";
 import { success } from "@/utils/apiResponse";
 
@@ -20,7 +25,7 @@ export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor })
   requireRole(actor, [...SETTINGS_READ_ROLES]);
   const result = await settingsService.getKey(params.key, toServiceContext(actor));
   if (!result.success) return respond(result);
-  return respond(success({ key: params.key, value: result.data }));
+  return respondValidated(success({ key: params.key, value: result.data }), settingsKeyValueDtoSchema);
 });
 
 export const PUT = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
@@ -31,11 +36,11 @@ export const PUT = withAuth<Params>(async (req: NextRequest, { params, actor }) 
       ? (body as { value: unknown }).value
       : body;
   const result = await settingsService.setKey(params.key, value, toServiceContext(actor));
-  return respond(result);
+  return respondValidated(result, settingsRowDtoSchema);
 });
 
 export const DELETE = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, [...SETTINGS_DELETE_ROLES]);
   const result = await settingsService.deleteKey(params.key, toServiceContext(actor));
-  return respond(result);
+  return respondValidated(result, settingsDeleteResultDtoSchema);
 });

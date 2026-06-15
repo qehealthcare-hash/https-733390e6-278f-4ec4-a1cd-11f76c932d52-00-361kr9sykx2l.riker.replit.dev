@@ -3,7 +3,11 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { USER_ADMIN_ROLES, USER_CREATE_ROLES } from "@/lib/api/crmRoles";
 import { toServiceContext } from "@/lib/api/serviceContext";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import {
+  userListResponseDtoSchema,
+  userRowDtoSchema
+} from "@/validation/userDto";
 import { userService } from "@/services/userService";
 
 export const runtime = "nodejs";
@@ -22,12 +26,12 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     },
     toServiceContext(actor)
   );
-  return respond(result);
+  return respondValidated(result, userListResponseDtoSchema);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, [...USER_CREATE_ROLES]);
   const body = await parseJsonBody(req);
   const result = await userService.createUser(body, toServiceContext(actor));
-  return respond(result, 201);
+  return respondValidated(result, userRowDtoSchema, 201);
 });
