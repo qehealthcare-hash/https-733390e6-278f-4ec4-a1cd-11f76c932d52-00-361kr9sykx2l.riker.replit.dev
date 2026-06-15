@@ -235,7 +235,13 @@ function PayoutsPageContent() {
       const data = await payoutsClient.pendingEmployees(session, { period: periodFilter });
       setUnpaidEmployees({
         period: data?.period || periodFilter,
-        rows: Array.isArray(data?.rows) ? data.rows : [],
+        rows: (Array.isArray(data?.rows) ? data.rows : []).map(function (row) {
+          return {
+            ...row,
+            payout_id: row.payout_id ?? undefined,
+            payout_status: row.payout_status ?? undefined
+          };
+        }),
         total_pending: Number(data?.total_pending || 0),
         loading: false,
         source: data?.source || "rpc",
@@ -296,14 +302,18 @@ function PayoutsPageContent() {
         entity_id: payoutId,
         limit: 100
       });
-      const rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
       // Oldest first so the PDF reads as a chronological audit log.
-      rows.sort(function (a: AuditTrailRow, b: AuditTrailRow) {
-        const at = new Date(a.created_at || 0).getTime();
-        const bt = new Date(b.created_at || 0).getTime();
-        return at - bt;
-      });
-      setAuditTrail(rows);
+      const sorted = rows
+        .map(function (row) {
+          return row as AuditTrailRow;
+        })
+        .sort(function (a: AuditTrailRow, b: AuditTrailRow) {
+          const at = new Date(a.created_at || 0).getTime();
+          const bt = new Date(b.created_at || 0).getTime();
+          return at - bt;
+        });
+      setAuditTrail(sorted);
     } catch (err: unknown) {
       setAuditTrail([]);
       setDetailError((err instanceof Error ? err.message : String(err)) || "Could not load accountability audit trail");

@@ -1,9 +1,21 @@
+/**
+ * Shared HTTP transport for the CRM browser client.
+ *
+ * `request` unwraps the canonical `{ success, data, error }` envelope.
+ * `requestValidated` additionally runs the payload through the same Zod
+ * read-model schemas used by `respondValidated()` on the server so wire
+ * contract drift is caught in the browser during development and staging.
+ */
+
+import type { ZodType } from "zod";
 import { appConfig } from "./config";
 import { dispatchDataInvalidated } from "./data-invalidation";
+import { parseOutput } from "@/validation/parseValidation";
 
 const offlineQueueKey = "hhcrm-offline-queue";
 const OFFLINE_RETRY_CAP = 5;
 export const OFFLINE_QUEUED_CODE = "offline_queued";
+export const CONTRACT_ERROR_CODE = "contract_error";
 
 export type ApiSession = { access_token?: string } | null | undefined;
 
@@ -233,6 +245,46 @@ export async function request<T = any>(
     }
     throw error;
   }
+}
+
+function contractError(path: string, validated: { error?: string; code?: string; details?: unknown }): ApiClientError {
+  const err: ApiClientError = new Error(
+    "API " + path + " returned data that failed contract validation"
+  );
+  err.code = CONTRACT_ERROR_CODE;
+  if (validated.details !== undefined) err.details = validated.details;
+  err.status = 500;
+  return err;
+}
+
+/** Parse an already-unwrapped payload with a Zod read-model schema. */
+export function validateApiPayload<T>(path: string, payload: unknown, schema: ZodType<T>): T {
+  const validated = parseOutput(schema, payload);
+  if (!validated.success) throw contractError(path, validated);
+  if (validated.data === undefined) {
+    throw contractError(path, { error: "Response validation returned no data" });
+  }
+  return validated.data;
+}
+
+export async function requestValidated<T>(
+  path: string,
+  options: ApiRequestOptions | null | undefined,
+  session: ApiSession,
+  schema: ZodType<T>
+): Promise<T> {
+  const payload = await request<unknown>(path, options, session);
+  return validateApiPayload(path, payload, schema);
+}
+
+export async function requestValidatedWithOfflineFallback<T>(
+  path: string,
+  options: ApiRequestOptions,
+  session: ApiSession,
+  schema: ZodType<T>
+): Promise<T> {
+  const payload = await requestWithOfflineFallback<unknown>(path, options, session);
+  return validateApiPayload(path, payload, schema);
 }
 
 function queueFingerprint(path: string, options: ApiRequestOptions): string {

@@ -648,16 +648,17 @@ export default function DutiesPage() {
           ids.map(async function (id) {
             try {
               const d = await dutiesClient.diary(session, id);
-              return [id, Array.isArray(d?.entries) ? d.entries : []];
+              const entries = Array.isArray(d?.entries) ? d.entries : [];
+              return [id, entries] as const;
             } catch (_err) {
-              return [id, []];
+              return [id, []] as const;
             }
           })
         );
         setDiaryByDuty(function (cur) {
           const next = { ...cur };
           pairs.forEach(function (p) {
-            next[p[0]] = p[1];
+            next[p[0]] = p[1] as DutyDiaryEntry[];
           });
           return next;
         });
@@ -905,22 +906,19 @@ export default function DutiesPage() {
       lookupsClient
         .patients(session)
         .then(function (rows) {
-          const arr = Array.isArray(rows) ? rows : rows?.rows || rows?.data || [];
-          setPatients(arr);
+          setPatients(rows);
         })
         .catch(function () { setPatients([]); });
       lookupsClient
         .employees(session)
         .then(function (rows) {
-          const arr = Array.isArray(rows) ? rows : rows?.rows || rows?.data || [];
-          setEmployees(arr);
+          setEmployees(rows);
         })
         .catch(function () { setEmployees([]); });
       lookupsClient
         .services(session)
         .then(function (rows) {
-          const arr = Array.isArray(rows) ? rows : rows?.rows || rows?.data || [];
-          setServices(arr);
+          setServices(rows);
         })
         .catch(function () { setServices([]); });
     },

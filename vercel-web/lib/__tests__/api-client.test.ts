@@ -1,0 +1,77 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import {
+  CONTRACT_ERROR_CODE,
+  requestValidated,
+  validateApiPayload
+} from "@/lib/api-client";
+
+const schema = z.object({
+  id: z.string(),
+  total: z.number().int().nonnegative()
+});
+
+const originalFetch = global.fetch;
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(body)
+  } as Response;
+}
+
+describe("api-client wire contract validation", () => {
+  beforeEach(() => {
+    global.fetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: { id: "PAT1", total: 3 }
+      })
+    );
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("validateApiPayload returns parsed data when schema matches", () => {
+    const data = validateApiPayload("/patients", { id: "PAT1", total: 3 }, schema);
+    expect(data).toEqual({ id: "PAT1", total: 3 });
+  });
+
+  it("validateApiPayload throws contract_error when schema mismatches", () => {
+    expect(() => validateApiPayload("/patients", { id: "PAT1", total: "bad" }, schema)).toThrowError(
+      /failed contract validation/i
+    );
+    try {
+      validateApiPayload("/patients", { id: "PAT1", total: "bad" }, schema);
+    } catch (error) {
+      expect((error as Error & { code?: string }).code).toBe(CONTRACT_ERROR_CODE);
+    }
+  });
+
+  it("requestValidated unwraps envelope and validates payload", async () => {
+    const data = await requestValidated("/patients", null, { access_token: "tok" }, schema);
+    expect(data).toEqual({ id: "PAT1", total: 3 });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/v1/patients",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer tok"
+        })
+      })
+    );
+  });
+
+  it("requestValidated surfaces API failure envelopes without validating data", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      jsonResponse({ success: false, error: "Forbidden", code: "forbidden" }, 403)
+    );
+    await expect(requestValidated("/patients", null, { access_token: "tok" }, schema)).rejects.toMatchObject({
+      message: "Forbidden",
+      code: "forbidden",
+      status: 403
+    });
+  });
+});

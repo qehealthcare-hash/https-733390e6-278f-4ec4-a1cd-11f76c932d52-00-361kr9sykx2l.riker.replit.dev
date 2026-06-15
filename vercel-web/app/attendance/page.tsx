@@ -248,7 +248,7 @@ export default function AttendancePage() {
       if (!session) return;
       setLoading(true);
       try {
-        const data = (await attendanceClient.range(
+        const data = await attendanceClient.range(
           session as import("@supabase/supabase-js").Session,
           {
             from: from || undefined,
@@ -256,8 +256,8 @@ export default function AttendancePage() {
             status: statusFilter || undefined,
             employee_id: employeeFilter || undefined
           }
-        )) as { rows?: AttendanceLogRow[]; summary?: AttendanceLogSummary };
-        setRows(Array.isArray(data?.rows) ? data.rows : []);
+        );
+        setRows(data.rows as unknown as AttendanceLogRow[]);
         setLogSummary(data?.summary || null);
         setError("");
       } catch (err: unknown) {

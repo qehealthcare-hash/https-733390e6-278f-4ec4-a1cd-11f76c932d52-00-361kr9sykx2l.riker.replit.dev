@@ -249,14 +249,9 @@ export default function BillingsPage() {
       lookupsClient
         .employees(auth.session)
         .then(function (rows) {
-          const arr = Array.isArray(rows)
-            ? rows
-            : (rows as { rows?: { id: string; name?: string; full_name?: string }[] })?.rows ||
-              (rows as { data?: { id: string; name?: string; full_name?: string }[] })?.data ||
-              [];
           const map: Record<string, string> = {};
-          arr.forEach(function (e) {
-            map[e.id] = e.name || e.full_name || e.id;
+          rows.forEach(function (e) {
+            map[e.id] = e.full_name || e.id;
           });
           setEmployeeNameById(map);
         })

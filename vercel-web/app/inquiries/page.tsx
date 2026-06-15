@@ -197,7 +197,7 @@ export default function InquiriesPage() {
       .employees(session)
       .then(function (rows) {
         if (cancelled) return;
-        setEmployees(Array.isArray(rows) ? rows : rows?.rows || rows?.data || []);
+        setEmployees(rows);
       })
       .catch(function (lookupError) {
         if (cancelled) return;
