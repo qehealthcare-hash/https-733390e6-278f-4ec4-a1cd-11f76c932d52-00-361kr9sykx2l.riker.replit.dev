@@ -1,4 +1,8 @@
-import { request, type ApiSession } from "./api-client";
+import { requestValidated, type ApiSession } from "./api-client";
+import {
+  signedDownloadUrlDtoSchema,
+  signedUploadUrlDtoSchema
+} from "@/validation/storageDto";
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const ALLOWED_MIME = new Set([
@@ -20,15 +24,11 @@ export type StoredDocument = {
   uploaded_at?: string;
 };
 
-type SignedUploadResponse = {
-  path?: string;
-  token?: string;
-};
-
 type SignedDownloadResponse = {
-  signedUrl?: string;
-  bucket?: string;
-  path?: string;
+  signedUrl: string;
+  bucket: string;
+  path: string;
+  expires_in: number;
 };
 
 export type UploadSupabaseClient = {
@@ -99,9 +99,9 @@ export async function uploadDocument(options: UploadDocumentOptions): Promise<St
     throw new Error("uploadDocument requires `resource` and `resourceId` (P1-36)");
   }
 
-  let signed: SignedUploadResponse;
+  let signed: { path: string; token: string };
   try {
-    signed = await request<SignedUploadResponse>(
+    signed = await requestValidated(
       "/uploads/signed-url",
       {
         method: "POST",
@@ -113,7 +113,8 @@ export async function uploadDocument(options: UploadDocumentOptions): Promise<St
           resourceId
         }
       },
-      options.session
+      options.session,
+      signedUploadUrlDtoSchema
     );
   } catch (err: unknown) {
     const serverMessage = err instanceof Error ? err.message : "could not get upload URL";
@@ -172,12 +173,13 @@ export async function getDocumentSignedUrl(
   if (opts?.download && fileName) {
     body.download_as = String(fileName);
   }
-  const data = await request<SignedDownloadResponse>(
+  const data = await requestValidated(
     "/uploads/signed-download",
     { method: "POST", body },
-    session
+    session,
+    signedDownloadUrlDtoSchema
   );
-  return data?.signedUrl ? data : null;
+  return data.signedUrl ? data : null;
 }
 
 export function isImageDocument(

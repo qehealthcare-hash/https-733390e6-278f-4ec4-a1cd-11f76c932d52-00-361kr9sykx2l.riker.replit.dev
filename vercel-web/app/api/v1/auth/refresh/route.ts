@@ -2,6 +2,8 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { jsonError } from "@/lib/api/errors";
 import { success } from "@/utils/apiResponse";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { refreshSessionDtoSchema } from "@/validation/authDto";
 import { env } from "@/lib/api/env";
 import {
   attachRefreshCookie,
@@ -63,15 +65,15 @@ export async function POST(req: NextRequest) {
     }
 
     const nextRefresh = tokenBody.refresh_token || refreshToken;
-    const response = NextResponse.json(
+    const response = respondValidated(
       success({
         access_token: tokenBody.access_token,
         expires_in: tokenBody.expires_in,
         expires_at: tokenBody.expires_at
-      })
+      }),
+      refreshSessionDtoSchema
     );
-    attachRefreshCookie(response, nextRefresh, tokenBody.expires_in);
-    return response;
+    return attachRefreshCookie(response, nextRefresh, tokenBody.expires_in);
   } catch (err) {
     return jsonError(err);
   }

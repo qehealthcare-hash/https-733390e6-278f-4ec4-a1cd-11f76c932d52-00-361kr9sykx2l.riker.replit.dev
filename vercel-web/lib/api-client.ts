@@ -11,6 +11,7 @@ import type { ZodType } from "zod";
 import { appConfig } from "./config";
 import { dispatchDataInvalidated } from "./data-invalidation";
 import { parseOutput } from "@/validation/parseValidation";
+import { refreshSessionDtoSchema } from "@/validation/authDto";
 
 const offlineQueueKey = "hhcrm-offline-queue";
 const OFFLINE_RETRY_CAP = 5;
@@ -24,6 +25,8 @@ export type ApiRequestOptions = {
   headers?: Record<string, string>;
   body?: unknown;
   signal?: AbortSignal;
+  /** Required for routes that clear HttpOnly cookies (e.g. logout). */
+  credentials?: RequestCredentials;
 };
 
 type ApiClientError = Error & {
@@ -37,10 +40,6 @@ type OfflineQueueEntry = {
   options: ApiRequestOptions;
   attempts?: number;
   queued_at?: number;
-};
-
-type RefreshResponse = {
-  access_token?: string;
 };
 
 function fnv1aHex(input: string): string {
@@ -135,8 +134,10 @@ async function refreshSessionFromCookie(): Promise<string | null> {
     return {};
   })) as Record<string, unknown>;
   if (!res.ok || json?.success === false) return null;
-  const data = (json?.data || json) as RefreshResponse;
-  return data.access_token || null;
+  const payload = json?.data !== undefined ? json.data : json;
+  const validated = parseOutput(refreshSessionDtoSchema, payload);
+  if (!validated.success || !validated.data?.access_token) return null;
+  return validated.data.access_token;
 }
 
 async function fetchApi(
@@ -164,7 +165,8 @@ async function fetchApi(
     method,
     headers,
     body: options?.body ? JSON.stringify(options.body) : undefined,
-    signal: options?.signal
+    signal: options?.signal,
+    credentials: options?.credentials
   });
 }
 

@@ -1,10 +1,11 @@
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 import { z } from "zod";
 import { parseJsonBody } from "@/lib/api/handler";
 import { enforceRateLimitPersistent } from "@/lib/api/security";
 import { badRequest, jsonError, unauthorized } from "@/lib/api/errors";
 import { success } from "@/utils/apiResponse";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { loginSessionDtoSchema } from "@/validation/authDto";
 import { env } from "@/lib/api/env";
 import { attachRefreshCookie } from "@/lib/auth/refreshCookie";
 
@@ -120,16 +121,17 @@ export async function POST(req: NextRequest) {
     if (!tokenRes.ok || !tokenBody?.access_token) {
       throw unauthorized(tokenBody.error_description || tokenBody.msg || "Invalid username or password");
     }
-    const response = NextResponse.json(
+    const response = respondValidated(
       success({
         access_token: tokenBody.access_token,
         expires_in: tokenBody.expires_in,
         expires_at: tokenBody.expires_at,
         user: tokenBody.user
-      })
+      }),
+      loginSessionDtoSchema
     );
     if (tokenBody.refresh_token) {
-      attachRefreshCookie(response, tokenBody.refresh_token, tokenBody.expires_in);
+      return attachRefreshCookie(response, tokenBody.refresh_token, tokenBody.expires_in);
     }
     return response;
   } catch (err) {

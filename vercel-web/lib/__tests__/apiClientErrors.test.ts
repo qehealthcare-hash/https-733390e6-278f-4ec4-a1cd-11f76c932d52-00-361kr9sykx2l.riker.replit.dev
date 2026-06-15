@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { apiErrorMessage, isApiConflictError } from "@/lib/apiClientErrors";
+import { CONTRACT_ERROR_CODE } from "@/lib/api-client";
+import { apiErrorMessage, isApiConflictError, isApiContractError } from "@/lib/apiClientErrors";
 
 describe("apiClientErrors", () => {
+  it("detects contract errors by code", () => {
+    expect(isApiContractError({ code: CONTRACT_ERROR_CODE })).toBe(true);
+    expect(isApiContractError({ code: "conflict" })).toBe(false);
+  });
+
   it("detects conflict errors by code", () => {
     expect(isApiConflictError({ code: "conflict" })).toBe(true);
     expect(isApiConflictError({ code: "validation_error" })).toBe(false);

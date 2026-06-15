@@ -97,17 +97,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     async function refreshSessionFromCookie(): Promise<AuthSession> {
-      const res = await fetch("/api/v1/auth/refresh", {
-        method: "POST",
-        credentials: "include"
-      });
-      const json = (await res.json().catch(function () {
-        return {};
-      })) as Record<string, unknown>;
-      if (!res.ok || json?.success === false) return null;
-      const tokens = (json?.data || json) as { access_token?: string };
-      if (!tokens.access_token) return null;
-      return { access_token: tokens.access_token };
+      try {
+        const tokens = await authClient.refresh();
+        if (!tokens.access_token) return null;
+        return { access_token: tokens.access_token };
+      } catch {
+        return null;
+      }
     }
 
     async function bootstrap() {
@@ -203,30 +199,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     profileError,
     syncLabel,
     async signIn(identifier, password) {
-      const res = await fetch("/api/v1/auth/login", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier, password })
-      });
-      const json = (await res.json().catch(function () {
-        return {};
-      })) as Record<string, unknown>;
-      if (!res.ok || json?.success === false) {
-        const err = new Error(String(json?.error || "Invalid username or password")) as Error & {
+      let tokens;
+      try {
+        tokens = await authClient.login(identifier, password);
+      } catch (err: unknown) {
+        const apiErr = err as Error & { code?: string; details?: unknown; status?: number };
+        const wrapped = new Error(apiErr.message || "Invalid username or password") as Error & {
           code?: string;
           details?: unknown;
           status?: number;
         };
-        if (json?.code) err.code = String(json.code);
-        if (json?.details !== undefined) err.details = json.details;
-        err.status = res.status;
-        throw err;
+        if (apiErr.code) wrapped.code = apiErr.code;
+        if (apiErr.details !== undefined) wrapped.details = apiErr.details;
+        if (apiErr.status) wrapped.status = apiErr.status;
+        throw wrapped;
       }
-      const tokens = (json?.data || json) as {
-        access_token?: string;
-        user?: unknown;
-      };
       if (!tokens.access_token) {
         throw new Error("Login succeeded but no access token was returned");
       }
@@ -255,15 +242,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentToken = sessionRef.current?.access_token;
       if (currentToken) {
         try {
-          await fetch("/api/v1/auth/logout", {
-            method: "POST",
-            credentials: "include",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: "Bearer " + currentToken
-            },
-            body: JSON.stringify({ scope: "global" })
-          });
+          await authClient.logout({ access_token: currentToken }, "global");
         } catch {
           /* server-side revoke is best-effort */
         }
