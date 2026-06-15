@@ -40,3 +40,18 @@ export function parseInput<T>(schema: ZodType<T>, input: unknown): ApiResult<T> 
   }
   return { success: true, data: result.data };
 }
+
+/** Parse service output with a Zod schema before serializing to the client. */
+export function parseOutput<T>(schema: ZodType<T>, output: unknown): ApiResult<T> {
+  const result = schema.safeParse(output);
+  if (!result.success) {
+    const flat = result.error.flatten();
+    return {
+      success: false,
+      error: "Response validation failed",
+      code: "internal_error",
+      details: flat
+    };
+  }
+  return { success: true, data: result.data };
+}

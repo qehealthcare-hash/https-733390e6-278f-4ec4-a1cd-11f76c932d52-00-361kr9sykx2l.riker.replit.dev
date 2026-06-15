@@ -40,6 +40,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { dutyDetailFixture } from "@/test/dutyDetailFixture";
 import { dutyService } from "@/services/dutyService";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
 
@@ -65,7 +66,10 @@ describe("GET /api/v1/duties/[id]", () => {
 
   it("permits Supervisor (M7 read parity)", async () => {
     setActor({ ...ACTORS.staff, role: "Supervisor", email: "supervisor@test.local" });
-    mDuty.getById.mockResolvedValue({ success: true, data: { id: "DUTY1" } });
+    mDuty.getById.mockResolvedValue({
+      success: true,
+      data: dutyDetailFixture({ id: "DUTY1" })
+    });
     const req = makeRequest("GET", "/api/v1/duties/DUTY1");
     const res = await DutyGet(req, ctx({ id: "DUTY1" }));
     await expectOkEnvelope(res);
@@ -120,7 +124,10 @@ describe("GET /api/v1/duties/[id]/diary", () => {
 
   it("forwards to dutyDiaryService.listDays", async () => {
     setActor(ACTORS.staff);
-    mDiary.listDays.mockResolvedValue({ success: true, data: { entries: [] } });
+    mDiary.listDays.mockResolvedValue({
+      success: true,
+      data: { duty_id: "DUTY1", entries: [] }
+    });
     const req = makeRequest("GET", "/api/v1/duties/DUTY1/diary");
     const res = await DutyDiaryGet(req, ctx({ id: "DUTY1" }));
     await expectOkEnvelope(res);

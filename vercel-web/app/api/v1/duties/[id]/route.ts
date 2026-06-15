@@ -8,7 +8,8 @@ import {
   DUTY_WRITE_ROLES
 } from "@/business/rbac";
 import { dutyService } from "@/services/dutyService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { dutyDetailDtoSchema, dutyHardDeleteResponseDtoSchema } from "@/validation/dutyDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,14 +19,14 @@ type Params = { id: string };
 export const GET = withAuth<Params>(async (_req, { params, actor }) => {
   requireRole(actor, DUTY_READ_ROLES);
   const result = await dutyService.getById(params.id, { actor });
-  return respond(result);
+  return respondValidated(result, dutyDetailDtoSchema);
 });
 
 export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   requireRole(actor, DUTY_WRITE_ROLES);
   const body = await parseJsonBody(req);
   const result = await dutyService.update(params.id, body, { actor });
-  return respond(result);
+  return respondValidated(result, dutyDetailDtoSchema);
 });
 
 export const PUT = PATCH;
@@ -43,7 +44,7 @@ export const DELETE = withAuth<Params>(async (req: NextRequest, { params, actor 
   if (hard) {
     requireRole(actor, DUTY_DELETE_ROLES);
     const result = await dutyService.hardDelete(params.id, { actor });
-    return respond(result);
+    return respondValidated(result, dutyHardDeleteResponseDtoSchema);
   }
 
   requireRole(actor, DUTY_CANCEL_ROLES);
@@ -55,5 +56,5 @@ export const DELETE = withAuth<Params>(async (req: NextRequest, { params, actor 
   }
   const reason = (body.reason as string) || url.searchParams.get("reason") || "";
   const result = await dutyService.cancel(params.id, { reason }, { actor });
-  return respond(result);
+  return respondValidated(result, dutyDetailDtoSchema);
 });

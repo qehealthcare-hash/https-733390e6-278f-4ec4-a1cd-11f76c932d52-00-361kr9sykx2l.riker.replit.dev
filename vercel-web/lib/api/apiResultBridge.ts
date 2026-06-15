@@ -9,10 +9,12 @@
  */
 
 import type { NextResponse } from "next/server";
+import type { ZodType } from "zod";
 import type { ApiResult } from "@/types/common";
 import { ErrorCodes } from "@/types/common";
 import { ApiError } from "@/lib/api/errors";
 import { toNextResponse } from "@/utils/apiResponse";
+import { parseOutput } from "@/validation/parseValidation";
 
 function statusFor(code: string | undefined): number {
   switch (code) {
@@ -47,6 +49,26 @@ export function respond<T>(result: ApiResult<T>, successStatus = 200): NextRespo
     return toNextResponse(result, { status: successStatus });
   }
   return toNextResponse(result);
+}
+
+/**
+ * Validate successful service payloads against a Zod read-model schema
+ * before returning them on the wire. Failures are logged and returned as
+ * `internal_error` so contract drift is caught in CI/staging, not silently
+ * shipped to the UI.
+ */
+export function respondValidated<T>(
+  result: ApiResult<unknown>,
+  schema: ZodType<T>,
+  successStatus = 200
+): NextResponse {
+  if (!result.success) return respond(result);
+  const validated = parseOutput(schema, result.data);
+  if (!validated.success) {
+    console.error("[api] response validation failed", validated.details);
+    return respond(validated);
+  }
+  return respond({ success: true, data: validated.data }, successStatus);
 }
 
 /** @deprecated Alias for `respond` — same canonical envelope. */

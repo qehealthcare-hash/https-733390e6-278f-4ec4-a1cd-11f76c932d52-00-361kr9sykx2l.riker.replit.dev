@@ -27,6 +27,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { billingTotalsFixture, payoutTotalsFixture } from "@/test/reportTotalsFixture";
 import { reportService } from "@/services/reportService";
 
 import { GET as BillingTotalsGet } from "../../../app/api/v1/reports/billing-totals/route";
@@ -47,7 +48,7 @@ describe("GET /api/v1/reports/billing-totals", () => {
     setActor({ ...ACTORS.staff, role: "Executive", email: "executive@hominal.test" });
     m.billingTotals.mockResolvedValue({
       success: true,
-      data: { period: "2026-05", service_total: 1000 }
+      data: billingTotalsFixture({ service_total: 1000 })
     });
     const req = makeRequest("GET", "/api/v1/reports/billing-totals?period=2026-05");
     const res = await BillingTotalsGet(req, ctx({}));
@@ -74,7 +75,7 @@ describe("GET /api/v1/reports/payout-totals", () => {
     setActor(ACTORS.accountant);
     m.payoutTotals.mockResolvedValue({
       success: true,
-      data: { period: "2026-05", gross: 5000, net: 4500 }
+      data: payoutTotalsFixture({ gross: 5000, net: 4500 })
     });
     const req = makeRequest("GET", "/api/v1/reports/payout-totals?period=2026-05");
     const res = await PayoutTotalsGet(req, ctx({}));

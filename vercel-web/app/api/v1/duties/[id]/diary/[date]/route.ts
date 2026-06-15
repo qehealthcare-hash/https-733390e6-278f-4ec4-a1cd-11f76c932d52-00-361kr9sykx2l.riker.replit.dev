@@ -4,7 +4,11 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { DUTY_DIARY_WRITE_ROLES } from "@/business/rbac";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import {
+  diaryDayDeleteResponseDtoSchema,
+  diaryDayPatchResponseDtoSchema
+} from "@/validation/dutyDto";
 import { badRequest } from "@/lib/api/errors";
 
 export const runtime = "nodejs";
@@ -95,7 +99,7 @@ export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }
     },
     { actor }
   );
-  return respond(result);
+  return respondValidated(result, diaryDayPatchResponseDtoSchema);
 });
 
 /**
@@ -115,5 +119,5 @@ export const DELETE = withAuth<Params>(async (req: NextRequest, { params, actor 
   if (!employeeId) throw badRequest("employee_id is required");
 
   const result = await dutyDiaryService.deleteDay(params.id, params.date, employeeId, { actor });
-  return respond(result);
+  return respondValidated(result, diaryDayDeleteResponseDtoSchema);
 });

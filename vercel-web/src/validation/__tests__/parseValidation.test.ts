@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { parseInput } from "@/validation/parseValidation";
+import { parseInput, parseOutput } from "@/validation/parseValidation";
 
 /**
  * `parseInput` is the single chokepoint every service uses to turn unknown
@@ -66,5 +66,23 @@ describe("parseInput — human-readable error summary", () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.data).toEqual({ name: "ok" });
+  });
+});
+
+describe("parseOutput — wire contract validation", () => {
+  it("returns internal_error when output drifts from schema", () => {
+    const schema = z.object({ total: z.number() });
+    const result = parseOutput(schema, { total: "not-a-number" });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.code).toBe("internal_error");
+  });
+
+  it("returns parsed data on success", () => {
+    const schema = z.object({ period: z.string(), pending: z.number() });
+    const result = parseOutput(schema, { period: "2026-05", pending: 0 });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.pending).toBe(0);
   });
 });

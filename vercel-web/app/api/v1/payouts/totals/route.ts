@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { PAYOUT_READ_ROLES } from "@/lib/api/payoutRoles";
 import { reportService } from "@/services/reportService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respond, respondValidated } from "@/lib/api/apiResultBridge";
+import { payoutTotalsReportDtoSchema } from "@/validation/reportDto";
 import { ErrorCodes } from "@/types/common";
 
 export const runtime = "nodejs";
@@ -26,5 +27,5 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     });
   }
   const result = await reportService.payoutTotals({ period }, { actor });
-  return respond(result);
+  return respondValidated(result, payoutTotalsReportDtoSchema);
 });

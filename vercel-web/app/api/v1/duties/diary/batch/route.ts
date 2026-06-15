@@ -3,9 +3,10 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { DUTY_DIARY_BATCH_ROLES } from "@/business/rbac";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respond, respondValidated } from "@/lib/api/apiResultBridge";
 import { parseInput } from "@/validation/parseValidation";
 import { dutyDiaryBatchSchema } from "@/validation/dutyValidation";
+import { diaryBatchResponseDtoSchema } from "@/validation/dutyDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,5 +26,5 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   if (!parsed.success || !parsed.data) return respond(parsed);
   const ids = parsed.data.duty_ids ?? [];
   const result = await dutyDiaryService.listDaysBatch(ids, { actor });
-  return respond(result);
+  return respondValidated(result, diaryBatchResponseDtoSchema);
 });

@@ -45,3 +45,59 @@ export type DutyDetailDto = z.infer<typeof dutyDetailDtoSchema>;
 export function parseDutyDetailDto(data: unknown) {
   return dutyDetailDtoSchema.safeParse(data);
 }
+
+export const dutyListResponseDtoSchema = z.object({
+  rows: z.array(dutyRowDtoSchema),
+  total: z.number().int().nonnegative()
+});
+export type DutyListResponseDto = z.infer<typeof dutyListResponseDtoSchema>;
+
+export const diaryListEntryDtoSchema = z
+  .object({
+    date: z.string(),
+    employee_id: z.string(),
+    partner: z.string(),
+    charge: z.number(),
+    payout: z.number(),
+    manual: z.boolean(),
+    svc_id: z.string().nullable(),
+    payout_id: z.string().nullable(),
+    svc_updated_at: z.string().optional(),
+    payout_updated_at: z.string().optional()
+  })
+  .passthrough();
+
+export const diaryListResultDtoSchema = z.object({
+  duty_id: z.string(),
+  entries: z.array(diaryListEntryDtoSchema),
+  error: z.string().optional()
+});
+export type DiaryListResultDto = z.infer<typeof diaryListResultDtoSchema>;
+
+export const diaryBatchResponseDtoSchema = z.record(z.string(), diaryListResultDtoSchema);
+export type DiaryBatchResponseDto = z.infer<typeof diaryBatchResponseDtoSchema>;
+
+/** DELETE /duties/:id?hard=1 — soft-delete acknowledgement (not a full duty row). */
+export const dutyHardDeleteResponseDtoSchema = z.object({
+  id: idSchema,
+  deleted: z.literal(true)
+});
+export type DutyHardDeleteResponseDto = z.infer<typeof dutyHardDeleteResponseDtoSchema>;
+
+/** PATCH /duties/:id/diary/:date response body. */
+export const diaryDayPatchResponseDtoSchema = z.object({
+  svc_updated: z.boolean(),
+  payout_updated: z.boolean(),
+  manual: z.boolean(),
+  partner_changed: z.boolean(),
+  employee_id: z.string(),
+  promoted_partner: z.boolean()
+});
+export type DiaryDayPatchResponseDto = z.infer<typeof diaryDayPatchResponseDtoSchema>;
+
+/** DELETE /duties/:id/diary/:date response body. */
+export const diaryDayDeleteResponseDtoSchema = z.object({
+  svc_deleted: z.boolean(),
+  payout_deleted: z.boolean()
+});
+export type DiaryDayDeleteResponseDto = z.infer<typeof diaryDayDeleteResponseDtoSchema>;

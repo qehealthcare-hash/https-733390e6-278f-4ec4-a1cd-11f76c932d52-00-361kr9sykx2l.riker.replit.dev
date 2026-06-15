@@ -56,6 +56,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { dutyDetailFixture } from "@/test/dutyDetailFixture";
 import { patientService } from "@/services/patientService";
 import { billingService } from "@/services/billingService";
 import { dutyService } from "@/services/dutyService";
@@ -218,7 +219,7 @@ describe("E2E lifecycle — duty creation and cancellation", () => {
   it("creates a duty, then cancels it, with the appropriate roles", async () => {
     dut.create.mockResolvedValue({
       success: true,
-      data: { id: "DUTY1", status: "SCHEDULED" }
+      data: dutyDetailFixture({ id: "DUTY1" })
     });
     const createRes = await DutiesPost(
       makeRequest("POST", "/api/v1/duties", {

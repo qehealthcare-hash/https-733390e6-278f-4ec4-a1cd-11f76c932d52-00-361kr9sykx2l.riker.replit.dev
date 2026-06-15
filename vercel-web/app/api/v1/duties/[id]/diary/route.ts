@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { DUTY_READ_ROLES } from "@/business/rbac";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { diaryListResultDtoSchema } from "@/validation/dutyDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,5 +21,5 @@ type Params = { id: string };
 export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, DUTY_READ_ROLES);
   const result = await dutyDiaryService.listDays(params.id, { actor });
-  return respond(result);
+  return respondValidated(result, diaryListResultDtoSchema);
 });

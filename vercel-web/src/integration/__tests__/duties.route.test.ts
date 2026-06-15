@@ -38,6 +38,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { dutyDetailFixture } from "@/test/dutyDetailFixture";
 import { dutyService } from "@/services/dutyService";
 
 import {
@@ -105,7 +106,10 @@ describe("POST /api/v1/duties", () => {
 
   it("creates a duty and returns 201", async () => {
     setActor(ACTORS.staff);
-    m.create.mockResolvedValue({ success: true, data: { id: "DUTY1" } });
+    m.create.mockResolvedValue({
+      success: true,
+      data: dutyDetailFixture({ id: "DUTY1" })
+    });
     const req = makeRequest("POST", "/api/v1/duties", {
       body: {
         patient_id: "PAT1",
@@ -173,7 +177,7 @@ describe("DELETE /api/v1/duties/[id]", () => {
     setActor(ACTORS.manager);
     m.cancel.mockResolvedValue({
       success: true,
-      data: { id: "DUTY1", status: "CANCELLED" }
+      data: dutyDetailFixture({ id: "DUTY1", status: "CANCELLED" })
     });
     const req = makeRequest("DELETE", "/api/v1/duties/DUTY1?reason=customer-cancel");
     const res = await DutyDelete(req, ctx({ id: "DUTY1" }));
@@ -196,7 +200,7 @@ describe("DELETE /api/v1/duties/[id]", () => {
 
   it("hard-deletes when Admin invokes ?hard=1", async () => {
     setActor(ACTORS.admin);
-    m.hardDelete.mockResolvedValue({ success: true, data: { id: "DUTY1", removed: true } });
+    m.hardDelete.mockResolvedValue({ success: true, data: { id: "DUTY1", deleted: true } });
     const req = makeRequest("DELETE", "/api/v1/duties/DUTY1?hard=1");
     const res = await DutyDelete(req, ctx({ id: "DUTY1" }));
     await expectOkEnvelope(res);
