@@ -31,9 +31,6 @@ import {
   billingEditSchema,
   billingLegacySyncSchema,
   receiptSchema,
-  replaceServiceEntriesSchema,
-  generateFromDutySchema,
-  generateFromDutyRangeSchema,
   generateInvoiceSchema,
   finalInvoiceSchema,
   billingListQuerySchema,
@@ -44,9 +41,6 @@ import {
   type BillingEditInput,
   type BillingLegacySyncInput,
   type ReceiptInput,
-  type ReplaceServiceEntriesInput,
-  type GenerateFromDutyInput,
-  type GenerateFromDutyRangeInput,
   type GenerateInvoiceInput,
   type FinalInvoiceInput,
   type BillingListQuery,
@@ -64,28 +58,20 @@ import {
   canSoftDeleteReceipt
 } from "@/business/billingMutationRules";
 import {
-  amountForShift,
   billingCloseRow,
   billingPauseRow,
-  billingPeriodOf,
   billingStatusRow,
-  buildServiceEntryFromDuty,
   buildBillingPermissions,
-  canBillDuty,
   canCloseBilling,
   canEditBilling,
   derivePaidStatus,
-  billingPeriodsFromDates,
   invoiceOutstanding,
   type BillingPaidStatus,
   canReopenBilling,
   canTransitionTo,
   computeBillingTotals,
-  dutyInPeriod,
-  dutyServiceDate,
   isBillingClosed,
   periodFromServices,
-  serviceKey,
   type BillingTotals
 } from "@/business/billingRules";
 import {
@@ -96,7 +82,6 @@ import {
 import type { BillingPermissionsDto } from "@/validation/billingDto";
 import { parseBillingSummaryDto } from "@/validation/billingDto";
 import { assertNotStale } from "@/business/concurrencyRules";
-import { businessFailure, businessOk } from "@/business/businessResult";
 import { monthRangeUTC } from "@/business/dateRules";
 import { receiptInYmdRange } from "@/business/reportRules";
 import { newId } from "@/business/idRules";
@@ -106,7 +91,11 @@ import { patientRepository } from "@/database/patientRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import { dutyDayLedger } from "@/services/dutyDayLedger";
-import { findDutyLedgerRows } from "@/business/dutyDiaryRules";
+import {
+  DUTY_CALENDAR_BILLING_GENERATE_DISABLED_MESSAGE,
+  DUTY_CALENDAR_LEDGER_REPLACE_DISABLED_MESSAGE,
+  dutyCalendarSotFailure
+} from "@/business/dutySourceOfTruth";
 import { crmTodayIso } from "@/utils/crmToday";
 import type { JsonRow } from "@/database/types";
 import {
@@ -412,27 +401,6 @@ export interface BillingWithTotals {
   } | null;
   /** Server-derived UI gates — billings page should read these, not re-derive status rules. */
   permissions: BillingPermissionsDto;
-}
-
-/** Refuse svc mutations for months that already have a MONTHLY invoice. */
-async function assertNoMonthlyInvoiceLock(
-  billingId: string,
-  dates: string[],
-  access: ReturnType<typeof dbAccess>
-): Promise<ApiResult<null>> {
-  const periods = billingPeriodsFromDates(dates);
-  for (const period of periods) {
-    const existing = await billingRepository.findInvoiceForPeriod(billingId, period, access);
-    if (!existing.success) return passFailure(existing);
-    if (existing.data) {
-      const invNo = String(existing.data.invoice_no || existing.data.id);
-      return businessFailure(
-        `Period ${period} already has invoice ${invNo} — delete or regenerate that invoice before changing service entries`,
-        { period, invoice_id: existing.data.id, invoice_no: invNo }
-      );
-    }
-  }
-  return businessOk();
 }
 
 /**
@@ -1500,8 +1468,8 @@ export const billingService = {
   // ─────────────────────────────────────────────────────────────────────
 
   async generateFromDuty(
-    rawInput: unknown,
-    ctx: BillingServiceContext
+    _rawInput: unknown,
+    _ctx: BillingServiceContext
   ): Promise<
     ApiResult<{
       billing_id: string;
@@ -1510,180 +1478,16 @@ export const billingService = {
       totals: BillingTotals;
     }>
   > {
-    const parsed = parseInput(generateFromDutySchema, rawInput);
-    if (!parsed.success) return passFailure(parsed);
-    const input = parsed.data as GenerateFromDutyInput;
-    const access = dbAccess(ctx);
-
-    const duty = await dutyRepository.findById(input.duty_id, access);
-    if (!duty.success) return passFailure(duty);
-    if (!duty.data) return notFoundFailure("Duty", input.duty_id);
-
-    const dutyRow = duty.data;
-    if (!dutyInPeriod(String(dutyRow.start_at || ""), input.period)) {
-      return failure(
-        `Duty is outside the requested billing period ${input.period}`,
-        ErrorCodes.badRequest,
-        { duty_period: billingPeriodOf(String(dutyRow.start_at || "")), requested: input.period }
-      );
-    }
-
-    // Pre-check duty linkage — if already linked, refuse if the linked bill is Closed.
-    let linkedStatus: string | null = null;
-    if (dutyRow.billing_id) {
-      const linked = await billingRepository.findBillingById(
-        String(dutyRow.billing_id),
-        access
-      );
-      if (!linked.success) return passFailure(linked);
-      linkedStatus = String(linked.data?.status || "");
-    }
-    const linkGuard = canBillDuty(
-      {
-        billing_id: (dutyRow.billing_id as string | null) ?? null,
-        status: (dutyRow.status as string | null) ?? null,
-        patient_id: (dutyRow.patient_id as string | null) ?? null
-      },
-      linkedStatus
-    );
-    if (!linkGuard.success) {
-      return failure(linkGuard.error || "Cannot bill duty", linkGuard.code, linkGuard.details);
-    }
-
-    // Already-linked + active bill: return the existing svc entry (duplicate=true).
-    if (dutyRow.billing_id) {
-      const dup = await billingRepository.findSvcByDutyRemark(
-        String(dutyRow.billing_id),
-        String(dutyRow.id),
-        access
-      );
-      if (!dup.success) return passFailure(dup);
-      if (dup.data) {
-        const totals = await loadBundleWithTotals(String(dutyRow.billing_id), ctx);
-        if (!totals.success) {
-          return failure(totals.error || "Refetch failed", totals.code, totals.details);
-        }
-        return success({
-          billing_id: String(dutyRow.billing_id),
-          svc_entry: dup.data,
-          duplicate: true,
-          totals: totals.data.totals
-        });
-      }
-    }
-
-    const ensured = await ensureActiveBilling(String(dutyRow.patient_id), ctx);
-    if (!ensured.success) {
-      return failure(ensured.error || "Could not ensure billing", ensured.code, ensured.details);
-    }
-    const billingRow = ensured.data;
-    const billingId = String(billingRow.id);
-
-    const editGuard = canEditBilling(String(billingRow.status || ""));
-    if (!editGuard.success) {
-      return failure(
-        editGuard.error || "Active bill is locked",
-        editGuard.code,
-        editGuard.details
-      );
-    }
-
-    // Per-billing duplicate guard (date + service_name) — protects against
-    // two duties on the same day overwriting each other in the UI.
-    const sameDay = await billingRepository.findSvcDuplicate(
-      billingId,
-      dutyServiceDate(String(dutyRow.start_at || "")),
-      input.service_name,
-      access
-    );
-    if (!sameDay.success) return passFailure(sameDay);
-    if (sameDay.data) {
-      // If that duplicate is for *this* duty, treat as idempotent.
-      const sameDuty = await billingRepository.findSvcByDutyRemark(
-        billingId,
-        String(dutyRow.id),
-        access
-      );
-      if (sameDuty.success && sameDuty.data) {
-        const totals = await loadBundleWithTotals(billingId, ctx);
-        if (!totals.success) {
-          return failure(totals.error || "Refetch failed", totals.code, totals.details);
-        }
-        return success({
-          billing_id: billingId,
-          svc_entry: sameDuty.data,
-          duplicate: true,
-          totals: totals.data.totals
-        });
-      }
-      return duplicateFailure(
-        "svc_key",
-        serviceKey(String(dutyRow.patient_id), input.service_name),
-        "A bill already exists for this patient + service + date"
-      );
-    }
-
-    const amount = amountForShift(String(dutyRow.shift_type || "DAY"), input.rate_overrides);
-    const row = buildServiceEntryFromDuty({
-      dutyId: String(dutyRow.id),
-      patientId: String(dutyRow.patient_id),
-      billingId,
-      employeeId: String(dutyRow.employee_id || ""),
-      startAt: String(dutyRow.start_at || ""),
-      shiftType: String(dutyRow.shift_type || "DAY"),
-      serviceName: input.service_name,
-      amount,
-      discount: input.discount
-    });
-
-    const svcLock = await assertNoMonthlyInvoiceLock(
-      billingId,
-      [row.date],
-      access
-    );
-    if (!svcLock.success) return passFailure(svcLock);
-
-    const inserted = await billingRepository.insertSvc(row, access);
-    if (!inserted.success) return passFailure(inserted);
-
-    // Link duty -> billing so the legacy lookup keeps working and dutyService
-    // can cancel cleanly if the duty is later cancelled.
-    await dutyRepository.update(
-      String(dutyRow.id),
-      { billing_id: billingId, updated_by: ctx.actor.email },
-      access
-    );
-
-    const totals = await loadBundleWithTotals(billingId, ctx);
-    if (!totals.success) {
-      return failure(totals.error || "Refetch failed", totals.code, totals.details);
-    }
-
-    await recomputePaidStatus(billingId, ctx);
-
-    return finalizeWithAudit(
-      await fireAudit(ctx, "billing", {
-        entity_id: billingId,
-        action: "create",
-        after: inserted.data,
-        stamp: `Bill from duty ${dutyRow.id}, ${dutyRow.shift_type} ₹${amount}`
-      }),
-      {
-        billing_id: billingId,
-        svc_entry: inserted.data ?? null,
-        duplicate: false,
-        totals: totals.data.totals
-      }
-    );
+    return dutyCalendarSotFailure(DUTY_CALENDAR_BILLING_GENERATE_DISABLED_MESSAGE);
   },
 
   /**
    * Bulk-bill all uncovered duties for a patient in a YYYY-MM period.
-   * Idempotent: rerunning skips already-billed duties.
+   * Disabled — use Duty Calendar materialize + duty-ledger-sync instead.
    */
   async generateFromDutyRange(
-    rawInput: unknown,
-    ctx: BillingServiceContext
+    _rawInput: unknown,
+    _ctx: BillingServiceContext
   ): Promise<
     ApiResult<{
       billing_id: string;
@@ -1692,123 +1496,7 @@ export const billingService = {
       totals: BillingTotals;
     }>
   > {
-    const parsed = parseInput(generateFromDutyRangeSchema, rawInput);
-    if (!parsed.success) return passFailure(parsed);
-    const input = parsed.data as GenerateFromDutyRangeInput;
-    const access = dbAccess(ctx);
-
-    const start = `${input.period}-01T00:00:00.000Z`;
-    const [y = 0, m = 1] = input.period.split("-").map((n) => parseInt(n, 10));
-    const next = new Date(Date.UTC(y, m, 1));
-    const end = next.toISOString();
-
-    const dutyList = await dutyRepository.list(
-      {
-        patientId: input.patient_id,
-        from: start,
-        to: end,
-        limit: 500,
-        offset: 0
-      },
-      access
-    );
-    if (!dutyList.success) return passFailure(dutyList);
-
-    const ensured = await ensureActiveBilling(input.patient_id, ctx);
-    if (!ensured.success) {
-      return failure(ensured.error || "Could not ensure billing", ensured.code, ensured.details);
-    }
-    const billingRow = ensured.data;
-
-    const editGuard = canEditBilling(String(billingRow.status || ""));
-    if (!editGuard.success) {
-      return failure(
-        editGuard.error || "Active bill is locked",
-        editGuard.code,
-        editGuard.details
-      );
-    }
-
-    let skipped = 0;
-    const billingId = String(billingRow.id);
-
-    // P1-19: build all svc rows up-front, then hand them to
-    // hominal_generate_from_duty_range so the inserts + duty.billing_id
-    // flips happen in one Postgres transaction. The old per-duty JS
-    // for-loop could leave a billing half-populated if any insert raised.
-    const svcRows: JsonRow[] = [];
-    const dutyIds: string[] = [];
-    for (const duty of dutyList.data?.rows || []) {
-      const status = String(duty.status || "").toUpperCase();
-      if (status === "CANCELLED" || status === "NO_SHOW") {
-        skipped += 1;
-        continue;
-      }
-      const existing = await billingRepository.findSvcByDutyRemark(
-        billingId,
-        String(duty.id),
-        access
-      );
-      if (!existing.success) return passFailure(existing);
-      if (existing.data) {
-        skipped += 1;
-        continue;
-      }
-      const amount = amountForShift(String(duty.shift_type || "DAY"), input.rate_overrides);
-      svcRows.push(
-        buildServiceEntryFromDuty({
-          dutyId: String(duty.id),
-          patientId: String(duty.patient_id || input.patient_id),
-          billingId,
-          employeeId: String(duty.employee_id || ""),
-          startAt: String(duty.start_at || ""),
-          shiftType: String(duty.shift_type || "DAY"),
-          serviceName: input.service_name,
-          amount
-        }) as JsonRow
-      );
-      dutyIds.push(String(duty.id));
-    }
-
-    let created = 0;
-    if (svcRows.length > 0) {
-      const rpc = await billingRepository.generateFromDutyRangeRpc(
-        billingId,
-        dutyIds,
-        svcRows,
-        ctx.actor.email || "system",
-        access
-      );
-      if (!rpc.success) return passFailure(rpc);
-      created = Number(rpc.data?.inserted || 0);
-    }
-
-    const totals = await loadBundleWithTotals(billingId, ctx);
-    if (!totals.success) {
-      return failure(totals.error || "Refetch failed", totals.code, totals.details);
-    }
-
-    await recomputePaidStatus(billingId, ctx);
-
-    const resultData = {
-      billing_id: billingId,
-      created,
-      skipped,
-      totals: totals.data.totals
-    };
-    if (created > 0) {
-      return finalizeWithAudit(
-        await fireAudit(ctx, "billing", {
-          entity_id: billingId,
-          action: "update",
-          after: totals.data.billing,
-          stamp: `Generated ${created} svc entries for ${input.period} (${skipped} skipped)`
-        }),
-        resultData
-      );
-    }
-
-    return success(resultData);
+    return dutyCalendarSotFailure(DUTY_CALENDAR_BILLING_GENERATE_DISABLED_MESSAGE);
   },
 
   // ─────────────────────────────────────────────────────────────────────
@@ -2794,134 +2482,13 @@ export const billingService = {
   },
 
   /**
-   * Replace the entire `hh_svc_entries` slice for a `svc_key` (duty diary
-   * save). Refuses when the parent billing is Closed/Cancelled.
-   *
-   * `svc_key` format used by the legacy SPA: `<billingId>_<serviceName>`.
+   * Disabled — Duty Calendar is the single source of truth for service entries.
    */
   async replaceServiceEntries(
-    rawInput: unknown,
-    ctx: BillingServiceContext
+    _rawInput: unknown,
+    _ctx: BillingServiceContext
   ): Promise<ApiResult<{ svc_key: string; count: number }>> {
-    const parsed = parseInput(replaceServiceEntriesSchema, rawInput);
-    if (!parsed.success) return passFailure(parsed);
-    const input = parsed.data as ReplaceServiceEntriesInput;
-    const access = dbAccess(ctx);
-
-    // Source-of-truth guard: duty-calendar materialized rows (remarks `duty:%`)
-    // are owned only by the Duty Calendar. Billing may not create/edit/delete
-    // them through a slice replace — those edits must happen in the Duties
-    // module so billing + payout stay in sync.
-    if (findDutyLedgerRows(input.rows).length > 0) {
-      return failure(
-        "Duty-calendar charges are read-only here. Edit the duty in the Duty Calendar instead.",
-        ErrorCodes.validation
-      );
-    }
-
-    const billingId = String(input.svc_key).split("_")[0];
-    if (!billingId) {
-      return failure("svc_key is missing billing id prefix", ErrorCodes.validation);
-    }
-
-    const billing = await billingRepository.findBillingById(billingId, access);
-    if (!billing.success) return passFailure(billing);
-    if (!billing.data) return notFoundFailure("Billing", billingId);
-
-    const editGuard = canEditBilling(String(billing.data.status || ""));
-    if (!editGuard.success) {
-      return failure(
-        editGuard.error || "Bill is locked — cannot edit service entries",
-        editGuard.code,
-        editGuard.details
-      );
-    }
-
-    const lock = await assertNoMonthlyInvoiceLock(
-      billingId,
-      input.rows.map((r) => r.date || ""),
-      access
-    );
-    if (!lock.success) return passFailure(lock);
-
-    const rows: JsonRow[] = input.rows.map((row) => ({
-      billing_id: row.billing_id || billingId,
-      service_name: row.service_name || "",
-      partner: row.partner || "",
-      partner_id: row.partner_id || "",
-      date: row.date || "",
-      freq: row.freq || "",
-      amt: row.amt,
-      count: row.count,
-      disc: row.disc,
-      total: row.total,
-      remarks: row.remarks || ""
-    }));
-
-    const replaced = await billingRepository.replaceSvcEntriesRpc(
-      input.svc_key,
-      rows,
-      access
-    );
-    if (!replaced.success) return passFailure(replaced);
-
-    // Phase 11 — best-effort duty-day ledger sync after the legacy RPC
-    // physically rewrites the svc_entries slice. We:
-    //   1. Re-read the fresh svc rows for this (billing, service_name) slice.
-    //   2. Upsert per-day ledger rows for each fresh entry.
-    //   3. Soft-delete any orphan day-rows whose svc_entry_id is no longer
-    //      present (the RPC deletes + reinserts, so ids change).
-    try {
-      const serviceName = rows[0]?.service_name
-        ? String(rows[0].service_name)
-        : input.svc_key.includes("_")
-          ? input.svc_key.slice(input.svc_key.indexOf("_") + 1)
-          : "";
-      const fresh = await billingRepository.listSvcByBilling(billingId, access);
-      const freshRows = fresh.success
-        ? (fresh.data || []).filter(
-            (r) =>
-              !serviceName ||
-              String(r.service_name || "") === serviceName
-          )
-        : [];
-      for (const row of freshRows) {
-        await dutyDayLedger.syncSvcEntryUpsert(
-          {
-            id: String(row.id || ""),
-            svc_key: String(row.svc_key || input.svc_key),
-            billing_id: String(row.billing_id || billingId),
-            service_name: String(row.service_name || serviceName),
-            partner_id: String(row.partner_id || ""),
-            date: String(row.date || ""),
-            count: row.count as number | string | null,
-            amt: row.amt as number | string | null
-          },
-          ctx.actor.email,
-          access
-        );
-      }
-      const keepIds = freshRows.map((r) => String(r.id || "")).filter(Boolean);
-      await dutyDayLedger.syncSvcKeyReplace(
-        billingId,
-        serviceName,
-        keepIds,
-        ctx.actor.email,
-        access
-      );
-    } catch (err) {
-      console.error("[dutyDayLedger] svc-entry replace sync failed", err);
-    }
-
-    return finalizeWithAudit(
-      await fireAudit(ctx, "svc_entry", {
-        entity_id: input.svc_key,
-        action: "update",
-        after: { svc_key: input.svc_key, count: rows.length },
-        stamp: `Replaced ${rows.length} service entries for ${input.svc_key}`
-      }),
-      { svc_key: input.svc_key, count: rows.length }
-    );
+    return dutyCalendarSotFailure(DUTY_CALENDAR_LEDGER_REPLACE_DISABLED_MESSAGE);
   },
 
   // ─────────────────────────────────────────────────────────────────────

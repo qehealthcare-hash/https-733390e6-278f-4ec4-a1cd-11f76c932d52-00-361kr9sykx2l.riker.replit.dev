@@ -41,7 +41,6 @@ import {
 } from "@/validation/reportValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
-  attachAttendanceToPayrollRows,
   aggregatePayrollTotals,
   buildBillingTotals,
   buildDashboardKpis,
@@ -49,7 +48,8 @@ import {
   buildProfitLoss,
   buildInquirySummary,
   buildPatientSummary,
-  buildAttendanceSummary,
+  buildAttendanceSummaryFromLedger,
+  attachLedgerAttendanceToPayrollRows,
   buildBillingSummary,
   INQUIRY_STATUS_BUCKETS,
   monthRangeUTC,
@@ -73,8 +73,13 @@ import { billingRepository } from "@/database/billingRepository";
 import { patientRepository } from "@/database/patientRepository";
 import { computeBillingTotals, derivePaidStatus } from "@/business/billingRules";
 import { passFailure, success } from "@/utils/apiResponse";
-import type { JsonRow } from "@/database/types";
+import {
+  computeDashboardDutyKpisFromLedger,
+  getDutyRowsByPeriod,
+  listAttendanceLedgersForPeriod
+} from "@/src/lib/duty-ledger";
 
+import type { JsonRow } from "@/database/types";
 import type { ServiceActor } from "@/types/serviceActor";
 
 /** @deprecated Import `ServiceActor` from `@/types/serviceActor`. */
@@ -154,55 +159,20 @@ export const reportService = {
       employeesTotal,
       employeesActive,
       inquiries,
-      dutiesActive,
-      dutiesScheduled,
-      dutiesCompleted,
-      dutiesCancelled,
       billingsTotal,
       billingsOpen,
       billingsClosed,
       services,
       receipts,
       payouts,
-      payoutCharges
+      payoutCharges,
+      dutyRowsForPeriod
     ] = await Promise.all([
       reportRepository.countAllPatients(access),
       reportRepository.countActivePatients(access),
       reportRepository.countAllEmployees(access),
       reportRepository.countActiveEmployees(access),
       reportRepository.countInquiriesInRange(w.startISO, w.endISO, access),
-      reportRepository.countDutiesInRange(
-        w.startISO,
-        w.endISO,
-        {
-          status: ["SCHEDULED", "IN_PROGRESS"],
-          employeeId: query.employee_id,
-          patientId: query.patient_id
-        },
-        access
-      ),
-      reportRepository.countDutiesInRange(
-        w.startISO,
-        w.endISO,
-        { status: ["SCHEDULED"], employeeId: query.employee_id, patientId: query.patient_id },
-        access
-      ),
-      reportRepository.countDutiesInRange(
-        w.startISO,
-        w.endISO,
-        { status: ["COMPLETED"], employeeId: query.employee_id, patientId: query.patient_id },
-        access
-      ),
-      reportRepository.countDutiesInRange(
-        w.startISO,
-        w.endISO,
-        {
-          status: ["CANCELLED", "NO_SHOW"],
-          employeeId: query.employee_id,
-          patientId: query.patient_id
-        },
-        access
-      ),
       reportRepository.countBillings({ patientId: query.patient_id }, access),
       reportRepository.countBillings({ status: "Active", patientId: query.patient_id }, access),
       reportRepository.countBillings({ status: "Closed", patientId: query.patient_id }, access),
@@ -228,8 +198,18 @@ export const reportService = {
         w.endYMD,
         { partner_id: query.employee_id },
         access
-      )
+      ),
+      getDutyRowsByPeriod(w.period, access)
     ]);
+
+    const serviceRows = castRows(services);
+    const dutiesById = new Map<string, JsonRow>();
+    if (dutyRowsForPeriod.success) {
+      for (const d of dutyRowsForPeriod.data || []) {
+        dutiesById.set(String(d.id), d);
+      }
+    }
+    const dutyKpis = computeDashboardDutyKpisFromLedger(serviceRows, dutiesById);
 
     const raw: DashboardRawCounts = {
       patients_total: expect(patientsTotal, 0),
@@ -237,14 +217,14 @@ export const reportService = {
       employees_total: expect(employeesTotal, 0),
       employees_active: expect(employeesActive, 0),
       inquiries_this_month: expect(inquiries, 0),
-      duties_active: expect(dutiesActive, 0),
-      duties_scheduled: expect(dutiesScheduled, 0),
-      duties_completed: expect(dutiesCompleted, 0),
-      duties_cancelled: expect(dutiesCancelled, 0),
+      duties_active: dutyKpis.duties_active,
+      duties_scheduled: dutyKpis.duties_scheduled,
+      duties_completed: dutyKpis.duties_completed,
+      duties_cancelled: dutyKpis.duties_cancelled,
       billings_total: expect(billingsTotal, 0),
       billings_open: expect(billingsOpen, 0),
       billings_closed: expect(billingsClosed, 0),
-      service_rows: castRows(services),
+      service_rows: serviceRows,
       receipt_rows: castRows(receipts),
       payout_rows: castRows(payouts),
       payout_charge_rows: castRows(payoutCharges)
@@ -431,24 +411,21 @@ export const reportService = {
     const w = resolveWindow(query);
     const access = dbAccess(ctx);
 
-    const [payouts, attendance] = await Promise.all([
+    const [payouts, attendanceLedgers] = await Promise.all([
       reportRepository.listPayrollRows(
         w.period,
         { employee_id: query.employee_id, status: query.status },
         access
       ),
-      reportRepository.listAttendanceInRange(
-        w.startISO,
-        w.endISO,
-        { employee_id: query.employee_id },
-        access
-      )
+      listAttendanceLedgersForPeriod(w.period, access, {
+        employee_id: query.employee_id
+      })
     ]);
     if (!payouts.success) return passFailure(payouts);
-    if (!attendance.success) return passFailure(attendance);
+    if (!attendanceLedgers.success) return passFailure(attendanceLedgers);
 
     const payoutRows = (payouts.data || []) as JsonRow[];
-    const rows = attachAttendanceToPayrollRows(
+    const rows = attachLedgerAttendanceToPayrollRows(
       payoutRows.map((r) => ({
         employee_id: String(r.employee_id || ""),
         gross_amount: r.gross_amount as number | string | null | undefined,
@@ -458,11 +435,7 @@ export const reportService = {
         net_amount: r.net_amount as number | string | null | undefined,
         ...r
       })),
-      (attendance.data || []).map((a) => ({
-        employee_id: String(a.employee_id || ""),
-        status: (a.status as string | null) ?? undefined,
-        hours: (a.hours as number | string | null) ?? undefined
-      }))
+      attendanceLedgers.data || new Map()
     );
 
     return success({
@@ -646,22 +619,10 @@ export const reportService = {
     const w = resolveWindow(query);
     const access = dbAccess(ctx);
 
-    const [total, allRows, sliceRows] = await Promise.all([
-      reportRepository.countAttendanceScoped(
-        w.startISO,
-        w.endISO,
-        { employee_id: query.employee_id, status: query.status },
-        access
-      ),
-      // The rollup needs every row in the window (status / shift / per-
-      // employee breakdowns can't be done with a single SQL count). Capped
-      // defensively below at REPORT_ROW_CEILING via listAttendanceScoped.
-      reportRepository.listAttendanceInRange(
-        w.startISO,
-        w.endISO,
-        { employee_id: query.employee_id },
-        access
-      ),
+    const [ledgers, sliceRows] = await Promise.all([
+      listAttendanceLedgersForPeriod(w.period, access, {
+        employee_id: query.employee_id
+      }),
       reportRepository.listAttendanceScoped(
         w.startISO,
         w.endISO,
@@ -670,29 +631,27 @@ export const reportService = {
         access
       )
     ]);
-    if (!total.success) return passFailure(total);
-    if (!allRows.success) return passFailure(allRows);
+    if (!ledgers.success) return passFailure(ledgers);
     if (!sliceRows.success) return passFailure(sliceRows);
 
-    const rollupSource = (allRows.data || []).filter(
-      (r) => !query.status || String(r.status || "") === query.status
-    );
-    const summary = buildAttendanceSummary(
+    const summary = buildAttendanceSummaryFromLedger(
       w.period,
       { from: w.startISO, to: w.endISO },
-      rollupSource.map((r) => ({
-        employee_id: (r.employee_id as string) ?? null,
-        status: (r.status as string) ?? null,
-        shift_type: (r.shift_type as string) ?? null,
-        hours: (r.hours as number | string | null) ?? null
-      }))
+      ledgers.data || new Map()
     );
-    summary.total = total.data || rollupSource.length;
+    if (query.employee_id) {
+      const filtered = (summary.by_employee || []).filter(
+        (e) => e.employee_id === query.employee_id
+      );
+      summary.by_employee = filtered;
+      summary.total = filtered.reduce((s, e) => s + e.present, 0);
+      summary.by_status.PRESENT = summary.total;
+    }
 
     return success({
       summary,
       rows: sliceRows.data || [],
-      rows_total: total.data || 0,
+      rows_total: summary.total,
       limit: query.limit,
       offset: query.offset
     });

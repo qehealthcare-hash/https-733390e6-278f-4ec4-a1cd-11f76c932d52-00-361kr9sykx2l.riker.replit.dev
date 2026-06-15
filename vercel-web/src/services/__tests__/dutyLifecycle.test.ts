@@ -55,6 +55,14 @@ describe("dutyDiaryService.materializeDuty", () => {
       success: true,
       data: null
     });
+    vi.mocked(dutyRepository.countActiveReceipts).mockResolvedValue({
+      success: true,
+      data: 0
+    });
+    vi.mocked(payoutRepository.isDayPaid).mockResolvedValue({
+      success: true,
+      data: false
+    });
   });
 
   it("skips payout charge mutations when employee period payout is LOCKED", async () => {
@@ -270,7 +278,7 @@ describe("dutyDiaryService.materializeDuty", () => {
         date: "2026-05-01",
         freq: "DAY"
       }),
-      expect.anything()
+      undefined
     );
     expect(billingRepository.updatePayoutCharge).toHaveBeenCalledWith(
       "20",
@@ -283,7 +291,7 @@ describe("dutyDiaryService.materializeDuty", () => {
         date: "2026-05-01",
         term: "Daily"
       }),
-      expect.anything()
+      undefined
     );
   });
 
@@ -359,7 +367,7 @@ describe("dutyDiaryService.materializeDuty", () => {
         date: "2026-05-01",
         amount: 300
       }),
-      expect.anything()
+      undefined
     );
   });
 });
@@ -462,7 +470,7 @@ describe("dutyService.cancel", () => {
 
     const result = await dutyService.cancel("DUTY1", { reason: "test" }, ctx);
     expect(result.success).toBe(true);
-    expect(dutyRepository.removePayoutChargesByDutyId).toHaveBeenCalledWith("DUTY1", expect.anything());
+    expect(dutyRepository.removePayoutChargesByDutyId).toHaveBeenCalledWith("DUTY1", undefined);
   });
 
   it("refuses to cancel a COMPLETED duty", async () => {
@@ -573,7 +581,7 @@ describe("dutyDiaryService.updateDay partner reassignment", () => {
         partner: "Bob",
         remarks: "duty:DUTY1:2026-05-01:EMP2:m"
       }),
-      expect.anything()
+      undefined
     );
     expect(billingRepository.updatePayoutCharge).toHaveBeenCalledWith(
       "8",
@@ -582,7 +590,7 @@ describe("dutyDiaryService.updateDay partner reassignment", () => {
         partner: "Bob",
         remarks: "duty:DUTY1:2026-05-01:EMP2:m"
       }),
-      expect.anything()
+      undefined
     );
     expect(dutyRepository.update).toHaveBeenCalledWith(
       "DUTY1",

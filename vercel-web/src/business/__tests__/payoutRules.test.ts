@@ -82,7 +82,7 @@ describe("payoutRules — test matrix", () => {
     expect(isPayoutFullyPaid(1000, 1200)).toBe(true);
   });
 
-  it("breakdownByPatient counts LATE and HALF_DAY as payable days", () => {
+  it("breakdownByPatient is deprecated and returns empty (use charge ledger)", () => {
     const rows = breakdownByPatient(
       [
         {
@@ -92,23 +92,10 @@ describe("payoutRules — test matrix", () => {
           start_at: "2026-05-01",
           shift_type: "24H",
           status: "IN_PROGRESS"
-        },
-        {
-          id: "D2",
-          patient_id: "PID1",
-          employee_id: "EMP1",
-          start_at: "2026-05-02",
-          shift_type: "24H",
-          status: "IN_PROGRESS"
         }
       ],
-      [
-        { duty_id: "D1", employee_id: "EMP1", hours: 8, status: "LATE", check_in_at: "2026-05-01" },
-        { duty_id: "D2", employee_id: "EMP1", hours: 4, status: "HALF_DAY", check_in_at: "2026-05-02" }
-      ]
+      [{ duty_id: "D1", employee_id: "EMP1", hours: 8, status: "LATE", check_in_at: "2026-05-01" }]
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].duty_count).toBe(2);
-    expect(rows[0].hours).toBe(12);
+    expect(rows).toEqual([]);
   });
 });

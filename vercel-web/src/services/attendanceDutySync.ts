@@ -7,7 +7,7 @@ import { hoursBetween } from "@/business/attendanceRules";
 import { newId } from "@/business/idRules";
 import { attendanceRepository } from "@/database/attendanceRepository";
 import { dutyRepository } from "@/database/dutyRepository";
-import { payoutRepository } from "@/database/payoutRepository";
+import { recomputePayoutIfEditable } from "@/services/recomputePayoutIfEditable";
 import type { JsonRow } from "@/database/types";
 import { writeMutationAudit } from "@/services/mutationAudit";
 import type { ActorLike } from "@/services/attendanceService";
@@ -57,7 +57,7 @@ async function recomputeForRow(
     (row.work_date as string | null) || undefined
   );
   if (!period) return;
-  await payoutRepository.recomputeRpc(employeeId, period, dbAccess(ctx));
+  await recomputePayoutIfEditable(employeeId, period, dbAccess(ctx));
 }
 
 export async function syncDutyCheckIn(

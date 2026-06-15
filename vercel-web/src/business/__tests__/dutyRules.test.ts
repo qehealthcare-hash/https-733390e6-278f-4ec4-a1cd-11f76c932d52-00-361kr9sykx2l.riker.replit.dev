@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildDutyPermissions,
   canCancelDuty,
   canCancelDutyWithBilling,
   canEditDutyStatus,
   canReopenCompletedDuty,
+  computeDutyFreeze,
   dutiesTimeOverlap,
   dutyPersistRow,
   effectiveMaterializeEndAt,
@@ -269,6 +271,51 @@ describe("dutyRules — open-ended duty (no end_at)", () => {
       today
     );
     expect(result).toBe(billClosedAt);
+  });
+});
+
+describe("dutyRules — duty editability freeze (billing done / payout made)", () => {
+  it("stays editable while billing is not done and payout is remaining", () => {
+    const f = computeDutyFreeze({ billHasReceipt: false, totalSlots: 5, paidSlots: 0 });
+    expect(f.frozen).toBe(false);
+    expect(f.partiallyFrozen).toBe(false);
+    const perms = buildDutyPermissions({ status: "SCHEDULED", totalSlots: 5, paidSlots: 0 });
+    expect(perms.canEdit).toBe(true);
+    expect(perms.canCancel).toBe(true);
+    expect(perms.frozen).toBe(false);
+  });
+
+  it("freezes the duty once the bill has a receipt (billing done)", () => {
+    const f = computeDutyFreeze({ billHasReceipt: true, totalSlots: 5, paidSlots: 0 });
+    expect(f.frozen).toBe(true);
+    const perms = buildDutyPermissions({
+      status: "SCHEDULED",
+      billHasReceipt: true,
+      hasBillingServiceLine: true,
+      totalSlots: 5,
+      paidSlots: 0
+    });
+    expect(perms.canEdit).toBe(false);
+    expect(perms.canCancel).toBe(false);
+    expect(perms.blockReasons?.canEdit).toMatch(/receipt/i);
+  });
+
+  it("freezes the duty once every day is paid (payout made)", () => {
+    const f = computeDutyFreeze({ billHasReceipt: false, totalSlots: 3, paidSlots: 3 });
+    expect(f.frozen).toBe(true);
+    const perms = buildDutyPermissions({ status: "SCHEDULED", totalSlots: 3, paidSlots: 3 });
+    expect(perms.canEdit).toBe(false);
+    expect(perms.blockReasons?.canEdit).toMatch(/paid/i);
+  });
+
+  it("keeps a partially-paid duty editable but un-cancellable (per-day)", () => {
+    const f = computeDutyFreeze({ billHasReceipt: false, totalSlots: 5, paidSlots: 2 });
+    expect(f.frozen).toBe(false);
+    expect(f.partiallyFrozen).toBe(true);
+    const perms = buildDutyPermissions({ status: "SCHEDULED", totalSlots: 5, paidSlots: 2 });
+    expect(perms.canEdit).toBe(true);
+    expect(perms.canCancel).toBe(false);
+    expect(perms.partiallyFrozen).toBe(true);
   });
 });
 

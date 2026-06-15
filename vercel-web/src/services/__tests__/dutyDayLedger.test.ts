@@ -345,43 +345,7 @@ describe("billingService.softDeleteReceipt (Phase 16 RPC ledger)", () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("payoutService.replacePayoutCharges ledger sync", () => {
-  it("links freshly inserted payout_charges to their day-rows", async () => {
-    vi.mocked(payoutRepository.replacePayoutChargesRpc).mockResolvedValue({
-      success: true,
-      data: 2
-    });
-    vi.mocked(payoutRepository.listChargesBySvcKey).mockResolvedValue({
-      success: true,
-      data: [
-        {
-          id: "PC1",
-          svc_key: "BILL1_Care Taker Services",
-          billing_id: "BILL1",
-          partner_id: "EMP1",
-          service_name: "Care Taker Services",
-          date: "2026-05-01",
-          amount: 566
-        },
-        {
-          id: "PC2",
-          svc_key: "BILL1_Care Taker Services",
-          billing_id: "BILL1",
-          partner_id: "EMP1",
-          service_name: "Care Taker Services",
-          date: "2026-05-02",
-          amount: 566
-        }
-      ]
-    });
-    // Each charge maps to one existing day-row.
-    mockLookupIds
-      .mockResolvedValueOnce(["DD_A"])
-      .mockResolvedValueOnce(["DD_B"]);
-    vi.mocked(dutyDayRepository.markPaidToStaff).mockResolvedValue({
-      success: true,
-      data: 1
-    });
-
+  it("is disabled — ledger replace must happen in Duty Calendar", async () => {
     const result = await payoutService.replacePayoutCharges(
       {
         svc_key: "BILL1_Care Taker Services",
@@ -392,35 +356,14 @@ describe("payoutService.replacePayoutCharges ledger sync", () => {
             partner_id: "EMP1",
             term: "Care",
             amount: 566
-          },
-          {
-            date: "2026-05-02",
-            partner: "EMP1",
-            partner_id: "EMP1",
-            term: "Care",
-            amount: 566
           }
         ]
       },
       ctx
     );
 
-    expect(result.success).toBe(true);
-    expect(dutyDayRepository.markPaidToStaff).toHaveBeenCalledTimes(2);
-    expect(dutyDayRepository.markPaidToStaff).toHaveBeenNthCalledWith(
-      1,
-      "PC1",
-      ["DD_A"],
-      "acct@test.com",
-      expect.anything()
-    );
-    expect(dutyDayRepository.markPaidToStaff).toHaveBeenNthCalledWith(
-      2,
-      "PC2",
-      ["DD_B"],
-      "acct@test.com",
-      expect.anything()
-    );
+    expect(result.success).toBe(false);
+    expect(payoutRepository.replacePayoutChargesRpc).not.toHaveBeenCalled();
   });
 });
 
@@ -429,55 +372,7 @@ describe("payoutService.replacePayoutCharges ledger sync", () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("billingService.replaceServiceEntries ledger sync", () => {
-  it("upserts day-rows for fresh entries and soft-deletes orphans", async () => {
-    vi.mocked(billingRepository.findBillingById).mockResolvedValue({
-      success: true,
-      data: { id: "BILL1", status: "Active", patient_id: "PAT1" }
-    });
-    vi.mocked(billingRepository.findInvoiceForPeriod).mockResolvedValue({
-      success: true,
-      data: null
-    });
-    vi.mocked(billingRepository.replaceSvcEntriesRpc).mockResolvedValue({
-      success: true,
-      data: 2
-    });
-    vi.mocked(billingRepository.listSvcByBilling).mockResolvedValue({
-      success: true,
-      data: [
-        {
-          id: "SVC_NEW1",
-          svc_key: "BILL1_Care Taker Services",
-          billing_id: "BILL1",
-          service_name: "Care Taker Services",
-          partner_id: "EMP1",
-          date: "2026-05-01",
-          count: 1,
-          amt: 750
-        },
-        {
-          id: "SVC_NEW2",
-          svc_key: "BILL1_Care Taker Services",
-          billing_id: "BILL1",
-          service_name: "Care Taker Services",
-          partner_id: "EMP1",
-          date: "2026-05-02",
-          count: 1,
-          amt: 750
-        }
-      ]
-    });
-    vi.mocked(dutyDayRepository.upsertFromSvcEntry).mockResolvedValue({
-      success: true,
-      data: 1
-    });
-    // syncSvcKeyReplace lookup → existing day-rows; one orphan id.
-    mockLookupIds.mockResolvedValueOnce([
-      "DD_keep1",
-      "DD_keep2",
-      "DD_orphan"
-    ]);
-
+  it("is disabled — ledger replace must happen in Duty Calendar", async () => {
     const result = await billingService.replaceServiceEntries(
       {
         svc_key: "BILL1_Care Taker Services",
@@ -491,24 +386,14 @@ describe("billingService.replaceServiceEntries ledger sync", () => {
             count: 1,
             disc: 0,
             total: 750
-          },
-          {
-            billing_id: "BILL1",
-            service_name: "Care Taker Services",
-            partner_id: "EMP1",
-            date: "2026-05-02",
-            amt: 750,
-            count: 1,
-            disc: 0,
-            total: 750
           }
         ]
       },
       ctx
     );
 
-    expect(result.success).toBe(true);
-    expect(dutyDayRepository.upsertFromSvcEntry).toHaveBeenCalledTimes(2);
+    expect(result.success).toBe(false);
+    expect(billingRepository.replaceSvcEntriesRpc).not.toHaveBeenCalled();
   });
 });
 
@@ -539,7 +424,7 @@ describe("billingService.replaceServiceEntries duty guard", () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/read-only/i);
+    expect(result.error).toMatch(/disabled/i);
     expect(billingRepository.replaceSvcEntriesRpc).not.toHaveBeenCalled();
   });
 });
@@ -564,7 +449,7 @@ describe("payoutService.replacePayoutCharges duty guard", () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/read-only/i);
+    expect(result.error).toMatch(/disabled/i);
     expect(payoutRepository.replacePayoutChargesRpc).not.toHaveBeenCalled();
   });
 });

@@ -20,35 +20,23 @@
 import type { ApiResult } from "@/types/common";
 import { ErrorCodes } from "@/types/common";
 import {
-  attendanceSchema,
   attendanceListQuerySchema,
-  attendanceDayMarkSchema,
-  type AttendanceInput,
-  type AttendanceListQuery,
-  type AttendanceDayMarkInput
+  type AttendanceListQuery
 } from "@/validation/attendanceValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
-  ATTENDANCE_NO_TIME_STATUSES,
-  attendanceDateKey,
-  attendancePayoutPeriod,
+  DUTY_CALENDAR_ATTENDANCE_SOT_MESSAGE,
+  dutyCalendarSotFailure
+} from "@/business/dutySourceOfTruth";
+import {
   attendanceRowWorkDate,
   selectMissingAttendance,
-  buildAttendancePatch,
-  buildAttendanceRow,
-  ensureAttendanceHasAnchor,
-  findAttendanceDuplicate,
-  hoursBetween,
-  type AttendancePersistInput,
-  type AttendanceRow
+  hoursBetween
 } from "@/business/attendanceRules";
-import { newId } from "@/business/idRules";
 import { attendanceRepository } from "@/database/attendanceRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { employeeRepository } from "@/database/employeeRepository";
 import { patientRepository } from "@/database/patientRepository";
-import { payoutRepository } from "@/database/payoutRepository";
-import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import { dutyService } from "@/services/dutyService";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
 import type { JsonRow } from "@/database/types";
@@ -59,14 +47,11 @@ import {
 } from "@/services/attendanceBoardHelpers";
 import { isOpenEndedEndAt } from "@/business/dutyRules";
 import {
-  duplicateFailure,
   failure,
   notFoundFailure,
   passFailure,
   success
 } from "@/utils/apiResponse";
-import { assertNotStale } from "@/business/concurrencyRules";
-import { attendanceDeleteSchema } from "@/validation/attendanceValidation";
 
 import type { ServiceActor } from "@/types/serviceActor";
 
@@ -82,26 +67,6 @@ export interface AttendanceServiceContext {
 function dbAccess(ctx: AttendanceServiceContext) {
   const token = ctx.accessToken ?? ctx.actor.accessToken;
   return token ? { accessToken: token } : undefined;
-}
-
-async function fireAudit(
-  ctx: AttendanceServiceContext,
-  payload: {
-    entity_id: string;
-    action: "create" | "update" | "delete";
-    before?: unknown;
-    after?: unknown;
-    stamp?: string;
-  }
-) {
-  return writeMutationAudit(dbAccess(ctx), ctx.actor, {
-    module: "attendance",
-    entity_id: payload.entity_id,
-    action: payload.action,
-    stamp: payload.stamp,
-    before: payload.before ?? null,
-    after: payload.after ?? null
-  });
 }
 
 type LoadResult<T> =
@@ -125,105 +90,6 @@ async function loadAttendance(
   if (!row.success) return toLoadFailure(row);
   if (!row.data) return toLoadFailure(notFoundFailure("Attendance", id));
   return { success: true, data: row.data };
-}
-
-async function loadFreshAttendance(
-  id: string,
-  ctx: AttendanceServiceContext,
-  fallback?: JsonRow | null
-): Promise<LoadResult<JsonRow>> {
-  const refreshed = await attendanceRepository.findById(id, dbAccess(ctx));
-  if (!refreshed.success) return toLoadFailure(refreshed);
-  const row = refreshed.data ?? fallback ?? null;
-  if (!row) return toLoadFailure(failure("Attendance not found after mutation", ErrorCodes.internal));
-  return { success: true, data: row };
-}
-
-function toAttendanceRow(row: JsonRow): AttendanceRow {
-  return {
-    id: String(row.id),
-    duty_id: (row.duty_id as string | null) ?? null,
-    employee_id: String(row.employee_id || ""),
-    patient_id: (row.patient_id as string | null) ?? null,
-    shift_type: (row.shift_type as string | null) ?? null,
-    check_in_at: (row.check_in_at as string | null) ?? null,
-    check_out_at: (row.check_out_at as string | null) ?? null,
-    hours: typeof row.hours === "number" ? row.hours : Number(row.hours ?? 0) || 0,
-    status: String(row.status || "PRESENT"),
-    notes: String(row.notes ?? row.remarks ?? "") || null,
-    work_date: (row.work_date as string | null) ?? null
-  };
-}
-
-async function checkDuplicate(
-  input: AttendancePersistInput,
-  excludeId: string | undefined,
-  ctx: AttendanceServiceContext
-): Promise<ApiResult<null>> {
-  const access = dbAccess(ctx);
-  const dateKey = attendanceDateKey(input.check_in_at, input.work_date);
-
-  const candidates = await attendanceRepository.findByEmployeeAndDate(
-    input.employee_id,
-    dateKey,
-    access
-  );
-  if (!candidates.success) return passFailure<null>(candidates);
-  const conflict = findAttendanceDuplicate(
-    (candidates.data || []).map(toAttendanceRow),
-    input.employee_id,
-    undefined,
-    dateKey,
-    excludeId
-  );
-  if (conflict) {
-    if (input.duty_id) {
-      return duplicateFailure(
-        "duty_employee_date",
-        `${input.duty_id}@${input.employee_id}@${dateKey}`,
-        "Attendance already recorded for this duty, employee, and date"
-      );
-    }
-    return duplicateFailure(
-      "employee_date",
-      `${input.employee_id}@${dateKey}`,
-      "Attendance already recorded for this employee on this date"
-    );
-  }
-  return success(null);
-}
-
-async function recomputePayoutFor(
-  row: JsonRow,
-  ctx: AttendanceServiceContext
-): Promise<void> {
-  const employeeId = String(row.employee_id || "");
-  if (!employeeId) return;
-  let dutyStart: string | undefined;
-  const dutyId = (row.duty_id as string | null) || "";
-  if (dutyId) {
-    const duty = await dutyRepository.findById(dutyId, dbAccess(ctx));
-    if (duty.success && duty.data) {
-      dutyStart = (duty.data.start_at as string | undefined) || undefined;
-    }
-  }
-  const period = attendancePayoutPeriod(
-    (row.check_in_at as string | null) || undefined,
-    dutyStart,
-    (row.work_date as string | null) || undefined
-  );
-  if (!period) return;
-  await payoutRepository.recomputeRpc(employeeId, period, dbAccess(ctx));
-}
-
-function inferUniqueViolation(error: string | undefined): boolean {
-  const msg = String(error || "").toLowerCase();
-  return (
-    msg.includes("uq_hh_attendance_per_duty") ||
-    msg.includes("uq_hh_attendance_duty_employee") ||
-    msg.includes("duplicate key value") ||
-    msg.includes("unique constraint")
-  );
 }
 
 export type AttendanceApiRow = JsonRow;
@@ -270,199 +136,28 @@ export const attendanceService = {
   },
 
   async create(
-    rawInput: unknown,
-    ctx: AttendanceServiceContext
+    _rawInput: unknown,
+    _ctx: AttendanceServiceContext
   ): Promise<ApiResult<AttendanceApiRow>> {
-    const parsed = parseInput(attendanceSchema, rawInput);
-    if (!parsed.success) return passFailure(parsed);
-    const input = parsed.data as AttendanceInput;
-
-    const anchor = ensureAttendanceHasAnchor(input as AttendancePersistInput);
-    if (!anchor.success) {
-      return failure(anchor.error || "Anchor missing", anchor.code, anchor.details);
-    }
-
-    const dup = await checkDuplicate(input as AttendancePersistInput, input.id, ctx);
-    if (!dup.success) return passFailure(dup);
-
-    const fallbackId = input.id || newId.attendance();
-    const row = buildAttendanceRow(input as AttendancePersistInput, ctx.actor.email, fallbackId);
-
-    const inserted = await attendanceRepository.insert(row, dbAccess(ctx));
-    if (!inserted.success) {
-      if (inferUniqueViolation(inserted.error)) {
-        return duplicateFailure(
-          "duty_id",
-          input.duty_id || row.id,
-          "Attendance already recorded for this duty"
-        );
-      }
-      return passFailure(inserted);
-    }
-
-    const fresh = await loadFreshAttendance(String(row.id), ctx, inserted.data ?? null);
-    if (!fresh.success) {
-      return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
-    }
-
-    await recomputePayoutFor(fresh.data, ctx);
-    return finalizeWithAudit(
-      await fireAudit(ctx, { entity_id: String(row.id), action: "create", after: fresh.data }),
-      fresh.data
-    );
+    return dutyCalendarSotFailure(DUTY_CALENDAR_ATTENDANCE_SOT_MESSAGE);
   },
 
   async update(
-    id: string,
-    rawInput: unknown,
-    ctx: AttendanceServiceContext
+    _id: string,
+    _rawInput: unknown,
+    _ctx: AttendanceServiceContext
   ): Promise<ApiResult<AttendanceApiRow>> {
-    const existing = await loadAttendance(id, ctx);
-    if (!existing.success) {
-      return failure(existing.error || "Attendance not found", existing.code, existing.details);
-    }
-
-    const parsed = parseInput(attendanceSchema, { ...(rawInput as object), id });
-    if (!parsed.success) return passFailure(parsed);
-    const input = parsed.data as AttendanceInput;
-
-    const stale = assertNotStale(
-      "Attendance",
-      existing.data.updated_at,
-      input.expected_updated_at
-    );
-    if (!stale.success) return passFailure(stale);
-
-    const existingRow = toAttendanceRow(existing.data);
-    const merged: AttendancePersistInput = {
-      ...input,
-      check_in_at:
-        input.check_in_at ||
-        (ATTENDANCE_NO_TIME_STATUSES.has(input.status) ? undefined : existingRow.check_in_at || undefined),
-      check_out_at:
-        input.check_out_at ||
-        (ATTENDANCE_NO_TIME_STATUSES.has(input.status) ? undefined : existingRow.check_out_at || undefined),
-      duty_id: input.duty_id || existingRow.duty_id || undefined,
-      patient_id: input.patient_id || existingRow.patient_id || undefined,
-      shift_type: input.shift_type || existingRow.shift_type || undefined,
-      work_date: input.work_date || (existing.data.work_date as string | undefined),
-      notes: input.notes ?? existingRow.notes ?? ""
-    };
-
-    const anchor = ensureAttendanceHasAnchor(merged);
-    if (!anchor.success) {
-      return failure(anchor.error || "Anchor missing", anchor.code, anchor.details);
-    }
-
-    // Duplicate check only when the natural-key changed.
-    const dutyChanged = (merged.duty_id || "") !== (existingRow.duty_id || "");
-    const employeeChanged = merged.employee_id !== existingRow.employee_id;
-    const dateChanged =
-      attendanceDateKey(merged.check_in_at, merged.work_date) !==
-      attendanceDateKey(existingRow.check_in_at, existingRow.work_date as string | undefined);
-    if (dutyChanged || employeeChanged || dateChanged) {
-      const dup = await checkDuplicate(merged, id, ctx);
-      if (!dup.success) return passFailure(dup);
-    }
-
-    const patch = buildAttendancePatch(existingRow, merged, ctx.actor.email);
-    const updated = await attendanceRepository.update(id, patch, dbAccess(ctx));
-    if (!updated.success) {
-      if (inferUniqueViolation(updated.error)) {
-        return duplicateFailure(
-          "duty_id",
-          merged.duty_id || id,
-          "Attendance already recorded for this duty"
-        );
-      }
-      return passFailure(updated);
-    }
-
-    const fresh = await loadFreshAttendance(id, ctx, updated.data ?? null);
-    if (!fresh.success) {
-      return failure(fresh.error || "Refetch failed", fresh.code, fresh.details);
-    }
-
-    await recomputePayoutFor(fresh.data, ctx);
-    // The old row might have lived in a different payout period — recompute
-    // both so neither month is left with stale hours.
-    const prevPeriod = attendancePayoutPeriod(
-      String(existing.data.check_in_at || ""),
-      null,
-      existing.data.work_date as string | undefined
-    );
-    const newPeriod = attendancePayoutPeriod(
-      (fresh.data.check_in_at as string | null) || undefined,
-      null,
-      fresh.data.work_date as string | undefined
-    );
-    if (prevPeriod && newPeriod && prevPeriod !== newPeriod) {
-      await payoutRepository.recomputeRpc(
-        String(existing.data.employee_id || ""),
-        prevPeriod,
-        dbAccess(ctx)
-      );
-    }
-    return finalizeWithAudit(
-      await fireAudit(ctx, {
-        entity_id: id,
-        action: "update",
-        before: existing.data,
-        after: fresh.data
-      }),
-      fresh.data
-    );
+    return dutyCalendarSotFailure(DUTY_CALENDAR_ATTENDANCE_SOT_MESSAGE);
   },
 
   /**
-   * Convenience wrapper for the "Mark attendance" UI: takes the same payload as
-   * `create`, but upserts when a row for the same duty (or employee+date)
-   * already exists. Either way, payout is recomputed and a fresh row is
-   * returned for the frontend to refetch from.
+   * Convenience wrapper for the "Mark attendance" UI — disabled.
    */
   async mark(
-    rawInput: unknown,
-    ctx: AttendanceServiceContext
+    _rawInput: unknown,
+    _ctx: AttendanceServiceContext
   ): Promise<ApiResult<AttendanceApiRow>> {
-    const parsed = parseInput(attendanceSchema, rawInput);
-    if (!parsed.success) return passFailure(parsed);
-    const input = parsed.data as AttendanceInput;
-
-    const anchor = ensureAttendanceHasAnchor(input as AttendancePersistInput);
-    if (!anchor.success) {
-      return failure(anchor.error || "Anchor missing", anchor.code, anchor.details);
-    }
-
-    const access = dbAccess(ctx);
-    let existingId: string | undefined;
-    if (input.duty_id) {
-      const lookup = await attendanceRepository.findByDutyAndEmployee(
-        input.duty_id,
-        input.employee_id,
-        access
-      );
-      if (!lookup.success) return passFailure(lookup);
-      if (lookup.data) existingId = String(lookup.data.id);
-    }
-    if (!existingId) {
-      const dateKey = attendanceDateKey(input.check_in_at, input.work_date);
-      const candidates = await attendanceRepository.findByEmployeeAndDate(
-        input.employee_id,
-        dateKey,
-        access
-      );
-      if (!candidates.success) return passFailure(candidates);
-      const conflict = findAttendanceDuplicate(
-        (candidates.data || []).map(toAttendanceRow),
-        input.employee_id,
-        undefined,
-        dateKey
-      );
-      if (conflict) existingId = conflict.id;
-    }
-
-    if (existingId) return attendanceService.update(existingId, rawInput, ctx);
-    return attendanceService.create(rawInput, ctx);
+    return dutyCalendarSotFailure(DUTY_CALENDAR_ATTENDANCE_SOT_MESSAGE);
   },
 
   /** Quick toggles surfaced by the legacy UI ("Mark Present", "Mark Absent"). */
@@ -499,63 +194,11 @@ export const attendanceService = {
   },
 
   async remove(
-    id: string,
-    ctx: AttendanceServiceContext,
-    rawInput?: unknown
+    _id: string,
+    _ctx: AttendanceServiceContext,
+    _rawInput?: unknown
   ): Promise<ApiResult<{ id: string }>> {
-    const existing = await loadAttendance(id, ctx);
-    if (!existing.success) {
-      return failure(existing.error || "Attendance not found", existing.code, existing.details);
-    }
-    if (rawInput && typeof rawInput === "object" && Object.keys(rawInput as object).length > 0) {
-      const parsed = parseInput(attendanceDeleteSchema, rawInput);
-      if (!parsed.success) return passFailure(parsed);
-      const deleteInput = parsed.data;
-      const stale = assertNotStale(
-        "Attendance",
-        existing.data.updated_at,
-        deleteInput?.expected_updated_at
-      );
-      if (!stale.success) return passFailure(stale);
-    }
-    const removed = await attendanceRepository.remove(id, dbAccess(ctx));
-    if (!removed.success) return passFailure(removed);
-
-    const periods = new Set<string>();
-    const dutyId = String(existing.data.duty_id || "");
-    let dutyStart: string | undefined;
-    if (dutyId) {
-      const duty = await dutyRepository.findById(dutyId, dbAccess(ctx));
-      if (duty.success && duty.data) dutyStart = String(duty.data.start_at || "");
-    }
-    const p = attendancePayoutPeriod(
-      (existing.data.check_in_at as string | null) || undefined,
-      dutyStart,
-      (existing.data.work_date as string | null) || undefined
-    );
-    if (p) periods.add(p);
-    const prevCheckIn = String(existing.data.check_in_at || "");
-    if (prevCheckIn) {
-      const prevP = attendancePayoutPeriod(prevCheckIn, dutyStart, existing.data.work_date as string);
-      if (prevP) periods.add(prevP);
-    }
-    const employeeId = String(existing.data.employee_id || "");
-    await Promise.all(
-      Array.from(periods).map((period) =>
-        employeeId
-          ? payoutRepository.recomputeRpc(employeeId, period, dbAccess(ctx))
-          : Promise.resolve()
-      )
-    );
-    return finalizeWithAudit(
-      await fireAudit(ctx, {
-        entity_id: id,
-        action: "delete",
-        before: existing.data,
-        stamp: "Attendance removed"
-      }),
-      { id }
-    );
+    return dutyCalendarSotFailure(DUTY_CALENDAR_ATTENDANCE_SOT_MESSAGE);
   },
 
   /**
@@ -1489,45 +1132,10 @@ export const attendanceService = {
    *     PRESENT / LATE / HALF_DAY so day-board marks match duty check-in.
    */
   async dayMark(
-    rawInput: unknown,
-    ctx: AttendanceServiceContext
+    _rawInput: unknown,
+    _ctx: AttendanceServiceContext
   ): Promise<ApiResult<AttendanceApiRow>> {
-    const parsed = parseInput(attendanceDayMarkSchema, rawInput);
-    if (!parsed.success) return passFailure(parsed);
-    const input = parsed.data as AttendanceDayMarkInput;
-    const date = input.date;
-    const status = input.status;
-    const noTime = ATTENDANCE_NO_TIME_STATUSES.has(status);
-    const payload: Record<string, unknown> = {
-      employee_id: input.employee_id,
-      status,
-      work_date: date,
-      duty_id: input.duty_id || undefined,
-      patient_id: input.patient_id || undefined,
-      shift_type: input.shift_type || undefined,
-      notes: input.notes ?? ""
-    };
-    const defaultCheckIn = `${date}T09:00:00.000+05:30`;
-    if (!noTime) {
-      payload.check_in_at = input.check_in_at || defaultCheckIn;
-      if (input.check_out_at) payload.check_out_at = input.check_out_at;
-    }
-    if (input.expected_updated_at) {
-      payload.expected_updated_at = input.expected_updated_at;
-    }
-
-    const marked = await attendanceService.mark(payload, ctx);
-    if (!marked.success) return marked;
-
-    const syncDutyStatuses = new Set(["PRESENT", "LATE", "HALF_DAY"]);
-    if (input.sync_duty !== false && input.duty_id && syncDutyStatuses.has(status)) {
-      await syncScheduledDutyCheckIn(
-        input.duty_id,
-        String(payload.check_in_at || defaultCheckIn),
-        ctx
-      );
-    }
-    return marked;
+    return dutyCalendarSotFailure(DUTY_CALENDAR_ATTENDANCE_SOT_MESSAGE);
   }
 };
 

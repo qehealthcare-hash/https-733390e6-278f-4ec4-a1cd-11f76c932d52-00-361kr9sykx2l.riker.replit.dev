@@ -24,6 +24,11 @@ import { payoutRepository } from "@/database/payoutRepository";
 import { billingRepository } from "@/database/billingRepository";
 import { dutyRepository } from "@/database/dutyRepository";
 import { sumServiceTotals, sumReceiptAmounts } from "@/business/billingRules";
+import { isPayoutLocked } from "@/business/payoutRules";
+import {
+  dutyIdFromRemarks,
+  isDutyDiaryRemarks
+} from "@/business/dutyDiaryRules";
 
 /** First/last calendar day (YYYY-MM-DD) for a YYYY-MM period. */
 function monthBounds(period: string): { from: string; to: string } {
@@ -145,6 +150,7 @@ export async function getPatientBillingLedger(
   if (!rcptAll.success) return passFailure(rcptAll);
 
   const svcRows = (svcAll.data || []).filter((s) => inPeriod(s.date, period));
+  const dutySvcRows = svcRows.filter((s) => isDutyDiaryRemarks(String(s.remarks ?? "")));
   const rcptRows = (rcptAll.data || []).filter((r) => inPeriod(r.date, period));
   // Reuse the SAME billed/received formula reports + billing use, so there is
   // exactly one definition of these totals across the whole app.
@@ -154,12 +160,92 @@ export async function getPatientBillingLedger(
   return success({
     patient_id: patientId,
     period,
-    duty_count: svcRows.length,
+    duty_count: dutySvcRows.length,
     billed: Math.round(billed * 100) / 100,
     received: Math.round(received * 100) / 100,
     outstanding: Math.max(0, Math.round((billed - received) * 100) / 100),
-    source_row_ids: svcRows.map((r) => String(r.id)).filter(Boolean)
+    source_row_ids: dutySvcRows.map((r) => String(r.id)).filter(Boolean)
   });
+}
+
+// ───────────────────────────── Dashboard duty KPIs ─────────────────────────────
+
+export interface DashboardDutyKpis {
+  duties_active: number;
+  duties_scheduled: number;
+  duties_completed: number;
+  duties_cancelled: number;
+}
+
+/**
+ * Duty-day counts for dashboard KPIs — derived ONLY from materialized
+ * hh_svc_entries rows (duty:% remarks). Status buckets join read-only to
+ * hh_duties.status so we never count master duty rows as "days".
+ */
+export function computeDashboardDutyKpisFromLedger(
+  svcRows: JsonRow[],
+  dutiesById?: Map<string, JsonRow>
+): DashboardDutyKpis {
+  const dutyRows = (svcRows || []).filter((r) => isDutyDiaryRemarks(String(r.remarks ?? "")));
+  if (!dutiesById || dutiesById.size === 0) {
+    const total = dutyRows.length;
+    return {
+      duties_active: total,
+      duties_scheduled: 0,
+      duties_completed: total,
+      duties_cancelled: 0
+    };
+  }
+  let active = 0;
+  let scheduled = 0;
+  let completed = 0;
+  let cancelled = 0;
+  for (const row of dutyRows) {
+    const dutyId = dutyIdFromRemarks(String(row.remarks || ""));
+    const status = String((dutyId && dutiesById.get(dutyId)?.status) || "").toUpperCase();
+    if (status === "SCHEDULED") scheduled += 1;
+    else if (status === "IN_PROGRESS") active += 1;
+    else if (status === "COMPLETED") completed += 1;
+    else if (status === "CANCELLED" || status === "NO_SHOW" || status === "DELETED") cancelled += 1;
+    else active += 1;
+  }
+  return { duties_active: active, duties_scheduled: scheduled, duties_completed: completed, duties_cancelled: cancelled };
+}
+
+/** Bulk attendance rollups from materialized payout charges (one row per duty-day). */
+export async function listAttendanceLedgersForPeriod(
+  period: string,
+  access?: DbAccess,
+  opts?: { employee_id?: string }
+): Promise<ApiResult<Map<string, AttendanceLedger>>> {
+  const charges = opts?.employee_id
+    ? await payoutRepository.listChargesByEmployeePeriod(opts.employee_id, period, access)
+    : await payoutRepository.listAllChargesForPeriod(period, access);
+  if (!charges.success) return passFailure(charges);
+  const byEmployee = new Map<string, Set<string>>();
+  for (const row of charges.data || []) {
+    const emp = String(row.partner_id || row.partner || "").trim();
+    const date = String(row.date || "").trim();
+    if (!emp || !date) continue;
+    if (!isDutyDiaryRemarks(String(row.remarks ?? ""))) continue;
+    let dates = byEmployee.get(emp);
+    if (!dates) {
+      dates = new Set();
+      byEmployee.set(emp, dates);
+    }
+    dates.add(date);
+  }
+  const out = new Map<string, AttendanceLedger>();
+  for (const [employee_id, dates] of byEmployee) {
+    const sorted = [...dates].sort();
+    out.set(employee_id, {
+      employee_id,
+      period,
+      present_days: sorted.length,
+      dates: sorted
+    });
+  }
+  return success(out);
 }
 
 // ───────────────────────────── Duty rows ─────────────────────────────
@@ -210,6 +296,11 @@ export async function recomputeEmployeePayout(
   period: string,
   access?: DbAccess
 ): Promise<ApiResult<{ payout_id?: string; gross?: number; duties?: number } | null>> {
+  const existing = await payoutRepository.findByEmployeePeriod(employeeId, period, access);
+  if (!existing.success) return passFailure(existing);
+  if (existing.data && isPayoutLocked(String(existing.data.status || ""))) {
+    return success(null);
+  }
   return payoutRepository.recomputeRpc(employeeId, period, access);
 }
 

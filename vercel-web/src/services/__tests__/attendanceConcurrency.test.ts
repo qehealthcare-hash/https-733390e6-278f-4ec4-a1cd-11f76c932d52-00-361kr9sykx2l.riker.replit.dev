@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { attendanceService } from "@/services/attendanceService";
 import { attendanceRepository } from "@/database/attendanceRepository";
-import { dutyRepository } from "@/database/dutyRepository";
-import { payoutRepository } from "@/database/payoutRepository";
+import { DUTY_CALENDAR_ATTENDANCE_SOT_MESSAGE } from "@/business/dutySourceOfTruth";
+import { ErrorCodes } from "@/types/common";
 
 vi.mock("@/database/attendanceRepository");
 vi.mock("@/database/dutyRepository");
@@ -28,12 +28,12 @@ const baseRow = {
   hours: 8
 };
 
-describe("attendanceService optimistic concurrency", () => {
+describe("attendanceService manual writes (Phase 1 strict)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("returns conflict when PATCH carries a stale expected_updated_at", async () => {
+  it("blocks PATCH even when concurrency token would otherwise match", async () => {
     vi.mocked(attendanceRepository.findById).mockResolvedValue({
       success: true,
       data: baseRow
@@ -45,54 +45,19 @@ describe("attendanceService optimistic concurrency", () => {
         employee_id: "EMP1",
         status: "PRESENT",
         check_in_at: "2026-06-01T09:00:00.000+05:30",
-        expected_updated_at: "2020-01-01T00:00:00.000Z"
+        expected_updated_at: baseRow.updated_at
       },
       ctx
     );
 
     expect(result.success).toBe(false);
-    expect(result.code).toBe("conflict");
+    if (result.success) return;
+    expect(result.code).toBe(ErrorCodes.business);
+    expect(result.error).toContain(DUTY_CALENDAR_ATTENDANCE_SOT_MESSAGE.slice(0, 20));
     expect(attendanceRepository.update).not.toHaveBeenCalled();
   });
 
-  it("allows PATCH when expected_updated_at matches", async () => {
-    const updatedAt = "2026-06-01T12:00:00.000Z";
-    vi.mocked(attendanceRepository.findById)
-      .mockResolvedValueOnce({
-        success: true,
-        data: { ...baseRow, updated_at: updatedAt }
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        data: { ...baseRow, updated_at: updatedAt, notes: "ok" }
-      });
-    vi.mocked(attendanceRepository.update).mockResolvedValue({
-      success: true,
-      data: { ...baseRow, updated_at: updatedAt, notes: "ok" }
-    });
-    vi.mocked(attendanceRepository.findByDutyAndEmployee).mockResolvedValue({
-      success: true,
-      data: null
-    });
-    vi.mocked(payoutRepository.recomputeRpc).mockResolvedValue({ success: true, data: null });
-
-    const result = await attendanceService.update(
-      "ATT1",
-      {
-        employee_id: "EMP1",
-        status: "PRESENT",
-        check_in_at: "2026-06-01T09:00:00.000+05:30",
-        notes: "ok",
-        expected_updated_at: updatedAt
-      },
-      ctx
-    );
-
-    expect(result.success).toBe(true);
-    expect(attendanceRepository.update).toHaveBeenCalled();
-  });
-
-  it("returns conflict on remove when expected_updated_at is stale", async () => {
+  it("blocks remove even when expected_updated_at is supplied", async () => {
     vi.mocked(attendanceRepository.findById).mockResolvedValue({
       success: true,
       data: baseRow
@@ -101,50 +66,34 @@ describe("attendanceService optimistic concurrency", () => {
     const result = await attendanceService.remove(
       "ATT1",
       ctx,
-      { expected_updated_at: "2020-01-01T00:00:00.000Z" }
+      { expected_updated_at: baseRow.updated_at }
     );
 
     expect(result.success).toBe(false);
-    expect(result.code).toBe("conflict");
+    if (result.success) return;
+    expect(result.code).toBe(ErrorCodes.business);
     expect(attendanceRepository.remove).not.toHaveBeenCalled();
   });
 
-  it("mark upsert update path forwards expected_updated_at to update", async () => {
-    const updatedAt = "2026-06-01T12:00:00.000Z";
+  it("blocks mark upsert path", async () => {
     vi.mocked(attendanceRepository.findByDutyAndEmployee).mockResolvedValue({
       success: true,
       data: { id: "ATT1" }
     });
-    vi.mocked(attendanceRepository.findByEmployeeAndDate).mockResolvedValue({
-      success: true,
-      data: [{ id: "ATT1", employee_id: "EMP1", duty_id: "DUTY1", work_date: "2026-06-01" }]
-    });
-    vi.mocked(attendanceRepository.findById)
-      .mockResolvedValueOnce({
-        success: true,
-        data: { ...baseRow, updated_at: updatedAt }
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        data: { ...baseRow, updated_at: updatedAt, status: "ABSENT" }
-      });
-    vi.mocked(attendanceRepository.update).mockResolvedValue({
-      success: true,
-      data: { ...baseRow, updated_at: updatedAt, status: "ABSENT" }
-    });
-    vi.mocked(payoutRepository.recomputeRpc).mockResolvedValue({ success: true, data: null });
 
     const result = await attendanceService.mark(
       {
         employee_id: "EMP1",
         duty_id: "DUTY1",
         status: "ABSENT",
-        expected_updated_at: updatedAt
+        expected_updated_at: baseRow.updated_at
       },
       ctx
     );
 
-    expect(result.success).toBe(true);
-    expect(attendanceRepository.update).toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.code).toBe(ErrorCodes.business);
+    expect(attendanceRepository.update).not.toHaveBeenCalled();
   });
 });

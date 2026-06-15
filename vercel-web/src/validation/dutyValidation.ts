@@ -100,8 +100,8 @@ export const dutyCancelSchema = z.object({
 export const dutyDiaryBatchSchema = z.object({
   duty_ids: z
     .array(z.string().trim().min(1))
+    .min(1, "At least one duty id is required")
     .max(500, "At most 500 duty ids per batch request")
-    .default([])
 });
 
 /** GET /duties query string. */

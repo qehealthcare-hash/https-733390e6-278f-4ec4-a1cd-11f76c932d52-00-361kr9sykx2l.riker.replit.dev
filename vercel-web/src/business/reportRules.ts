@@ -448,6 +448,23 @@ export function attachAttendanceToPayrollRows<T extends PayrollPayoutRow>(
   }));
 }
 
+/** Payroll attendance columns from the duty-calendar ledger (not hh_attendance). */
+export function attachLedgerAttendanceToPayrollRows<T extends PayrollPayoutRow>(
+  payouts: T[],
+  ledgers: Map<string, { present_days: number }>
+): Array<T & { attendance: AttendanceRollup }> {
+  const empty: AttendanceRollup = { present: 0, absent: 0, late: 0, hours: 0 };
+  return payouts.map((p) => {
+    const ledger = ledgers.get(p.employee_id);
+    return {
+      ...p,
+      attendance: ledger
+        ? { present: ledger.present_days, absent: 0, late: 0, hours: 0 }
+        : empty
+    };
+  });
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
@@ -711,6 +728,41 @@ export function buildAttendanceSummary(
     by_employee: Array.from(empMap.values()).sort((a, b) =>
       a.employee_id.localeCompare(b.employee_id)
     )
+  };
+}
+
+/**
+ * Attendance summary derived strictly from materialized duty-calendar payout
+ * charges (present_days = count of duty-day ledger rows per employee).
+ */
+export function buildAttendanceSummaryFromLedger(
+  period: string,
+  range: { from: string; to: string },
+  ledgers: Map<string, { employee_id: string; present_days: number }>
+): AttendanceSummary {
+  const by_employee: AttendanceSummaryByEmployee[] = Array.from(ledgers.values())
+    .map((l) => ({
+      employee_id: l.employee_id,
+      present: l.present_days,
+      absent: 0,
+      late: 0,
+      half_day: 0,
+      leave: 0,
+      holiday: 0,
+      hours: 0
+    }))
+    .sort((a, b) => a.employee_id.localeCompare(b.employee_id));
+  const total = by_employee.reduce((s, e) => s + e.present, 0);
+  const by_status: Record<string, number> = {};
+  for (const k of ATTENDANCE_STATUS_BUCKETS) by_status[k] = 0;
+  by_status.PRESENT = total;
+  return {
+    period,
+    range,
+    total,
+    by_status,
+    by_shift: {},
+    by_employee
   };
 }
 

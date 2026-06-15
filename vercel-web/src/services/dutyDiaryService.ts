@@ -28,8 +28,9 @@ import { crmDateKeyFromTimestamp, crmTodayEndIso } from "@/utils/crmToday";
 import { billingRepository } from "@/database/billingRepository";
 import { employeeRepository } from "@/database/employeeRepository";
 import { dutyRepository } from "@/database/dutyRepository";
+import { recomputePayoutIfEditable } from "@/services/recomputePayoutIfEditable";
 import { payoutRepository } from "@/database/payoutRepository";
-import type { JsonRow } from "@/database/types";
+import type { DbAccess, JsonRow } from "@/database/types";
 import type { DutyServiceContext } from "@/services/dutyService";
 import { writeMutationAudit } from "@/services/mutationAudit";
 import { failure, passFailure, success } from "@/utils/apiResponse";
@@ -38,6 +39,22 @@ import { assertNotStale } from "@/business/concurrencyRules";
 function dbAccess(ctx: DutyServiceContext) {
   const token = ctx.accessToken ?? ctx.actor.accessToken;
   return token ? { accessToken: token } : undefined;
+}
+
+/**
+ * Access for writes to the duty-materialized ledger tables (hh_svc_entries,
+ * hh_payout_charges). A DB trigger — migration
+ * `20260613110000_duty_ledger_allow_service_role` — only lets the
+ * `service_role` create/update/delete rows whose remarks start with `duty:`.
+ *
+ * This service IS the trusted Duty Calendar materializer, so its ledger
+ * writes must use the admin (service-role) client. Returning `undefined`
+ * makes `resolveClient` fall back to the service-role client. Reads stay
+ * user-scoped via `dbAccess(ctx)`, and frontend (`authenticated`) direct
+ * writes remain blocked by the trigger.
+ */
+function ledgerAccess(): DbAccess | undefined {
+  return undefined;
 }
 
 /**
@@ -59,11 +76,7 @@ async function recomputeForPartners(
   );
   await Promise.all(
     unique.map(async (empId) => {
-      try {
-        await payoutRepository.recomputeRpc(empId, period, access);
-      } catch (err) {
-        console.error("[dutyDiaryService] recompute payout failed", { empId, period, err });
-      }
+      await recomputePayoutIfEditable(empId, period, access);
     })
   );
 }
@@ -272,7 +285,10 @@ export const dutyDiaryService = {
       try {
         const mat = await this.materializeDuty(duty, ctx, {
           from: startDay,
-          to: endDay
+          to: endDay,
+          // Period-scoped rematerialize must never prune rows outside the
+          // target month — default prune would delete other months' diary rows.
+          prune: false
         });
         if (mat.success) {
           report.duties_materialized += 1;
@@ -357,6 +373,10 @@ export const dutyDiaryService = {
       to: opts?.to,
       excluded: excludedSlots
     });
+    // Period/window-clipped materialize must not prune rows outside the clip
+    // unless the caller explicitly opts in (dangerous for payout recompute).
+    const windowClipped = Boolean(opts?.from || opts?.to);
+    const shouldPrune = windowClipped ? opts?.prune === true : opts?.prune !== false;
     const days = [...expectedKeys].map((k) => k.split(":")[0]);
     const uniqueDays = new Set(days);
     const openEnded = isOpenEndedEndAt(duty.end_at as string | undefined);
@@ -374,6 +394,31 @@ export const dutyDiaryService = {
     const nameCache = new Map<string, string>();
     /** employee_id:YYYY-MM → locked (LOCKED/PAID payout row exists). */
     const payoutLockCache = new Map<string, boolean>();
+    /** employee_id:YYYY-MM-DD → paid (day is in hh_paid_transactions). */
+    const dayPaidCache = new Map<string, boolean>();
+
+    // "Billing is done" once a receipt has been recorded against the bill.
+    // Per operator rule, a billed/paid day must never be edited or affected,
+    // so a receipted bill freezes every existing materialized row of the duty.
+    const receiptCount = await dutyRepository.countActiveReceipts(billingId, access);
+    if (!receiptCount.success) return passFailure(receiptCount);
+    const billHasReceipt = (receiptCount.data ?? 0) > 0;
+
+    async function isSlotPaid(employeeId: string, isoDate: string): Promise<boolean> {
+      if (!employeeId || !isoDate) return false;
+      const cacheKey = `${employeeId}:${isoDate}`;
+      if (dayPaidCache.has(cacheKey)) return dayPaidCache.get(cacheKey)!;
+      const paid = await payoutRepository.isDayPaid(employeeId, isoDate, access);
+      const value = paid.success && Boolean(paid.data);
+      dayPaidCache.set(cacheKey, value);
+      return value;
+    }
+
+    /** A day×partner slot is frozen when billing is done OR payout is made. */
+    async function isSlotFrozen(employeeId: string, isoDate: string): Promise<boolean> {
+      if (billHasReceipt) return true;
+      return isSlotPaid(employeeId, isoDate);
+    }
 
     async function isPartnerPayoutPeriodLocked(
       employeeId: string,
@@ -449,6 +494,12 @@ export const dutyDiaryService = {
           skipped += 1;
           continue;
         }
+        // Never delete a billed/paid day — a generated bill or made payout
+        // must not be affected by a later date-shrink / partner change.
+        if (parsed && (await isSlotFrozen(parsed.employeeId, parsed.isoDate))) {
+          skipped += 1;
+          continue;
+        }
         if (opts?.dry_run) {
           if (parsed) {
             preview.push({
@@ -464,7 +515,7 @@ export const dutyDiaryService = {
           deletedSvc += 1;
           continue;
         }
-        const del = await billingRepository.removeSvc(String(row.id), access);
+        const del = await billingRepository.removeSvc(String(row.id), ledgerAccess());
         if (!del.success) return passFailure(del);
         deletedSvc += 1;
         svcByKey.delete(key);
@@ -478,7 +529,8 @@ export const dutyDiaryService = {
         }
         if (
           parsed &&
-          (await isPartnerPayoutPeriodLocked(parsed.employeeId, parsed.isoDate))
+          ((await isPartnerPayoutPeriodLocked(parsed.employeeId, parsed.isoDate)) ||
+            (await isSlotFrozen(parsed.employeeId, parsed.isoDate)))
         ) {
           skipped += 1;
           continue;
@@ -487,7 +539,7 @@ export const dutyDiaryService = {
           deletedPayout += 1;
           continue;
         }
-        const del = await billingRepository.removePayoutCharge(String(row.id), access);
+        const del = await billingRepository.removePayoutCharge(String(row.id), ledgerAccess());
         if (!del.success) return passFailure(del);
         deletedPayout += 1;
         payByKey.delete(key);
@@ -532,6 +584,10 @@ export const dutyDiaryService = {
       const ownedSvc = svcByKey.get(key);
       const ownedPay = payByKey.get(key);
       const payoutPeriodLocked = await isPartnerPayoutPeriodLocked(empId, isoDate);
+      // Once a day is billed (receipt) or paid, its existing rows are frozen:
+      // we still create genuinely-missing days, but never rewrite finalized
+      // amounts/partners on a billed/paid slot.
+      const slotFrozen = await isSlotFrozen(empId, isoDate);
 
       if (ownedSvc) {
         const ownedParsed = parseDutyDiaryRemarks(String(ownedSvc.remarks || ""));
@@ -606,6 +662,12 @@ export const dutyDiaryService = {
         }
       }
 
+      // Freeze finalized days: a billed/paid slot keeps its recorded amounts.
+      if (slotFrozen) {
+        if (svcAction === "update") svcAction = "skip";
+        if (payoutAction === "update") payoutAction = "skip";
+      }
+
       if (opts?.dry_run) {
         preview.push({
           date: isoDate,
@@ -644,12 +706,12 @@ export const dutyDiaryService = {
             remarks: svcRow.remarks,
             updated_by: ctx.actor.email
           },
-          access
+          ledgerAccess()
         );
         if (!upd.success) return passFailure(upd);
         updatedSvc += 1;
       } else if (svcAction === "create") {
-        const ins = await billingRepository.insertSvc(svcRow, access);
+        const ins = await billingRepository.insertSvc(svcRow, ledgerAccess());
         if (!ins.success) {
           const msg = (ins.error || "").toLowerCase();
           if (!msg.includes("duplicate") && !msg.includes("unique")) return passFailure(ins);
@@ -678,12 +740,12 @@ export const dutyDiaryService = {
             remarks: payRow.remarks,
             updated_by: ctx.actor.email
           },
-          access
+          ledgerAccess()
         );
         if (!upd.success) return passFailure(upd);
         updatedPayout += 1;
       } else if (payoutAction === "create") {
-        const insPay = await billingRepository.insertPayoutCharge(payRow, access);
+        const insPay = await billingRepository.insertPayoutCharge(payRow, ledgerAccess());
         if (!insPay.success) {
           const msg = (insPay.error || "").toLowerCase();
           if (!msg.includes("duplicate") && !msg.includes("unique")) return passFailure(insPay);
@@ -698,7 +760,7 @@ export const dutyDiaryService = {
       return success(null);
     }
 
-    if (opts?.prune !== false) {
+    if (shouldPrune) {
       const pruned = await pruneOrphans();
       if (!pruned.success) return passFailure(pruned);
     }
@@ -976,6 +1038,20 @@ export const dutyDiaryService = {
       return failure("No diary entry for that day and partner", ErrorCodes.notFound);
     }
 
+    // Billing done = a receipt exists on this day's bill. Per operator rule a
+    // billed day must not be edited or affected, so refuse the day edit.
+    const billingIdForDay = String(svcRow?.billing_id || payRow?.billing_id || "");
+    if (billingIdForDay) {
+      const receipts = await dutyRepository.countActiveReceipts(billingIdForDay, access);
+      if (!receipts.success) return passFailure(receipts);
+      if ((receipts.data ?? 0) > 0) {
+        return failure(
+          "This day's bill already has a receipt — the day is locked. Reverse the receipt before editing.",
+          ErrorCodes.business
+        );
+      }
+    }
+
     // P1 — optimistic concurrency.
     if (svcRow && patch.svc_updated_at) {
       const stale = assertNotStale("Diary svc row", svcRow.updated_at, patch.svc_updated_at);
@@ -1075,7 +1151,7 @@ export const dutyDiaryService = {
         remarks: newRemarks,
         updated_by: ctx.actor.email
       };
-      const upd = await billingRepository.updateSvc(String(svcRow.id), svcPatch, access);
+      const upd = await billingRepository.updateSvc(String(svcRow.id), svcPatch, ledgerAccess());
       if (!upd.success) return passFailure(upd);
       svcUpdated = true;
     }
@@ -1096,7 +1172,7 @@ export const dutyDiaryService = {
         remarks: newRemarks,
         updated_by: ctx.actor.email
       };
-      const upd = await billingRepository.updatePayoutCharge(String(payRow.id), payPatch, access);
+      const upd = await billingRepository.updatePayoutCharge(String(payRow.id), payPatch, ledgerAccess());
       if (!upd.success) return passFailure(upd);
       payoutUpdated = true;
     }
@@ -1231,12 +1307,12 @@ export const dutyDiaryService = {
     let svcDeleted = false;
     let payoutDeleted = false;
     if (svcRow) {
-      const del = await billingRepository.removeSvc(String(svcRow.id), access);
+      const del = await billingRepository.removeSvc(String(svcRow.id), ledgerAccess());
       if (!del.success) return passFailure(del);
       svcDeleted = true;
     }
     if (payRow) {
-      const del = await billingRepository.removePayoutCharge(String(payRow.id), access);
+      const del = await billingRepository.removePayoutCharge(String(payRow.id), ledgerAccess());
       if (!del.success) return passFailure(del);
       payoutDeleted = true;
     }
@@ -1304,12 +1380,11 @@ export const dutyDiaryService = {
   },
 
   async rollbackDutyDiary(dutyId: string, ctx: DutyServiceContext): Promise<ApiResult<null>> {
-    const access = dbAccess(ctx);
     const paidGuard = await dutyDiaryService.assertDutyDiaryNotDisbursed(dutyId, ctx);
     if (!paidGuard.success) return passFailure(paidGuard);
-    const svc = await dutyRepository.removeSvcEntriesByDutyId(dutyId, access);
+    const svc = await dutyRepository.removeSvcEntriesByDutyId(dutyId, ledgerAccess());
     if (!svc.success) return passFailure(svc);
-    const pay = await dutyRepository.removePayoutChargesByDutyId(dutyId, access);
+    const pay = await dutyRepository.removePayoutChargesByDutyId(dutyId, ledgerAccess());
     if (!pay.success) return passFailure(pay);
     return success(null);
   },

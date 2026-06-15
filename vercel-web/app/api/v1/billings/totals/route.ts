@@ -2,9 +2,9 @@ import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { BILLING_READ_ROLES } from "@/lib/api/billingRoles";
-import { billingService } from "@/services/billingService";
+import { reportService } from "@/services/reportService";
 import { respond } from "@/lib/api/apiResultBridge";
-import { ErrorCodes, type ApiResult } from "@/types/common";
+import { ErrorCodes } from "@/types/common";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,21 +12,19 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/v1/billings/totals?period=YYYY-MM
  *
- * Sum of svc_entries.total for the given month across every billing.
- * Dashboard / report screens call this so their "billing total" matches the
- * value on the invoice screen byte-for-byte.
+ * Delegates to the same report totals used by Reports → Billing so there is
+ * one definition of monthly billing totals across the app.
  */
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, [...BILLING_READ_ROLES]);
   const period = new URL(req.url).searchParams.get("period") || "";
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
-    const result: ApiResult<never> = {
+    return respond({
       success: false,
       error: "period must be YYYY-MM",
       code: ErrorCodes.badRequest
-    };
-    return respond(result);
+    });
   }
-  const result = await billingService.monthlyServiceTotal(period, { actor });
+  const result = await reportService.billingTotals({ period }, { actor });
   return respond(result);
 });

@@ -19,7 +19,7 @@
  */
 
 import type { NextRequest } from "next/server";
-import { withAuth } from "@/lib/api/handler";
+import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { PAYOUT_WRITE_ROLES } from "@/lib/api/payoutRoles";
@@ -40,7 +40,7 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
       // request to hash the body for the synthesized key. Reading the body
       // before withIdempotency disturbs the stream and the synth key would
       // collapse across distinct payloads.
-      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = await parseJsonBody(req);
       const result = await payoutService.setEmployeePeriodPayoutRate(body, { actor });
       return respond(result);
     }

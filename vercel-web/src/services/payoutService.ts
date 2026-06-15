@@ -31,7 +31,6 @@ import {
   payoutRecomputeSchema,
   payoutListQuerySchema,
   payoutPendingQuerySchema,
-  replacePayoutChargesSchema,
   type PayoutInput,
   type PayoutAdjustmentInput,
   type PayoutPayInput,
@@ -40,8 +39,7 @@ import {
   type PayoutReopenInput,
   type PayoutRecomputeInput,
   type PayoutListQuery,
-  type PayoutPendingQuery,
-  type ReplacePayoutChargesInput
+  type PayoutPendingQuery
 } from "@/validation/payoutValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
@@ -56,6 +54,7 @@ import {
   ensurePayoutHasSource,
   ensureWithinPayoutOutstanding,
   isPayoutFullyPaid,
+  isPayoutLocked,
   mergePayoutAdjustments,
   payoutLockRow,
   payoutPaidRow,
@@ -75,9 +74,12 @@ import { attendanceRepository } from "@/database/attendanceRepository";
 import { employeeRepository } from "@/database/employeeRepository";
 import { patientRepository } from "@/database/patientRepository";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
-import { parseDutyDiaryRemarks, findDutyLedgerRows } from "@/business/dutyDiaryRules";
+import { parseDutyDiaryRemarks } from "@/business/dutyDiaryRules";
+import {
+  DUTY_CALENDAR_LEDGER_REPLACE_DISABLED_MESSAGE,
+  dutyCalendarSotFailure
+} from "@/business/dutySourceOfTruth";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
-import { dutyDayLedger } from "@/services/dutyDayLedger";
 import type { JsonRow } from "@/database/types";
 import {
   duplicateFailure,
@@ -1136,9 +1138,9 @@ export const payoutService = {
       dbAccess(ctx)
     );
     if (!existing.success) return passFailure(existing);
-    if (existing.data && String(existing.data.status || "") === "PAID") {
+    if (existing.data && isPayoutLocked(String(existing.data.status || ""))) {
       return failure(
-        "Cannot recompute a PAID payout",
+        "Cannot recompute a LOCKED or PAID payout",
         ErrorCodes.business,
         { status: existing.data.status }
       );
@@ -1622,83 +1624,13 @@ export const payoutService = {
   },
 
   /**
-   * Replace the entire `hh_payout_charges` slice for a `svc_key`. Used by
-   * the legacy duty-diary save to keep per-partner payout rows in sync with
-   * the visible service-entries table. Audited.
+   * Disabled — Duty Calendar is the single source of truth for payout charges.
    */
   async replacePayoutCharges(
-    rawInput: unknown,
-    ctx: PayoutServiceContext
+    _rawInput: unknown,
+    _ctx: PayoutServiceContext
   ): Promise<ApiResult<{ svc_key: string; count: number }>> {
-    const parsed = parseInput(replacePayoutChargesSchema, rawInput);
-    if (!parsed.success) return passFailure(parsed);
-    const input = parsed.data as ReplacePayoutChargesInput;
-
-    // Source-of-truth guard: duty-calendar materialized payout rows
-    // (remarks `duty:%`) are owned only by the Duty Calendar. Payout may not
-    // create/edit/delete them through a slice replace — those edits must
-    // happen in the Duties module so billing + payout stay in sync.
-    if (findDutyLedgerRows(input.rows).length > 0) {
-      return failure(
-        "Duty-calendar payout charges are read-only here. Edit the duty in the Duty Calendar instead.",
-        ErrorCodes.validation
-      );
-    }
-
-    const rows: JsonRow[] = input.rows.map((row) => ({
-      date: row.date || "",
-      partner: row.partner || "",
-      partner_id: row.partner_id || "",
-      term: row.term || "",
-      amount: row.amount,
-      remarks: row.remarks || ""
-    }));
-
-    const access = dbAccess(ctx);
-    const replaced = await payoutRepository.replacePayoutChargesRpc(
-      input.svc_key,
-      rows,
-      access
-    );
-    if (!replaced.success) return passFailure(replaced);
-
-    // Phase 11 — best-effort duty-day ledger sync. Look up the freshly
-    // inserted payout_charges by svc_key and link each one to its matching
-    // day-row. The legacy RPC deletes + reinserts so any "old" charges are
-    // implicitly released when their id no longer exists.
-    try {
-      const billingId = input.svc_key.split("_")[0] || "";
-      const fresh = await payoutRepository.listChargesBySvcKey(
-        input.svc_key,
-        access
-      );
-      const chargeRows = fresh.success ? fresh.data || [] : [];
-      for (const charge of chargeRows) {
-        await dutyDayLedger.syncPayoutChargeCreated(
-          {
-            id: String(charge.id || ""),
-            billing_id: String(charge.billing_id || billingId),
-            partner_id: String(charge.partner_id || ""),
-            service_name: String(charge.service_name || ""),
-            date: String(charge.date || "")
-          },
-          ctx.actor.email,
-          access
-        );
-      }
-    } catch (err) {
-      console.error("[dutyDayLedger] payout charge replace sync failed", err);
-    }
-
-    return finalizeWithAudit(
-      await fireAudit(ctx, {
-        entity_id: input.svc_key,
-        action: "update",
-        after: { svc_key: input.svc_key, count: rows.length },
-        stamp: `Replaced ${rows.length} payout charges for ${input.svc_key}`
-      }),
-      { svc_key: input.svc_key, count: rows.length }
-    );
+    return dutyCalendarSotFailure(DUTY_CALENDAR_LEDGER_REPLACE_DISABLED_MESSAGE);
   },
 
   // ─────────────────────────────────────────────────────────────────────
@@ -1710,7 +1642,7 @@ export const payoutService = {
    * services can call it cheaply from their own audit-wrapped flows.
    *
    * Returns success even if the row doesn't exist yet (the RPC will upsert).
-   * Refuses to touch PAID rows.
+   * Refuses to touch LOCKED or PAID rows.
    */
   /**
    * One-click repair for "duty exists but Gross is ₹0" — set
@@ -1750,11 +1682,11 @@ export const payoutService = {
 
     const access = dbAccess(ctx);
     const existing = await payoutRepository.findByEmployeePeriod(employeeId, period, access);
-    if (existing.success && existing.data && String(existing.data.status || "") === "PAID") {
+    if (existing.success && existing.data && isPayoutLocked(String(existing.data.status || ""))) {
       return failure(
-        "Cannot adjust rates on a PAID payout — reopen first",
+        "Cannot adjust rates on a LOCKED or PAID payout — reopen first",
         ErrorCodes.business,
-        { payout_id: existing.data.id }
+        { payout_id: existing.data.id, status: existing.data.status }
       );
     }
 
@@ -1797,7 +1729,11 @@ export const payoutService = {
   ): Promise<ApiResult<JsonRow | null>> {
     if (!employeeId || !period) return success(null);
     const existing = await payoutRepository.findByEmployeePeriod(employeeId, period, dbAccess(ctx));
-    if (existing.success && existing.data && String(existing.data.status || "") === "PAID") {
+    if (
+      existing.success &&
+      existing.data &&
+      isPayoutLocked(String(existing.data.status || ""))
+    ) {
       return success(existing.data);
     }
     const result = await recomputeAndPersist(employeeId, period, ctx, { requireSource: false });

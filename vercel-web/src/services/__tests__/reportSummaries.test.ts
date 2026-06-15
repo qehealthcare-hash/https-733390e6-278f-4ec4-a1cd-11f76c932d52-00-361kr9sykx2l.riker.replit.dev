@@ -50,15 +50,23 @@ vi.mock("@/database/patientRepository", () => ({
   }
 }));
 
+vi.mock("@/src/lib/duty-ledger", () => ({
+  listAttendanceLedgersForPeriod: vi.fn(),
+  getDutyRowsByPeriod: vi.fn(),
+  computeDashboardDutyKpisFromLedger: vi.fn()
+}));
+
 import { reportService } from "@/services/reportService";
 import { reportRepository } from "@/database/reportRepository";
 import { billingRepository } from "@/database/billingRepository";
 import { patientRepository } from "@/database/patientRepository";
+import { listAttendanceLedgersForPeriod } from "@/src/lib/duty-ledger";
 
 type Mock = ReturnType<typeof vi.fn>;
 const repo = reportRepository as unknown as Record<string, Mock>;
 const billings = billingRepository as unknown as Record<string, Mock>;
 const patients = patientRepository as unknown as Record<string, Mock>;
+const dutyLedger = listAttendanceLedgersForPeriod as unknown as Mock;
 
 const actorCtx = { actor: { email: "tester@hominal.test", role: "Admin" } };
 
@@ -207,54 +215,34 @@ describe("reportService.patientsSummary", () => {
 });
 
 describe("reportService.attendanceSummary", () => {
-  it("applies employee_id filter to every repo call and respects status narrowing", async () => {
-    repo.countAttendanceScoped.mockResolvedValueOnce(ok(15));
-    // listAttendanceInRange is the unfiltered rollup source — the service
-    // applies query.status itself.
-    repo.listAttendanceInRange.mockResolvedValueOnce(
-      ok([
-        { id: "A1", employee_id: "EMP1", status: "PRESENT", hours: 8 },
-        { id: "A2", employee_id: "EMP1", status: "ABSENT", hours: 0 },
-        { id: "A3", employee_id: "EMP2", status: "PRESENT", hours: 8 }
-      ])
-    );
+  it("derives present days from duty-calendar ledger, not hh_attendance", async () => {
+    const ledgerMap = new Map([
+      ["EMP1", { employee_id: "EMP1", period: "2026-05", present_days: 3, dates: [] }]
+    ]);
+    dutyLedger.mockResolvedValueOnce(ok(ledgerMap));
     repo.listAttendanceScoped.mockResolvedValueOnce(
       ok([{ id: "A1", employee_id: "EMP1", status: "PRESENT" }])
     );
 
     const result = await reportService.attendanceSummary(
-      { period: "2026-05", employee_id: "EMP1", status: "PRESENT" },
+      { period: "2026-05", employee_id: "EMP1" },
       actorCtx
     );
     expect(result.success).toBe(true);
     if (!result.success) return;
-    // Status filter applied to the rollup — ABSENT row excluded.
-    expect(result.data.summary.by_status.PRESENT).toBe(2);
-    expect(result.data.summary.by_status.ABSENT).toBe(0);
-    // total comes from SQL count, not the filtered rollup.
-    expect(result.data.summary.total).toBe(15);
-    // employee_id must be forwarded to every repo call.
-    expect(repo.countAttendanceScoped.mock.calls[0][2]).toEqual({
-      employee_id: "EMP1",
-      status: "PRESENT"
-    });
-    expect(repo.listAttendanceInRange.mock.calls[0][2]).toEqual({
+    expect(result.data.summary.total).toBe(3);
+    expect(result.data.summary.by_status.PRESENT).toBe(3);
+    expect(dutyLedger).toHaveBeenCalledWith("2026-05", undefined, {
       employee_id: "EMP1"
     });
   });
 
-  it("rolls present/absent/late/leave/holiday counts per employee", async () => {
-    repo.countAttendanceScoped.mockResolvedValueOnce(ok(6));
-    repo.listAttendanceInRange.mockResolvedValueOnce(
-      ok([
-        { employee_id: "EMP1", status: "PRESENT", hours: 8 },
-        { employee_id: "EMP1", status: "PRESENT", hours: 8 },
-        { employee_id: "EMP1", status: "LATE", hours: 7 },
-        { employee_id: "EMP2", status: "ABSENT", hours: 0 },
-        { employee_id: "EMP2", status: "LEAVE", hours: 0 },
-        { employee_id: "EMP2", status: "HOLIDAY", hours: 0 }
-      ])
-    );
+  it("rolls present days per employee from ledger", async () => {
+    const ledgerMap = new Map([
+      ["EMP1", { employee_id: "EMP1", period: "2026-05", present_days: 5, dates: [] }],
+      ["EMP2", { employee_id: "EMP2", period: "2026-05", present_days: 2, dates: [] }]
+    ]);
+    dutyLedger.mockResolvedValueOnce(ok(ledgerMap));
     repo.listAttendanceScoped.mockResolvedValueOnce(ok([]));
 
     const result = await reportService.attendanceSummary({ period: "2026-05" }, actorCtx);
@@ -262,8 +250,9 @@ describe("reportService.attendanceSummary", () => {
     if (!result.success) return;
     const emp1 = result.data.summary.by_employee.find((e) => e.employee_id === "EMP1");
     const emp2 = result.data.summary.by_employee.find((e) => e.employee_id === "EMP2");
-    expect(emp1).toMatchObject({ present: 2, late: 1, hours: 23 });
-    expect(emp2).toMatchObject({ absent: 1, leave: 1, holiday: 1 });
+    expect(emp1).toMatchObject({ present: 5 });
+    expect(emp2).toMatchObject({ present: 2 });
+    expect(result.data.summary.total).toBe(7);
   });
 });
 

@@ -214,6 +214,65 @@ export interface BuildDutyPermissionsInput {
   hasActiveReceiptOnBilling?: boolean;
   hasBillingServiceLine?: boolean;
   hasCheckIn?: boolean;
+  /**
+   * Duty financial-freeze signals. A duty day is frozen when EITHER its
+   * billing is done (a receipt exists on the bill) OR its payout is made
+   * (the day is disbursed in `hh_paid_transactions`). Freezing is per-day:
+   * a duty stays editable while it still has at least one un-frozen day.
+   */
+  billHasReceipt?: boolean;
+  /** Total materialized day × partner slots for the duty. */
+  totalSlots?: number;
+  /** Slots already disbursed (paid). */
+  paidSlots?: number;
+}
+
+export interface DutyFreezeState {
+  /** No editable day remains — the duty is fully locked. */
+  frozen: boolean;
+  /** Some days are locked (billed/paid) but others can still be edited. */
+  partiallyFrozen: boolean;
+  reason?: string;
+}
+
+/**
+ * Pure freeze evaluation for a duty.
+ *
+ * Business rule (set by the operator): a duty must stay editable while its
+ * billing is *not* done and its payout is *still remaining*. Once a bill is
+ * generated (receipt recorded) OR a day's payout is made, that day must not be
+ * edited or affected. Billing (a receipt) is recorded against the whole bill,
+ * so when present every materialized day of the duty is treated as billed; the
+ * payout side is evaluated per-day from `paidSlots`.
+ */
+export function computeDutyFreeze(input: {
+  billHasReceipt?: boolean;
+  totalSlots?: number;
+  paidSlots?: number;
+}): DutyFreezeState {
+  const billed = Boolean(input.billHasReceipt);
+  const total = Math.max(0, Number(input.totalSlots ?? 0));
+  const paid = Math.max(0, Number(input.paidSlots ?? 0));
+
+  if (billed) {
+    return {
+      frozen: true,
+      partiallyFrozen: false,
+      reason: "Bill already generated (receipt recorded) — duty is locked"
+    };
+  }
+  if (total > 0 && paid >= total) {
+    return {
+      frozen: true,
+      partiallyFrozen: false,
+      reason: "All days are already paid — reverse the payout before editing"
+    };
+  }
+  return {
+    frozen: false,
+    partiallyFrozen: paid > 0,
+    reason: paid > 0 ? "Some days are already paid and are locked" : undefined
+  };
 }
 
 /**
@@ -229,7 +288,12 @@ export function buildDutyPermissions(
   const status = String(input.status || "SCHEDULED").toUpperCase();
   const blockReasons: Record<string, string> = {};
 
-  // Editing the duty form — anything except CANCELLED / COMPLETED is editable.
+  // Per-day financial freeze. A receipt on the bill or a paid day locks the
+  // affected days; the duty stays editable while any day is still open.
+  const freeze = computeDutyFreeze(input);
+
+  // Editing the duty form — anything except CANCELLED / COMPLETED is editable,
+  // and only while the duty is not fully frozen by billing/payout.
   let canEdit = true;
   if (status === "COMPLETED") {
     canEdit = false;
@@ -237,16 +301,24 @@ export function buildDutyPermissions(
   } else if (status === "CANCELLED") {
     canEdit = false;
     blockReasons.canEdit = "Cancelled duties cannot be edited";
+  } else if (freeze.frozen) {
+    canEdit = false;
+    blockReasons.canEdit = freeze.reason || "Duty is locked by billing/payout";
   }
 
+  const billed = Boolean(input.billHasReceipt ?? input.hasActiveReceiptOnBilling);
   const cancelStateOk = canCancelDuty(status);
   let canCancel = cancelStateOk.success;
   if (!cancelStateOk.success) {
     blockReasons.canCancel = cancelStateOk.error || "Cannot cancel";
-  } else if (input.hasBillingServiceLine && (input.hasActiveReceiptOnBilling ?? false)) {
+  } else if (input.hasBillingServiceLine && billed) {
     canCancel = false;
     blockReasons.canCancel =
       "Cannot cancel — receipts have already been recorded against the bill from this duty";
+  } else if ((input.paidSlots ?? 0) > 0) {
+    canCancel = false;
+    blockReasons.canCancel =
+      "Cannot cancel — some days are already paid. Reverse the payout first.";
   }
 
   // Check-in only meaningful for SCHEDULED; check-out only for IN_PROGRESS
@@ -286,6 +358,8 @@ export function buildDutyPermissions(
     canCheckOut,
     canMaterialize,
     canHardDelete,
+    frozen: freeze.frozen,
+    partiallyFrozen: freeze.partiallyFrozen,
     blockReasons: Object.keys(blockReasons).length ? blockReasons : undefined
   };
 }
@@ -412,6 +486,7 @@ export function dutyPersistRow(input: {
   payout_per_day?: number;
   payout_term?: string;
   extra_partners?: unknown;
+  excluded_days?: unknown;
 }) {
   const rawName =
     (input.service_name || "").trim() || (input.service_type || "").trim() || "Care Taker Services";
@@ -432,6 +507,7 @@ export function dutyPersistRow(input: {
     charge_per_day: Number(input.charge_per_day ?? 0),
     payout_per_day: Number(input.payout_per_day ?? 0),
     payout_term: input.payout_term ?? "Daily",
-    extra_partners: input.extra_partners ?? []
+    extra_partners: input.extra_partners ?? [],
+    excluded_days: input.excluded_days ?? []
   };
 }

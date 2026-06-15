@@ -308,45 +308,15 @@ export const PAYABLE_ATTENDANCE_STATUSES = new Set([
 ]);
 
 /**
- * Aggregate the duties + attendance for an employee + period into a per-patient
- * breakdown. Used by the UI to show "this payout came from these patients" so
- * accountants can answer parent questions about which contract earned what.
+ * @deprecated Duty-calendar SSOT: use charge-based `buildPatientBreakdown` in
+ * payoutService instead. This attendance-based helper is retained only so
+ * legacy imports compile; it always returns an empty breakdown.
  */
 export function breakdownByPatient(
-  duties: DutyForPayout[],
-  attendance: AttendanceForPayout[]
+  _duties: DutyForPayout[],
+  _attendance: AttendanceForPayout[]
 ): PayoutPatientBreakdownRow[] {
-  const attendanceByDuty = new Map<string, AttendanceForPayout>();
-  for (const a of attendance) {
-    const dutyId = String(a.duty_id || "");
-    if (!dutyId) continue;
-    attendanceByDuty.set(dutyId, a);
-  }
-  const map = new Map<string, PayoutPatientBreakdownRow>();
-  for (const d of duties) {
-    const patientId = String(d.patient_id || "");
-    if (!patientId) continue;
-    const status = String(d.status || "").toUpperCase();
-    if (status === "CANCELLED" || status === "NO_SHOW") continue;
-    const att = d.id ? attendanceByDuty.get(String(d.id)) : undefined;
-    const attStatus = String(att?.status || "").toUpperCase();
-    const payable = PAYABLE_ATTENDANCE_STATUSES.has(attStatus);
-    const hours = Number(att?.hours || 0);
-
-    const row = map.get(patientId) || {
-      patient_id: patientId,
-      duty_count: 0,
-      hours: 0,
-      duty_ids: []
-    };
-    if (payable) {
-      row.duty_count += 1;
-      row.hours += hours;
-    }
-    if (d.id) row.duty_ids.push(String(d.id));
-    map.set(patientId, row);
-  }
-  return Array.from(map.values()).sort((a, b) => b.duty_count - a.duty_count);
+  return [];
 }
 
 export interface PayoutTotals {

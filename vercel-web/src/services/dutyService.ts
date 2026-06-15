@@ -31,11 +31,13 @@ import {
   type DutyListQuery,
   type DutyMaterializeInput,
   type DutyPartnersInput,
-  type DutyStatus
+  type DutyStatus,
+  type DutyShiftType
 } from "@/validation/dutyValidation";
 import { parseInput } from "@/validation/parseValidation";
 import {
   buildDutyPermissions,
+  computeDutyFreeze,
   canCancelDutyWithBilling,
   canCancelDuty,
   canDeleteDuty,
@@ -66,6 +68,7 @@ import {
   syncDutyCheckOut,
   syncDutyCancelledAbsent
 } from "@/services/attendanceDutySync";
+import { recomputePayoutIfEditable } from "@/services/recomputePayoutIfEditable";
 import { payoutRepository } from "@/database/payoutRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
 import type { JsonRow } from "@/database/types";
@@ -451,6 +454,55 @@ async function rollbackBillingFromDuty(
   return success(null);
 }
 
+/**
+ * Per-duty billing/payout freeze signals for `buildDutyPermissions`.
+ *
+ * Business rule: a duty stays editable while its billing is NOT done and its
+ * payout is still remaining. "Billing done" = a receipt exists on the duty's
+ * (active) bill; "payout made" = the day is disbursed in hh_paid_transactions.
+ * Freezing is per-day — `paidSlots` of `totalSlots` lets the UI tell a fully
+ * locked duty from a partially locked one.
+ */
+async function dutyFreezeSignals(
+  duty: JsonRow,
+  ctx: DutyServiceContext
+): Promise<{
+  billHasReceipt: boolean;
+  totalSlots: number;
+  paidSlots: number;
+  hasBillingServiceLine: boolean;
+}> {
+  const access = dbAccess(ctx);
+  const { billingRepository } = await import("@/database/billingRepository");
+  const patientId = String(duty.patient_id || "");
+  let billingId = String(duty.billing_id || "");
+  if (patientId) {
+    const active = await billingRepository.findActiveByPatient(patientId, access);
+    if (active.success && active.data) billingId = String(active.data.id);
+  }
+
+  let billHasReceipt = false;
+  if (billingId) {
+    const rc = await dutyRepository.countActiveReceipts(billingId, access);
+    if (rc.success) billHasReceipt = (rc.data ?? 0) > 0;
+  }
+
+  const slots = await dutyDiaryService.collectDiaryPaidSlots(String(duty.id), ctx);
+  const list = slots.success ? slots.data ?? [] : [];
+  const totalSlots = list.length;
+  let paidSlots = 0;
+  // When the bill is already receipted every day is frozen, so the per-day
+  // paid scan is redundant — skip the extra queries.
+  if (!billHasReceipt) {
+    for (const slot of list) {
+      const paid = await payoutRepository.isDayPaid(slot.employee_id, slot.iso_date, access);
+      if (paid.success && paid.data) paidSlots += 1;
+    }
+  }
+
+  return { billHasReceipt, totalSlots, paidSlots, hasBillingServiceLine: totalSlots > 0 };
+}
+
 async function payoutPeriodsTouchedByDuty(
   duty: JsonRow,
   ctx: DutyServiceContext
@@ -508,7 +560,7 @@ async function recomputeAffectedPayoutPeriods(
   periodsByEmployee.forEach(function (periods, employeeId) {
     periods.forEach(function (period) {
       tasks.push(
-        payoutRepository.recomputeRpc(employeeId, period, access).catch((err) => {
+        recomputePayoutIfEditable(employeeId, period, access).catch((err) => {
           console.error(`[dutyService.${scope}] recompute payout failed`, {
             employeeId,
             period,
@@ -560,12 +612,42 @@ export const dutyService = {
       dbAccess(ctx)
     );
     if (!result.success) return passFailure(result);
-    const rows = (result.data?.rows || []).map((row) => ({
-      ...row,
-      permissions: buildDutyPermissions({
-        status: String(row.status || "SCHEDULED")
-      })
-    }));
+
+    // Bulk "billing done" lookup: one active bill per patient, then a single
+    // batched receipt query. Per-day paid state is enforced server-side on
+    // mutation; the list view only needs the bill-level (receipt) signal.
+    const baseRows = result.data?.rows || [];
+    const access = dbAccess(ctx);
+    const { billingRepository } = await import("@/database/billingRepository");
+    const patientIds = Array.from(
+      new Set(baseRows.map((r) => String(r.patient_id || "")).filter(Boolean))
+    );
+    const billByPatient = new Map<string, string>();
+    for (const pid of patientIds) {
+      const active = await billingRepository.findActiveByPatient(pid, access);
+      if (active.success && active.data) billByPatient.set(pid, String(active.data.id));
+    }
+    const billingIds = Array.from(new Set([...billByPatient.values()]));
+    const receiptedBills = new Set<string>();
+    if (billingIds.length) {
+      const recs = await billingRepository.listActiveReceiptsByBillingIds(billingIds, access);
+      if (recs.success) {
+        for (const r of recs.data || []) receiptedBills.add(String(r.billing_id));
+      }
+    }
+
+    const rows = baseRows.map((row) => {
+      const billingId = billByPatient.get(String(row.patient_id || ""));
+      const billHasReceipt = billingId ? receiptedBills.has(billingId) : false;
+      return {
+        ...row,
+        permissions: buildDutyPermissions({
+          status: String(row.status || "SCHEDULED"),
+          billHasReceipt,
+          hasBillingServiceLine: billHasReceipt
+        })
+      };
+    });
     return success({
       rows,
       total: result.data?.total ?? 0
@@ -578,8 +660,10 @@ export const dutyService = {
     // Decorate the read row with server-computed `permissions` so the UI
     // never re-derives duty policy. Sibling field is additive — existing
     // callers that ignore it stay compatible.
+    const signals = await dutyFreezeSignals(loaded.data, ctx);
     const permissions = buildDutyPermissions({
-      status: String(loaded.data.status || "SCHEDULED")
+      status: String(loaded.data.status || "SCHEDULED"),
+      ...signals
     });
     return success({ ...loaded.data, permissions } as DutyApiRow);
   },
@@ -629,7 +713,12 @@ export const dutyService = {
     if (input.materialize) {
       const mat = await dutyDiaryService.materializeDuty(fresh.data, ctx);
       if (!mat.success) {
-        // Do not leave a half-created duty that is absent from billing/payout.
+        // Compensating rollback: remove any partial ledger rows, then the duty.
+        try {
+          await dutyDiaryService.rollbackDutyDiary(id, ctx);
+        } catch (err) {
+          console.error("[dutyService.create] failed to rollback partial diary", { id, err });
+        }
         try {
           await dutyRepository.remove(id, dbAccess(ctx));
         } catch (err) {
@@ -654,6 +743,19 @@ export const dutyService = {
   ): Promise<ApiResult<DutyApiRow>> {
     const existing = await loadDuty(id, ctx);
     if (!existing.success) return passFailure(existing);
+
+    // Hard freeze guard: a duty whose billing is done (receipt) or whose every
+    // day is already paid must not be edited or affected. Partially-locked
+    // duties stay editable — the materializer skips the frozen days.
+    const freezeSignals = await dutyFreezeSignals(existing.data, ctx);
+    const freeze = computeDutyFreeze(freezeSignals);
+    if (freeze.frozen) {
+      return failure(
+        freeze.reason || "Duty is locked by billing/payout and cannot be edited",
+        ErrorCodes.business,
+        freezeSignals
+      );
+    }
 
     const parsed = parseInput(dutySchema, { ...(rawInput as object), id });
     if (!parsed.success) return passFailure(parsed);
@@ -722,7 +824,39 @@ export const dutyService = {
 
     if (input.materialize) {
       const mat = await dutyDiaryService.materializeDuty(fresh.data, ctx);
-      if (!mat.success) return passFailure(mat);
+      if (!mat.success) {
+        // Compensating rollback: restore the duty row and re-materialize the
+        // previous ledger so a failed sync never leaves a half-applied state.
+        try {
+          const revertPatch = {
+            ...dutyPersistRow({
+              id,
+              patient_id: String(existing.data.patient_id || ""),
+              employee_id: String(existing.data.employee_id || ""),
+              service_name: String(existing.data.service_name || existing.data.service_type || ""),
+              service_type: String(existing.data.service_type || existing.data.service_name || ""),
+              shift_type: (String(existing.data.shift_type || "DAY") || "DAY") as DutyShiftType,
+              start_at: String(existing.data.start_at || ""),
+              end_at: (existing.data.end_at as string | null) ?? undefined,
+              status: String(existing.data.status || "SCHEDULED") as DutyStatus,
+              charge_per_day: Number(existing.data.charge_per_day ?? 0),
+              payout_per_day: Number(existing.data.payout_per_day ?? 0),
+              payout_term: String(existing.data.payout_term || "Daily"),
+              extra_partners: existing.data.extra_partners,
+              excluded_days: existing.data.excluded_days
+            }),
+            updated_by: ctx.actor.email
+          };
+          await dutyRepository.update(id, revertPatch, dbAccess(ctx));
+          await dutyDiaryService.materializeDuty(existing.data, ctx);
+        } catch (err) {
+          console.error("[dutyService.update] failed to restore duty after materialize error", {
+            id,
+            err
+          });
+        }
+        return passFailure(mat);
+      }
       const affectedAfter = await payoutPeriodsTouchedByDuty(fresh.data, ctx);
       const affected = mergePayoutPeriods(affectedBefore, affectedAfter);
       await recomputeAffectedPayoutPeriods(affected, ctx, "update");
@@ -1324,9 +1458,7 @@ export const dutyService = {
       }
       await Promise.all(
         Array.from(partnerIds).map((empId) =>
-          payoutRepository.recomputeRpc(empId, period, access).catch((err) => {
-            console.error("[dutyService.checkOut] recompute payout failed", { empId, period, err });
-          })
+          recomputePayoutIfEditable(empId, period, access)
         )
       );
     }

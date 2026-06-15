@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { PAYOUT_READ_ROLES } from "@/lib/api/payoutRoles";
-import { payoutService } from "@/services/payoutService";
+import { reportService } from "@/services/reportService";
 import { respond } from "@/lib/api/apiResultBridge";
 import { ErrorCodes } from "@/types/common";
 
@@ -12,9 +12,7 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/v1/payouts/totals?period=YYYY-MM
  *
- * Dashboard/report total: sums net_amount + duty_count + hours from all
- * payout rows in the period. Used so the dashboard widget and the payouts
- * table always agree.
+ * Delegates to Reports → Payout totals so dashboard widgets match the report.
  */
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, [...PAYOUT_READ_ROLES]);
@@ -27,6 +25,6 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
       code: ErrorCodes.validation
     });
   }
-  const result = await payoutService.monthlyTotal(period, { actor });
+  const result = await reportService.payoutTotals({ period }, { actor });
   return respond(result);
 });

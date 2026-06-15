@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { withAuth } from "@/lib/api/handler";
+import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { DUTY_DIARY_BATCH_ROLES } from "@/business/rbac";
 import { dutyDiaryService } from "@/services/dutyDiaryService";
@@ -20,12 +20,7 @@ export const dynamic = "force-dynamic";
  */
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, DUTY_DIARY_BATCH_ROLES);
-  let raw: unknown = {};
-  try {
-    raw = await req.json();
-  } catch {
-    raw = {};
-  }
+  const raw = await parseJsonBody(req);
   const parsed = parseInput(dutyDiaryBatchSchema, raw);
   if (!parsed.success || !parsed.data) return respond(parsed);
   const ids = parsed.data.duty_ids ?? [];

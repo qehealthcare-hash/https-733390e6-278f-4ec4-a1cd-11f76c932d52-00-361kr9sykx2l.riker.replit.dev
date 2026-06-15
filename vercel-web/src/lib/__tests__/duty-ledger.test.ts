@@ -64,13 +64,30 @@ describe("duty-ledger — single calculation authority", () => {
     expect(res.data.outstanding).toBe(0);
   });
 
+  it("patient billing duty_count counts only duty-calendar svc rows", async () => {
+    vi.mocked(billingRepository.listBillingsByPatient).mockResolvedValue(ok([{ id: "B1" }]));
+    vi.mocked(billingRepository.listSvcByBillingIds).mockResolvedValue(
+      ok([
+        { id: "s1", total: 600, date: "2026-06-01", remarks: "duty:D1:2026-06-01:E1" },
+        { id: "s2", total: 600, date: "2026-06-02", remarks: "duty:D1:2026-06-02:E1" },
+        { id: "s3", total: 200, date: "2026-06-03", remarks: "manual:transport" }
+      ])
+    );
+    vi.mocked(billingRepository.listActiveReceiptsByBillingIds).mockResolvedValue(ok([]));
+
+    const res = await getPatientBillingLedger("P1", "2026-06");
+    if (!res.success) return;
+    expect(res.data.duty_count).toBe(2);
+    expect(res.data.billed).toBe(1400);
+  });
+
   it("patient billing sums only svc rows in the period", async () => {
     vi.mocked(billingRepository.listBillingsByPatient).mockResolvedValue(ok([{ id: "B1" }]));
     vi.mocked(billingRepository.listSvcByBillingIds).mockResolvedValue(
       ok([
-        { id: "s1", total: 600, date: "2026-06-01" },
-        { id: "s2", total: 600, date: "2026-06-02" },
-        { id: "s3", total: 600, date: "2026-05-31" } // different month — excluded
+        { id: "s1", total: 600, date: "2026-06-01", remarks: "duty:D1:2026-06-01:E1" },
+        { id: "s2", total: 600, date: "2026-06-02", remarks: "duty:D1:2026-06-02:E1" },
+        { id: "s3", total: 600, date: "2026-05-31", remarks: "duty:D1:2026-05-31:E1" }
       ])
     );
     vi.mocked(billingRepository.listActiveReceiptsByBillingIds).mockResolvedValue(

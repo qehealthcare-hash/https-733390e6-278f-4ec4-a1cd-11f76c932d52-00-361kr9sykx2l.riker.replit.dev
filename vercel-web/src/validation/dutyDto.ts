@@ -17,6 +17,10 @@ export const dutyPermissionsDtoSchema = z.object({
   canCheckOut: z.boolean(),
   canMaterialize: z.boolean(),
   canHardDelete: z.boolean(),
+  /** True when billing/payout has fully locked the duty (no editable days). */
+  frozen: z.boolean().optional(),
+  /** True when some days are locked but others remain editable. */
+  partiallyFrozen: z.boolean().optional(),
   blockReasons: z.record(z.string(), z.string()).optional()
 });
 export type DutyPermissionsDto = z.infer<typeof dutyPermissionsDtoSchema>;
