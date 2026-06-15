@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { DUTY_EXTEND_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { dutyService } from "@/services/dutyService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { dutyExtendActiveResultDtoSchema } from "@/validation/dutyDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,7 +37,7 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
     { route: "POST /api/v1/duties/extend-active", ttlMs: 60 * 60 * 1000 },
     async () => {
       const result = await dutyService.extendActive({ actor });
-      return respond(result);
+      return respondValidated(result, dutyExtendActiveResultDtoSchema);
     }
   );
 });

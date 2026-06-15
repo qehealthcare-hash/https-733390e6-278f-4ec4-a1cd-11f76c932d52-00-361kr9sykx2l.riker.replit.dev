@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { DUTY_TOTALS_ROLES } from "@/business/rbac";
 import { dutyService } from "@/services/dutyService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { dutyTotalsResponseDtoSchema } from "@/validation/dutyDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,5 +16,5 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
   const employeeId = url.searchParams.get("employee_id") || undefined;
   const period = url.searchParams.get("period") || undefined;
   const result = await dutyService.totalsFor(patientId, employeeId, { actor }, { period });
-  return respond(result);
+  return respondValidated(result, dutyTotalsResponseDtoSchema);
 });

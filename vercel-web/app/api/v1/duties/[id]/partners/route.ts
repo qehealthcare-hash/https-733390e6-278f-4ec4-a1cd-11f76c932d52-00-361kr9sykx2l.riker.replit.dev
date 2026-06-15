@@ -3,7 +3,8 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { DUTY_PARTNERS_ROLES } from "@/business/rbac";
 import { dutyService } from "@/services/dutyService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { dutyAssignPartnersResponseDtoSchema } from "@/validation/dutyDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,5 +16,5 @@ export const POST = withAuth<Params>(async (req: NextRequest, { params, actor })
   requireRole(actor, DUTY_PARTNERS_ROLES);
   const body = await parseJsonBody(req);
   const result = await dutyService.assignPartners(params.id, body, { actor });
-  return respond(result);
+  return respondValidated(result, dutyAssignPartnersResponseDtoSchema);
 });

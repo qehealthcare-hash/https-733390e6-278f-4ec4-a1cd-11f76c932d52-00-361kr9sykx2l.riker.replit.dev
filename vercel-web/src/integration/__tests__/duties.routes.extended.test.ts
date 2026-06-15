@@ -193,6 +193,28 @@ describe("GET /api/v1/duties/totals", () => {
     await expectErrorEnvelope(res, 403, "forbidden");
     expect(mDuty.totalsFor).not.toHaveBeenCalled();
   });
+
+  it("returns validated totals for Manager", async () => {
+    setActor(ACTORS.manager);
+    mDuty.totalsFor.mockResolvedValue({
+      success: true,
+      data: {
+        patient: {
+          patient_id: "PAT1",
+          bills: 1,
+          billed: 5000,
+          received: 2000,
+          outstanding: 3000,
+          sec_dep: 500
+        },
+        partner: null
+      }
+    });
+    const req = makeRequest("GET", "/api/v1/duties/totals?patient_id=PAT1");
+    const res = await DutyTotalsGet(req, ctx({}));
+    const data = await expectOkEnvelope<{ patient: { outstanding: number } }>(res);
+    expect(data.patient?.outstanding).toBe(3000);
+  });
 });
 
 describe("POST /api/v1/duties/extend-active", () => {
@@ -211,7 +233,21 @@ describe("POST /api/v1/duties/extend-active", () => {
 
   it("permits Manager", async () => {
     setActor(ACTORS.manager);
-    mDuty.extendActive.mockResolvedValue({ success: true, data: { extended: 2 } });
+    mDuty.extendActive.mockResolvedValue({
+      success: true,
+      data: {
+        processed: 2,
+        created_svc: 1,
+        created_payout: 1,
+        updated_svc: 0,
+        updated_payout: 0,
+        deleted_svc: 0,
+        deleted_payout: 0,
+        skipped: 0,
+        skipped_no_bill: 0,
+        errors: []
+      }
+    });
     const req = makeRequest("POST", "/api/v1/duties/extend-active", { body: {} });
     const res = await DutyExtendPost(req, ctx({}));
     await expectOkEnvelope(res);

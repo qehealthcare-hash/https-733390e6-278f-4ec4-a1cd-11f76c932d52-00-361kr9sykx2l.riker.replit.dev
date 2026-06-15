@@ -142,3 +142,53 @@ export const dutyMaterializeResultDtoSchema = z
   })
   .passthrough();
 export type DutyMaterializeResultDto = z.infer<typeof dutyMaterializeResultDtoSchema>;
+
+const dutyTotalsPatientDtoSchema = z.object({
+  patient_id: z.string(),
+  bills: z.number().int().nonnegative(),
+  billed: z.number(),
+  received: z.number(),
+  outstanding: z.number(),
+  sec_dep: z.number()
+});
+
+const dutyTotalsPartnerDtoSchema = z.object({
+  employee_id: z.string(),
+  charged: z.number(),
+  paid: z.number(),
+  pending: z.number()
+});
+
+/** GET /duties/totals response body. */
+export const dutyTotalsResponseDtoSchema = z.object({
+  patient: dutyTotalsPatientDtoSchema.nullable(),
+  partner: dutyTotalsPartnerDtoSchema.nullable()
+});
+export type DutyTotalsResponseDto = z.infer<typeof dutyTotalsResponseDtoSchema>;
+
+/** POST /duties/extend-active response body. */
+export const dutyExtendActiveResultDtoSchema = z.object({
+  processed: z.number().int().nonnegative(),
+  created_svc: z.number().int().nonnegative(),
+  created_payout: z.number().int().nonnegative(),
+  updated_svc: z.number().int().nonnegative(),
+  updated_payout: z.number().int().nonnegative(),
+  deleted_svc: z.number().int().nonnegative(),
+  deleted_payout: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+  skipped_no_bill: z.number().int().nonnegative(),
+  errors: z.array(
+    z.object({
+      duty_id: z.string(),
+      error: z.string()
+    })
+  )
+});
+export type DutyExtendActiveResultDto = z.infer<typeof dutyExtendActiveResultDtoSchema>;
+
+/** POST /duties/:id/partners response body. */
+export const dutyAssignPartnersResponseDtoSchema = z.object({
+  duty: dutyDetailDtoSchema,
+  materialize: dutyMaterializeResultDtoSchema.optional()
+});
+export type DutyAssignPartnersResponseDto = z.infer<typeof dutyAssignPartnersResponseDtoSchema>;

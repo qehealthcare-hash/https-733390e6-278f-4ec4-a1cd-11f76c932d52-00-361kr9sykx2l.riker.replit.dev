@@ -670,15 +670,7 @@ export const dutyService = {
   async getById(id: string, ctx: DutyServiceContext): Promise<ApiResult<DutyApiRow>> {
     const loaded = await loadDuty(id, ctx);
     if (!loaded.success) return passFailure(loaded);
-    // Decorate the read row with server-computed `permissions` so the UI
-    // never re-derives duty policy. Sibling field is additive — existing
-    // callers that ignore it stay compatible.
-    const signals = await dutyFreezeSignals(loaded.data, ctx);
-    const permissions = buildDutyPermissions({
-      status: String(loaded.data.status || "SCHEDULED"),
-      ...signals
-    });
-    return success({ ...loaded.data, permissions } as DutyApiRow);
+    return success(await decorateDutyPermissions(loaded.data, ctx));
   },
 
   async create(rawInput: unknown, ctx: DutyServiceContext): Promise<ApiResult<DutyApiRow>> {
@@ -1240,12 +1232,21 @@ export const dutyService = {
     if (!parsed.success) return passFailure(parsed);
     const input = parsed.data as DutyPartnersInput;
 
-    return dutyDiaryService.assignExtraPartners(
+    const result = await dutyDiaryService.assignExtraPartners(
       existing.data,
       input.extra_partners,
       ctx,
       input.materialize ?? true
     );
+    if (!result.success) return passFailure(result);
+    const data = result.data;
+    if (!data) {
+      return failure("Partner assignment returned no data", ErrorCodes.internal);
+    }
+    return success({
+      duty: await decorateDutyPermissions(data.duty, ctx),
+      materialize: data.materialize
+    });
   },
 
   /**
