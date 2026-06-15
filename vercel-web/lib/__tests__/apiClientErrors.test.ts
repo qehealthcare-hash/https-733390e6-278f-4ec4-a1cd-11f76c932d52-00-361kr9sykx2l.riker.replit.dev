@@ -13,6 +13,12 @@ describe("apiClientErrors", () => {
     expect(isApiConflictError({ code: "validation_error" })).toBe(false);
   });
 
+  it("returns a reload hint for contract errors", () => {
+    expect(
+      apiErrorMessage({ code: CONTRACT_ERROR_CODE, message: "API /patients failed" }, "fallback")
+    ).toMatch(/reload/i);
+  });
+
   it("extracts API error messages", () => {
     expect(apiErrorMessage({ message: "stale row" }, "fallback")).toBe("stale row");
     expect(apiErrorMessage(undefined, "fallback")).toBe("fallback");

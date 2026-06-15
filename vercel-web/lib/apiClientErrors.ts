@@ -13,6 +13,9 @@ export function isApiConflictError(err: unknown): boolean {
 }
 
 export function apiErrorMessage(err: unknown, fallback: string): string {
+  if (isApiContractError(err)) {
+    return "This screen received unexpected data from the server. Please reload and try again.";
+  }
   if (err instanceof Error && err.message.trim()) return err.message;
   if (err && typeof err === "object" && "message" in err) {
     const msg = (err as { message?: unknown }).message;
