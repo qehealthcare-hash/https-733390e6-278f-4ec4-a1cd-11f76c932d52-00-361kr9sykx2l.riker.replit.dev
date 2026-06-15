@@ -3,7 +3,11 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { DIRECTORY_READ_ROLES } from "@/lib/api/crmRoles";
 import { toServiceContext } from "@/lib/api/serviceContext";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import {
+  doctorListResponseDtoSchema,
+  doctorRowDtoSchema
+} from "@/validation/doctorDto";
 import { doctorService } from "@/services/doctorService";
 
 export const runtime = "nodejs";
@@ -22,12 +26,12 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     },
     toServiceContext(actor)
   );
-  return respond(result);
+  return respondValidated(result, doctorListResponseDtoSchema);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, ["Admin", "Manager", "Accountant"]);
   const body = await parseJsonBody(req);
   const result = await doctorService.create(body, toServiceContext(actor));
-  return respond(result, 201);
+  return respondValidated(result, doctorRowDtoSchema, 201);
 });

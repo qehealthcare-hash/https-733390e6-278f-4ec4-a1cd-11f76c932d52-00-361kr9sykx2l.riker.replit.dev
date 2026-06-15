@@ -24,6 +24,7 @@ vi.mock("@/services/inquiryService", () => ({
   }
 }));
 
+import { auditRowFixture } from "@/test/auditRowFixture";
 import { inquiryDetailFixture } from "@/test/inquiryDetailFixture";
 import {
   ACTORS,
@@ -62,7 +63,7 @@ describe("GET /api/v1/audits", () => {
     setActor(ACTORS.manager);
     audit.list.mockResolvedValue({
       success: true,
-      data: { rows: [{ module: "patient", action: "create" }], total: 1 }
+      data: { rows: [auditRowFixture({ module: "patient", action: "create" })], total: 1 }
     });
     const req = makeRequest(
       "GET",

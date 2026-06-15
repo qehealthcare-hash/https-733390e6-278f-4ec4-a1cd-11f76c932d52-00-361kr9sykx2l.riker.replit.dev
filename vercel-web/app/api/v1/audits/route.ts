@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { AUDIT_READ_ROLES } from "@/lib/api/crmRoles";
 import { auditService } from "@/services/auditService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { auditListResponseDtoSchema } from "@/validation/auditDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,5 +21,5 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     action: url.searchParams.get("action") ?? undefined
   };
   const result = await auditService.list(query, { actor });
-  return respond(result);
+  return respondValidated(result, auditListResponseDtoSchema);
 });

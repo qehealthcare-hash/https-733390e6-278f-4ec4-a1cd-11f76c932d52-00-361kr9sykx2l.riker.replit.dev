@@ -3,7 +3,11 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { DIRECTORY_READ_ROLES } from "@/lib/api/crmRoles";
 import { toServiceContext } from "@/lib/api/serviceContext";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import {
+  vendorListResponseDtoSchema,
+  vendorRowDtoSchema
+} from "@/validation/vendorDto";
 import { vendorService } from "@/services/vendorService";
 
 export const runtime = "nodejs";
@@ -21,12 +25,12 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     },
     toServiceContext(actor)
   );
-  return respond(result);
+  return respondValidated(result, vendorListResponseDtoSchema);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, ["Admin", "Manager", "Accountant"]);
   const body = await parseJsonBody(req);
   const result = await vendorService.create(body, toServiceContext(actor));
-  return respond(result, 201);
+  return respondValidated(result, vendorRowDtoSchema, 201);
 });
