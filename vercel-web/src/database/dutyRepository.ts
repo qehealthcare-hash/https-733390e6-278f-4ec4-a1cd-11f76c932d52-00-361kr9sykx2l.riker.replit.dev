@@ -495,7 +495,7 @@ export const dutyRepository = {
           .from(SVC)
           .select("id, billing_id, remarks")
           .eq("billing_id", billingId)
-          .eq("remarks", `duty:${dutyId}`),
+          .eq("duty_id", dutyId),
       `${SCOPE}.findSvcEntriesForDuty`
     );
   },
@@ -513,7 +513,7 @@ export const dutyRepository = {
           .from(SVC)
           .delete()
           .eq("billing_id", billingId)
-          .eq("remarks", `duty:${dutyId}`)
+          .eq("duty_id", dutyId)
           .then(({ error }) => ({ data: null, error })),
       `${SCOPE}.removeSvcEntriesForDuty`
     );
@@ -526,8 +526,8 @@ export const dutyRepository = {
       () =>
         db
           .from(SVC)
-          .select("id, billing_id, svc_key, date, partner_id, partner, remarks, total, amt, updated_at")
-          .like("remarks", `duty:${dutyId}:%`),
+          .select("id, billing_id, svc_key, date, partner_id, partner, remarks, total, amt, updated_at, duty_id")
+          .eq("duty_id", dutyId),
       `${SCOPE}.findSvcEntriesByDutyId`
     );
   },
@@ -539,7 +539,7 @@ export const dutyRepository = {
         db
           .from(SVC)
           .delete()
-          .like("remarks", `duty:${dutyId}:%`)
+          .eq("duty_id", dutyId)
           .then(({ error }) => ({ data: null, error })),
       `${SCOPE}.removeSvcEntriesByDutyId`
     );
@@ -551,8 +551,8 @@ export const dutyRepository = {
       () =>
         db
           .from(PAYOUT_CHARGES)
-          .select("id, svc_key, date, partner_id, partner, amount, remarks, updated_at")
-          .like("remarks", `duty:${dutyId}:%`),
+          .select("id, svc_key, date, partner_id, partner, amount, remarks, updated_at, duty_id")
+          .eq("duty_id", dutyId),
       `${SCOPE}.findPayoutChargesByDutyId`
     );
   },
@@ -564,7 +564,7 @@ export const dutyRepository = {
         db
           .from(PAYOUT_CHARGES)
           .delete()
-          .like("remarks", `duty:${dutyId}:%`)
+          .eq("duty_id", dutyId)
           .then(({ error }) => ({ data: null, error })),
       `${SCOPE}.removePayoutChargesByDutyId`
     );

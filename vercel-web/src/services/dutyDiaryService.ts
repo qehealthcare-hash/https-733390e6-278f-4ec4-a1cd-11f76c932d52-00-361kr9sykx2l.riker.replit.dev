@@ -704,6 +704,7 @@ export const dutyDiaryService = {
             partner: svcRow.partner || empName,
             freq: svcRow.freq,
             remarks: svcRow.remarks,
+            duty_id: svcRow.duty_id,
             updated_by: ctx.actor.email
           },
           ledgerAccess()
@@ -738,6 +739,7 @@ export const dutyDiaryService = {
             term: payRow.term,
             partner: payRow.partner || empName,
             remarks: payRow.remarks,
+            duty_id: payRow.duty_id,
             updated_by: ctx.actor.email
           },
           ledgerAccess()
@@ -1149,6 +1151,7 @@ export const dutyDiaryService = {
         total: nextCharge,
         disc: svcRow.disc,
         remarks: newRemarks,
+        duty_id: dutyId,
         updated_by: ctx.actor.email
       };
       const upd = await billingRepository.updateSvc(String(svcRow.id), svcPatch, ledgerAccess());
@@ -1170,6 +1173,7 @@ export const dutyDiaryService = {
         amount: nextPayout,
         term: payRow.term,
         remarks: newRemarks,
+        duty_id: dutyId,
         updated_by: ctx.actor.email
       };
       const upd = await billingRepository.updatePayoutCharge(String(payRow.id), payPatch, ledgerAccess());

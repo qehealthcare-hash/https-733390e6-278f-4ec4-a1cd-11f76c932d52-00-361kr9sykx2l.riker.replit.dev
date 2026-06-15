@@ -253,6 +253,7 @@ export function buildSvcEntryRow(input: DutyDiaryDayRowInput, actorEmail?: strin
     disc,
     total,
     remarks: dutyDiaryRemarks(input.dutyId, input.isoDate, input.employeeId),
+    duty_id: input.dutyId,
     ...(actorEmail ? { created_by: actorEmail, updated_by: actorEmail } : {})
   };
 }
@@ -268,6 +269,7 @@ export function buildPayoutChargeRow(input: DutyDiaryDayRowInput, actorEmail?: s
     term: input.payoutTerm || "Daily",
     amount: input.payoutPerDay,
     remarks: dutyDiaryRemarks(input.dutyId, input.isoDate, input.employeeId),
+    duty_id: input.dutyId,
     ...(actorEmail ? { created_by: actorEmail, updated_by: actorEmail } : {})
   };
 }

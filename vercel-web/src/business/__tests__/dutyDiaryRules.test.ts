@@ -69,6 +69,7 @@ describe("dutyDiaryRules", () => {
     });
     expect(row.svc_key).toBe("B1_Care Taker Services");
     expect(row.remarks).toBe("duty:D1:2026-05-01:EMP1");
+    expect(row.duty_id).toBe("D1");
     expect(row.total).toBe(600);
   });
 
