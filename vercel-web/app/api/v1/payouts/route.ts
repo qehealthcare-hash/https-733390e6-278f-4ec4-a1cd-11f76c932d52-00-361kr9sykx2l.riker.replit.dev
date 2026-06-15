@@ -4,7 +4,11 @@ import { requireRole } from "@/lib/api/auth";
 import { PAYOUT_READ_ROLES, PAYOUT_WRITE_ROLES } from "@/lib/api/payoutRoles";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { payoutService } from "@/services/payoutService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import {
+  payoutListResponseDtoSchema,
+  payoutRowDtoSchema
+} from "@/validation/payoutDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +26,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     status: url.searchParams.get("status") ?? undefined
   };
   const result = await payoutService.list(query, { actor });
-  return respond(result);
+  return respondValidated(result, payoutListResponseDtoSchema);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
@@ -30,6 +34,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /payouts" }, async () => {
     const body = await parseJsonBody(req);
     const result = await payoutService.ensure(body, { actor });
-    return respond(result, 201);
+    return respondValidated(result, payoutRowDtoSchema, 201);
   });
 });

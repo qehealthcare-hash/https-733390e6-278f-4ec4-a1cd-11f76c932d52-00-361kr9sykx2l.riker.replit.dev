@@ -20,14 +20,25 @@ vi.mock("@/services/mutationAudit", async () => {
 vi.mock("@/services/billingService", () => ({
   billingService: {
     replaceServiceEntries: vi.fn(),
-    recordPayment: vi.fn().mockResolvedValue({ success: true, data: { id: "R1" } }),
+    recordPayment: vi.fn().mockResolvedValue({
+      success: true,
+      data: { id: "R1", billing_id: "BILL1", amount: 100 }
+    }),
     listReceiptsForBilling: vi.fn().mockResolvedValue({ success: true, data: [] })
   }
 }));
 vi.mock("@/services/payoutService", () => ({
   payoutService: {
     replacePayoutCharges: vi.fn(),
-    markPaid: vi.fn().mockResolvedValue({ success: true, data: { id: "P1" } })
+    markPaid: vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        id: "P1",
+        employee_id: "EMP1",
+        period_month: "2026-05",
+        status: "PAID"
+      }
+    })
   }
 }));
 vi.mock("@/services/attendanceService", () => ({

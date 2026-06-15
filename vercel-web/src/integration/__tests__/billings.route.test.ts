@@ -46,6 +46,7 @@ import {
   setActor
 } from "@/test/routeHarness";
 import { billingService } from "@/services/billingService";
+import { billingSummaryFixture } from "@/test/billingSummaryFixture";
 
 import {
   GET as BillingsGet,
@@ -67,6 +68,52 @@ import {
 import { POST as InvoiceRegeneratePost } from "../../../app/api/v1/billings/[id]/invoices/[invoiceId]/regenerate/route";
 
 const m = billingService as unknown as Record<string, ReturnType<typeof vi.fn>>;
+
+const minimalBillingRow = {
+  id: "BILL1",
+  patient_id: "PAT1",
+  status: "Active" as const
+};
+
+const minimalReceiptRow = {
+  id: "RCT1",
+  billing_id: "BILL1",
+  amount: 100
+};
+
+const invoiceSummaryRow = {
+  invoice: {
+    id: "INV1",
+    billing_id: "BILL1",
+    invoice_no: "1",
+    kind: "MONTHLY" as const,
+    status: "UNPAID"
+  },
+  amount: 1000,
+  received: 0,
+  outstanding: 1000,
+  status: "UNPAID" as const
+};
+
+const generateInvoiceResult = {
+  invoice: {
+    id: "INV1",
+    billing_id: "BILL1",
+    invoice_no: "1",
+    status: "UNPAID"
+  },
+  lines: [],
+  duplicate: false
+};
+
+const invoiceDetailResult = {
+  invoice: { id: "INV1", billing_id: "BILL1" },
+  lines: [],
+  receipts: [],
+  received: 0,
+  outstanding: 0,
+  status: "UNPAID" as const
+};
 
 describe("GET /api/v1/billings", () => {
   beforeEach(() => {
@@ -110,7 +157,13 @@ describe("GET /api/v1/billings", () => {
     setActor(ACTORS.accountant);
     m.listByPatient.mockResolvedValue({
       success: true,
-      data: { billings: [], receipts: [], services: [], invoices: [] }
+      data: {
+        billings: [],
+        receipts: [],
+        services: [],
+        invoices: [],
+        totalsByBilling: {}
+      }
     });
     const req = makeRequest("GET", "/api/v1/billings?patient_id=PAT1");
     const res = await BillingsGet(req, ctx({}));
@@ -136,7 +189,7 @@ describe("POST /api/v1/billings", () => {
 
   it("allows Accountant and returns 201", async () => {
     setActor(ACTORS.accountant);
-    m.create.mockResolvedValue({ success: true, data: { id: "BILL1" } });
+    m.create.mockResolvedValue({ success: true, data: minimalBillingRow });
     const req = makeRequest("POST", "/api/v1/billings", {
       body: { patient_id: "PAT1", period: "2026-05" }
     });
@@ -162,7 +215,7 @@ describe("POST /api/v1/billings/[id]/close", () => {
 
   it("forwards reason/force flags for Manager", async () => {
     setActor(ACTORS.manager);
-    m.close.mockResolvedValue({ success: true, data: { id: "BILL1", status: "Closed" } });
+    m.close.mockResolvedValue({ success: true, data: billingSummaryFixture() });
     const req = makeRequest("POST", "/api/v1/billings/BILL1/close", {
       body: { reason: "end of month", force: false }
     });
@@ -200,7 +253,7 @@ describe("Billing receipts endpoints", () => {
     setActor(ACTORS.accountant);
     m.listReceiptsForBilling.mockResolvedValue({
       success: true,
-      data: [{ id: "RCT1", amount: 100 }]
+      data: [minimalReceiptRow]
     });
     const req = makeRequest("GET", "/api/v1/billings/BILL1/receipts");
     const res = await BillingReceiptsGet(req, ctx({ id: "BILL1" }));
@@ -210,7 +263,7 @@ describe("Billing receipts endpoints", () => {
 
   it("POST records a payment and merges billing_id from params", async () => {
     setActor(ACTORS.accountant);
-    m.recordPayment.mockResolvedValue({ success: true, data: { id: "RCT1", amount: 500 } });
+    m.recordPayment.mockResolvedValue({ success: true, data: { ...minimalReceiptRow, amount: 500 } });
     const req = makeRequest("POST", "/api/v1/billings/BILL1/receipts", {
       body: { amount: 500, invoice_id: "INV1", mode: "Cash" }
     });
@@ -250,28 +303,26 @@ describe("Invoice endpoints", () => {
     setActor(ACTORS.staff);
     m.listInvoices.mockResolvedValue({
       success: true,
-      data: [
-        { id: "INV1", invoice_no: 1, kind: "MONTHLY", status: "UNPAID" }
-      ]
+      data: [invoiceSummaryRow]
     });
     const req = makeRequest("GET", "/api/v1/billings/BILL1/invoices");
     const res = await InvoicesGet(req, ctx({ id: "BILL1" }));
-    const data = await expectOkEnvelope<Array<{ invoice_no: number }>>(res);
-    expect(data[0].invoice_no).toBe(1);
+    const data = await expectOkEnvelope<Array<{ invoice: { invoice_no: string } }>>(res);
+    expect(data[0].invoice.invoice_no).toBe("1");
   });
 
   it("POST generates a monthly invoice and returns 201", async () => {
     setActor(ACTORS.accountant);
     m.generateInvoice.mockResolvedValue({
       success: true,
-      data: { id: "INV1", invoice_no: 1, status: "UNPAID" }
+      data: generateInvoiceResult
     });
     const req = makeRequest("POST", "/api/v1/billings/BILL1/invoices", {
       body: { kind: "MONTHLY", period: "2026-05" }
     });
     const res = await InvoicesPost(req, ctx({ id: "BILL1" }));
-    const data = await expectCreatedEnvelope<{ invoice_no: number }>(res);
-    expect(data.invoice_no).toBe(1);
+    const data = await expectCreatedEnvelope<{ invoice: { invoice_no: string } }>(res);
+    expect(data.invoice.invoice_no).toBe("1");
     expect(m.generateInvoice).toHaveBeenCalledWith(
       { kind: "MONTHLY", period: "2026-05", billing_id: "BILL1" },
       expect.any(Object)
@@ -296,7 +347,7 @@ describe("Invoice endpoints", () => {
     setActor(ACTORS.admin);
     m.cancelInvoice.mockResolvedValue({
       success: true,
-      data: { id: "INV1", removed: true, receipts_detached: 2 }
+      data: { deleted: true as const, invoice_no: "1", receipts_detached: 2 }
     });
     const req = makeRequest("DELETE", "/api/v1/billings/BILL1/invoices/INV1");
     const res = await InvoiceDelete(req, ctx({ id: "BILL1", invoiceId: "INV1" }));
@@ -319,7 +370,7 @@ describe("Invoice endpoints", () => {
     setActor(ACTORS.staff);
     m.getInvoice.mockResolvedValue({
       success: true,
-      data: { id: "INV1", lines: [], receipts: [] }
+      data: invoiceDetailResult
     });
     const req = makeRequest("GET", "/api/v1/billings/BILL1/invoices/INV1");
     const res = await InvoiceGet(req, ctx({ id: "BILL1", invoiceId: "INV1" }));
@@ -331,12 +382,15 @@ describe("Invoice endpoints", () => {
     setActor(ACTORS.accountant);
     m.regenerateInvoice.mockResolvedValue({
       success: true,
-      data: { id: "INV1", regenerated: true }
+      data: {
+        invoice: { id: "INV1", billing_id: "BILL1" },
+        lines: []
+      }
     });
     const req = makeRequest("POST", "/api/v1/billings/BILL1/invoices/INV1/regenerate");
     const res = await InvoiceRegeneratePost(req, ctx({ id: "BILL1", invoiceId: "INV1" }));
-    const data = await expectOkEnvelope<{ regenerated: boolean }>(res);
-    expect(data.regenerated).toBe(true);
+    const data = await expectOkEnvelope<{ invoice: { id: string } }>(res);
+    expect(data.invoice.id).toBe("INV1");
   });
 
   it("POST regenerate refuses when receipts already applied (conflict)", async () => {

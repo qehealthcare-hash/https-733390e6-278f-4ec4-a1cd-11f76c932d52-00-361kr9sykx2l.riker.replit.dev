@@ -3,7 +3,8 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { billingService } from "@/services/billingService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { receiptOrNullDtoSchema } from "@/validation/billingDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,7 +37,7 @@ export const DELETE = withAuth<Params>(async (req: NextRequest, { params, actor 
         { actor },
         reason
       );
-      return respond(result);
+      return respondValidated(result, receiptOrNullDtoSchema);
     }
   );
 });

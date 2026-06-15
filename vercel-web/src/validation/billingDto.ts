@@ -135,6 +135,129 @@ export const billingSummaryDtoSchema = z.object({
 });
 export type BillingSummaryDto = z.infer<typeof billingSummaryDtoSchema>;
 
+/** List row — billing header plus server-enriched display fields. */
+export const billingListRowDtoSchema = billingRowDtoSchema
+  .extend({
+    patient_name: z.string().optional(),
+    patient_phone: z.string().optional(),
+    totals: billingTotalsDtoSchema.optional()
+  })
+  .passthrough();
+export type BillingListRowDto = z.infer<typeof billingListRowDtoSchema>;
+
+export const billingListResponseDtoSchema = z.object({
+  rows: z.array(billingListRowDtoSchema),
+  total: z.number().int().nonnegative()
+});
+export type BillingListResponseDto = z.infer<typeof billingListResponseDtoSchema>;
+
+/** GET /billings?patient_id= — patient billing history bundle. */
+export const billingPatientHistoryDtoSchema = z.object({
+  billings: z.array(billingRowDtoSchema.passthrough()),
+  receipts: z.array(receiptRowDtoSchema.passthrough()),
+  services: z.array(z.record(z.unknown())),
+  invoices: z.array(invoiceSummaryDtoSchema),
+  totalsByBilling: z.record(z.string(), billingTotalsDtoSchema)
+});
+export type BillingPatientHistoryDto = z.infer<typeof billingPatientHistoryDtoSchema>;
+
+export const billingListOrPatientHistoryDtoSchema = z.union([
+  billingListResponseDtoSchema,
+  billingPatientHistoryDtoSchema
+]);
+
+export const receiptListDtoSchema = z.array(receiptRowDtoSchema.passthrough());
+export const receiptOrNullDtoSchema = receiptRowDtoSchema.nullable();
+export const invoiceSummaryListDtoSchema = z.array(invoiceSummaryDtoSchema);
+
+export const generateInvoiceResultDtoSchema = z.object({
+  invoice: invoiceRowDtoSchema.passthrough(),
+  lines: z.array(z.record(z.unknown())),
+  duplicate: z.boolean()
+});
+export type GenerateInvoiceResultDto = z.infer<typeof generateInvoiceResultDtoSchema>;
+
+export const finalInvoiceResultDtoSchema = generateInvoiceResultDtoSchema.extend({
+  security_receipt_id: idSchema.nullable(),
+  refund_id: idSchema.nullable(),
+  refund_amount: moneySchema,
+  sec_dep_applied: moneySchema,
+  gross: moneySchema,
+  net: moneySchema,
+  noop: z.boolean().optional()
+});
+export type FinalInvoiceResultDto = z.infer<typeof finalInvoiceResultDtoSchema>;
+
+export const invoiceDetailDtoSchema = z.object({
+  invoice: invoiceRowDtoSchema.passthrough(),
+  lines: z.array(z.record(z.unknown())),
+  receipts: z.array(receiptRowDtoSchema.passthrough()),
+  received: moneySchema,
+  outstanding: moneySchema,
+  status: z.union([billingPaidStatusSchema, z.literal("CANCELLED")])
+});
+export type InvoiceDetailDto = z.infer<typeof invoiceDetailDtoSchema>;
+
+export const regenerateInvoiceResultDtoSchema = z.object({
+  invoice: invoiceRowDtoSchema.passthrough(),
+  lines: z.array(z.record(z.unknown()))
+});
+export type RegenerateInvoiceResultDto = z.infer<typeof regenerateInvoiceResultDtoSchema>;
+
+export const cancelInvoiceResultDtoSchema = z.object({
+  deleted: z.literal(true),
+  invoice_no: z.string(),
+  receipts_detached: z.number().int().nonnegative()
+});
+export type CancelInvoiceResultDto = z.infer<typeof cancelInvoiceResultDtoSchema>;
+
+export const dutyLedgerSyncSummaryDtoSchema = z.object({
+  billing_id: z.string(),
+  processed: z.number().int().nonnegative(),
+  created_svc: z.number().int().nonnegative(),
+  created_payout: z.number().int().nonnegative(),
+  updated_svc: z.number().int().nonnegative(),
+  updated_payout: z.number().int().nonnegative(),
+  deleted_svc: z.number().int().nonnegative(),
+  deleted_payout: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+  skipped_no_bill: z.number().int().nonnegative(),
+  errors: z.array(z.object({ duty_id: z.string(), error: z.string() }))
+});
+export type DutyLedgerSyncSummaryDto = z.infer<typeof dutyLedgerSyncSummaryDtoSchema>;
+
+export const patientDutyLedgerDtoSchema = z.object({
+  patient_id: idSchema,
+  period: monthPeriodSchema,
+  duty_count: z.number().int().nonnegative(),
+  billed: moneySchema,
+  received: moneySchema,
+  outstanding: moneySchema
+});
+export type PatientDutyLedgerDto = z.infer<typeof patientDutyLedgerDtoSchema>;
+
+export const ledgerReplaceResultDtoSchema = z.object({
+  svc_key: z.string(),
+  count: z.number().int().nonnegative()
+});
+export type LedgerReplaceResultDto = z.infer<typeof ledgerReplaceResultDtoSchema>;
+
+export const generateFromDutyResultDtoSchema = z.object({
+  billing_id: idSchema,
+  svc_entry: z.record(z.unknown()).nullable(),
+  duplicate: z.boolean(),
+  totals: billingTotalsDtoSchema
+});
+export type GenerateFromDutyResultDto = z.infer<typeof generateFromDutyResultDtoSchema>;
+
+export const generateFromDutyRangeResultDtoSchema = z.object({
+  billing_id: idSchema,
+  created: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+  totals: billingTotalsDtoSchema
+});
+export type GenerateFromDutyRangeResultDto = z.infer<typeof generateFromDutyRangeResultDtoSchema>;
+
 /** Parse and validate a bundle before it leaves the service (contract test hook). */
 export function parseBillingSummaryDto(data: unknown) {
   return billingSummaryDtoSchema.safeParse(data);

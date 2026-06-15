@@ -3,7 +3,12 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { BILLING_READ_ROLES } from "@/lib/api/billingRoles";
 import { billingService } from "@/services/billingService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import {
+  billingListResponseDtoSchema,
+  billingPatientHistoryDtoSchema,
+  billingRowDtoSchema
+} from "@/validation/billingDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +27,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
   const patientId = url.searchParams.get("patient_id");
   if (patientId) {
     const result = await billingService.listByPatient(patientId, { actor });
-    return respond(result);
+    return respondValidated(result, billingPatientHistoryDtoSchema);
   }
   const query = {
     limit: url.searchParams.get("limit") ?? undefined,
@@ -32,12 +37,12 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     period: url.searchParams.get("period") ?? undefined
   };
   const result = await billingService.list(query, { actor });
-  return respond(result);
+  return respondValidated(result, billingListResponseDtoSchema);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, ["Admin", "Manager", "Accountant"]);
   const body = await parseJsonBody(req);
   const result = await billingService.create(body, { actor });
-  return respond(result, 201);
+  return respondValidated(result, billingRowDtoSchema, 201);
 });

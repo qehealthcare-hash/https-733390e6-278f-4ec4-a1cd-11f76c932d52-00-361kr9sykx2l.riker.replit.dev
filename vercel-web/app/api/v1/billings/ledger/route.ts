@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { BILLING_READ_ROLES } from "@/lib/api/billingRoles";
 import { billingService } from "@/services/billingService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respond, respondValidated } from "@/lib/api/apiResultBridge";
+import { patientDutyLedgerDtoSchema } from "@/validation/billingDto";
 import { ErrorCodes, type ApiResult } from "@/types/common";
 
 export const runtime = "nodejs";
@@ -36,5 +37,5 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     return respond(result);
   }
   const result = await billingService.patientDutyLedger(patientId, period, { actor });
-  return respond(result);
+  return respondValidated(result, patientDutyLedgerDtoSchema);
 });

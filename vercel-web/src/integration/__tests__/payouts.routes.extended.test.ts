@@ -30,12 +30,20 @@ import {
   setActor
 } from "@/test/routeHarness";
 import { payoutService } from "@/services/payoutService";
+import { payoutDetailFixture } from "@/test/payoutDetailFixture";
 
 import { GET as PayoutByIdGet } from "../../../app/api/v1/payouts/[id]/route";
 import { POST as PayoutAdjustPost } from "../../../app/api/v1/payouts/adjust/route";
 import { POST as PayoutReopenPost } from "../../../app/api/v1/payouts/[id]/reopen/route";
 
 const m = payoutService as unknown as Record<string, ReturnType<typeof vi.fn>>;
+
+const minimalPayoutRow = {
+  id: "PAY1",
+  employee_id: "EMP1",
+  period_month: "2026-05",
+  status: "OPEN" as const
+};
 
 describe("GET /api/v1/payouts/[id]", () => {
   beforeEach(() => {
@@ -47,7 +55,7 @@ describe("GET /api/v1/payouts/[id]", () => {
     setActor(ACTORS.nurse);
     m.getById.mockResolvedValue({
       success: true,
-      data: { payout: { id: "PAY1" }, outstanding: 0 }
+      data: payoutDetailFixture()
     });
     const req = makeRequest("GET", "/api/v1/payouts/PAY1");
     const res = await PayoutByIdGet(req, ctx({ id: "PAY1" }));
@@ -80,7 +88,7 @@ describe("POST /api/v1/payouts/adjust", () => {
 
   it("adjusts for Accountant", async () => {
     setActor(ACTORS.accountant);
-    m.adjust.mockResolvedValue({ success: true, data: { id: "PAY1" } });
+    m.adjust.mockResolvedValue({ success: true, data: minimalPayoutRow });
     const req = makeRequest("POST", "/api/v1/payouts/adjust", {
       body: { payout_id: "PAY1", advance: 200, deduction: 0, bonus: 0 }
     });
@@ -108,7 +116,7 @@ describe("POST /api/v1/payouts/[id]/reopen", () => {
 
   it("reopens for Admin", async () => {
     setActor(ACTORS.admin);
-    m.reopen.mockResolvedValue({ success: true, data: { id: "PAY1", status: "OPEN" } });
+    m.reopen.mockResolvedValue({ success: true, data: minimalPayoutRow });
     const req = makeRequest("POST", "/api/v1/payouts/PAY1/reopen", {
       body: { reason: "Rate correction" }
     });

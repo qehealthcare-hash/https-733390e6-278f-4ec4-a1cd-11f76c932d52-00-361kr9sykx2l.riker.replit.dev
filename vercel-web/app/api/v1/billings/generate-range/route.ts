@@ -3,7 +3,8 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { billingService } from "@/services/billingService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { generateFromDutyRangeResultDtoSchema } from "@/validation/billingDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /billings/generate-range" }, async () => {
     const body = await parseJsonBody(req);
     const result = await billingService.generateFromDutyRange(body, { actor });
-    return respond(result, 201);
+    return respondValidated(result, generateFromDutyRangeResultDtoSchema, 201);
   });
 });

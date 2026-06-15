@@ -15,9 +15,10 @@ import { requireRole } from "@/lib/api/auth";
 import { PAYOUT_PAY_ROLES } from "@/lib/api/payoutRoles";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { payoutService } from "@/services/payoutService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respond, respondValidated } from "@/lib/api/apiResultBridge";
 import { parseInput } from "@/validation/parseValidation";
 import { payoutAdvanceSchema } from "@/validation/payoutValidation";
+import { payoutRowDtoSchema } from "@/validation/payoutDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +38,7 @@ export const POST = withAuth<{ id: string }>(
         });
         if (!parsed.success) return respond(parsed);
         const result = await payoutService.payAdvance(parsed.data, { actor });
-        return respond(result);
+        return respondValidated(result, payoutRowDtoSchema);
       }
     );
   }

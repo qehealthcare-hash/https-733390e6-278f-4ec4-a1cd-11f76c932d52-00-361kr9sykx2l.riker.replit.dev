@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { BILLING_READ_ROLES, BILLING_RECEIVE_ROLES } from "@/lib/api/billingRoles";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { billingService } from "@/services/billingService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { receiptListDtoSchema, receiptOrNullDtoSchema } from "@/validation/billingDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ type Params = { id: string };
 export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, [...BILLING_READ_ROLES]);
   const result = await billingService.listReceiptsForBilling(params.id, { actor });
-  return respond(result);
+  return respondValidated(result, receiptListDtoSchema);
 });
 
 export const POST = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
@@ -29,7 +30,7 @@ export const POST = withAuth<Params>(async (req: NextRequest, { params, actor })
         { ...(body as object), billing_id: params.id },
         { actor }
       );
-      return respond(result, 201);
+      return respondValidated(result, receiptOrNullDtoSchema, 201);
     }
   );
 });

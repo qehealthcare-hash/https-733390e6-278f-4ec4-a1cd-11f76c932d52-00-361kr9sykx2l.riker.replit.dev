@@ -57,6 +57,7 @@ import {
   setActor
 } from "@/test/routeHarness";
 import { dutyDetailFixture } from "@/test/dutyDetailFixture";
+import { billingSummaryFixture } from "@/test/billingSummaryFixture";
 import { patientService } from "@/services/patientService";
 import { billingService } from "@/services/billingService";
 import { dutyService } from "@/services/dutyService";
@@ -117,7 +118,17 @@ describe("E2E lifecycle — patient → bill → invoice → receipt → close",
     // 3. Generate monthly invoice
     bil.generateInvoice.mockResolvedValue({
       success: true,
-      data: { id: "INV1", invoice_no: 1, status: "UNPAID", amount: 15000 }
+      data: {
+        invoice: {
+          id: "INV1",
+          billing_id: "BILL1",
+          invoice_no: "1",
+          status: "UNPAID",
+          amount: 15000
+        },
+        lines: [],
+        duplicate: false
+      }
     });
     const invoiceRes = await InvoicesPost(
       makeRequest("POST", `/api/v1/billings/${billing.id}/invoices`, {
@@ -125,10 +136,10 @@ describe("E2E lifecycle — patient → bill → invoice → receipt → close",
       }),
       ctx({ id: billing.id })
     );
-    const invoice = await expectCreatedEnvelope<{ id: string; invoice_no: number; amount: number }>(
+    const invoice = await expectCreatedEnvelope<{ invoice: { id: string; invoice_no: string } }>(
       invoiceRes
     );
-    expect(invoice.invoice_no).toBe(1);
+    expect(invoice.invoice.invoice_no).toBe("1");
     expect(bil.generateInvoice).toHaveBeenCalledWith(
       { kind: "MONTHLY", period: "2026-05", billing_id: "BILL1" },
       expect.any(Object)
@@ -137,11 +148,11 @@ describe("E2E lifecycle — patient → bill → invoice → receipt → close",
     // 4. Record receipt against the invoice
     bil.recordPayment.mockResolvedValue({
       success: true,
-      data: { id: "RCT1", invoice_id: "INV1", amount: 15000 }
+      data: { id: "RCT1", billing_id: "BILL1", invoice_id: "INV1", amount: 15000 }
     });
     const receiptRes = await ReceiptsPost(
       makeRequest("POST", `/api/v1/billings/${billing.id}/receipts`, {
-        body: { amount: 15000, invoice_id: invoice.id, mode: "UPI" }
+        body: { amount: 15000, invoice_id: invoice.invoice.id, mode: "UPI" }
       }),
       ctx({ id: billing.id })
     );
@@ -155,7 +166,9 @@ describe("E2E lifecycle — patient → bill → invoice → receipt → close",
     // 5. Close the bill (zero outstanding now)
     bil.close.mockResolvedValue({
       success: true,
-      data: { id: "BILL1", status: "Closed", outstanding: 0 }
+      data: billingSummaryFixture({
+        billing: { id: "BILL1", patient_id: "PAT1", status: "Closed" }
+      })
     });
     const closeRes = await BillingClose(
       makeRequest("POST", `/api/v1/billings/${billing.id}/close`, {
@@ -171,8 +184,8 @@ describe("E2E lifecycle — patient → bill → invoice → receipt → close",
       }),
       expect.any(Object)
     );
-    const closed = await expectOkEnvelope<{ status: string }>(closeRes);
-    expect(closed.status).toBe("Closed");
+    const closed = await expectOkEnvelope<{ billing: { status: string } }>(closeRes);
+    expect(closed.billing.status).toBe("Closed");
   });
 
   it("blocks closing a bill with outstanding > 0 and reopens only with force", async () => {
@@ -193,7 +206,9 @@ describe("E2E lifecycle — patient → bill → invoice → receipt → close",
     setActor(ACTORS.admin);
     bil.close.mockResolvedValueOnce({
       success: true,
-      data: { id: "BILL1", status: "Closed" }
+      data: billingSummaryFixture({
+        billing: { id: "BILL1", patient_id: "PAT1", status: "Closed" }
+      })
     });
     const res2 = await BillingClose(
       makeRequest("POST", "/api/v1/billings/BILL1/close", {
@@ -286,7 +301,11 @@ describe("E2E lifecycle — invoice generate → delete → regenerate", () => {
   it("generates a monthly invoice, deletes it, then generates a fresh one with a renumbered seq", async () => {
     bil.generateInvoice.mockResolvedValueOnce({
       success: true,
-      data: { id: "INV1", invoice_no: 5, status: "UNPAID" }
+      data: {
+        invoice: { id: "INV1", billing_id: "BILL1", invoice_no: "5", status: "UNPAID" },
+        lines: [],
+        duplicate: false
+      }
     });
     const genRes1 = await InvoicesPost(
       makeRequest("POST", "/api/v1/billings/BILL1/invoices", {
@@ -294,29 +313,33 @@ describe("E2E lifecycle — invoice generate → delete → regenerate", () => {
       }),
       ctx({ id: "BILL1" })
     );
-    const inv1 = await expectCreatedEnvelope<{ invoice_no: number }>(genRes1);
-    expect(inv1.invoice_no).toBe(5);
+    const inv1 = await expectCreatedEnvelope<{ invoice: { invoice_no: string } }>(genRes1);
+    expect(inv1.invoice.invoice_no).toBe("5");
 
     bil.cancelInvoice.mockResolvedValueOnce({
       success: true,
-      data: { id: "INV1", removed: true, receipts_detached: 0, sequence_compacted: true }
+      data: { deleted: true as const, invoice_no: "5", receipts_detached: 0 }
     });
     const delRes = await InvoiceDelete(
       makeRequest("DELETE", "/api/v1/billings/BILL1/invoices/INV1"),
       ctx({ id: "BILL1", invoiceId: "INV1" })
     );
     const deleted = await expectOkEnvelope<{
-      removed: boolean;
-      sequence_compacted: boolean;
+      deleted: true;
+      receipts_detached: number;
     }>(delRes);
-    expect(deleted.removed).toBe(true);
-    expect(deleted.sequence_compacted).toBe(true);
+    expect(deleted.deleted).toBe(true);
+    expect(deleted.receipts_detached).toBe(0);
 
     // The compacted sequence means the *next* invoice for any billing keeps
     // numbering flowing without a gap.
     bil.generateInvoice.mockResolvedValueOnce({
       success: true,
-      data: { id: "INV2", invoice_no: 5, status: "UNPAID" }
+      data: {
+        invoice: { id: "INV2", billing_id: "BILL1", invoice_no: "5", status: "UNPAID" },
+        lines: [],
+        duplicate: false
+      }
     });
     const genRes2 = await InvoicesPost(
       makeRequest("POST", "/api/v1/billings/BILL1/invoices", {
@@ -324,8 +347,8 @@ describe("E2E lifecycle — invoice generate → delete → regenerate", () => {
       }),
       ctx({ id: "BILL1" })
     );
-    const inv2 = await expectCreatedEnvelope<{ invoice_no: number }>(genRes2);
+    const inv2 = await expectCreatedEnvelope<{ invoice: { invoice_no: string } }>(genRes2);
     // Sequence was compacted; the freshly-generated invoice re-claims the slot.
-    expect(inv2.invoice_no).toBe(5);
+    expect(inv2.invoice.invoice_no).toBe("5");
   });
 });

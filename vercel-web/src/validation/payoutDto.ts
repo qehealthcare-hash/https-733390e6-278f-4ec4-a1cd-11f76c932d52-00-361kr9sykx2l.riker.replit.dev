@@ -49,6 +49,45 @@ export const payoutDetailDtoSchema = z.object({
 });
 export type PayoutDetailDto = z.infer<typeof payoutDetailDtoSchema>;
 
+export const payoutListResponseDtoSchema = z.object({
+  rows: z.array(payoutRowDtoSchema.passthrough()),
+  total: z.number().int().nonnegative()
+});
+export type PayoutListResponseDto = z.infer<typeof payoutListResponseDtoSchema>;
+
+export const payoutPendingForEmployeeDtoSchema = z.object({
+  employee_id: idSchema,
+  employee_name: z.string(),
+  period: monthPeriodSchema,
+  charged: z.number(),
+  paid: z.number(),
+  pending: z.number(),
+  duty_count: z.number(),
+  hours: z.number(),
+  payout: z.union([payoutRowDtoSchema.passthrough(), z.null()]),
+  paid_transactions: z.array(z.record(z.unknown()))
+});
+export type PayoutPendingForEmployeeDto = z.infer<typeof payoutPendingForEmployeeDtoSchema>;
+
+export const payoutPendingEmployeeRowDtoSchema = z.object({
+  employee_id: idSchema,
+  employee_name: z.string(),
+  charged: z.number(),
+  paid: z.number(),
+  pending: z.number(),
+  duty_count: z.number(),
+  payout_id: idSchema.nullable(),
+  payout_status: z.enum(PAYOUT_STATUSES).nullable()
+});
+
+export const payoutPendingEmployeesDtoSchema = z.object({
+  period: monthPeriodSchema,
+  rows: z.array(payoutPendingEmployeeRowDtoSchema),
+  total_pending: z.number(),
+  source: z.enum(["rpc", "fallback"])
+});
+export type PayoutPendingEmployeesDto = z.infer<typeof payoutPendingEmployeesDtoSchema>;
+
 export function parsePayoutDetailDto(data: unknown) {
   return payoutDetailDtoSchema.safeParse(data);
 }

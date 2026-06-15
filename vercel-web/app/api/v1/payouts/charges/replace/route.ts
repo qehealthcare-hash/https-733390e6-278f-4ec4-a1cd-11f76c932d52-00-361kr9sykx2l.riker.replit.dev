@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { PAYOUT_WRITE_ROLES } from "@/lib/api/payoutRoles";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { payoutService } from "@/services/payoutService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { ledgerReplaceResultDtoSchema } from "@/validation/billingDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,7 +28,7 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
     async () => {
       const body = await parseJsonBody(req);
       const result = await payoutService.replacePayoutCharges(body, { actor });
-      return respond(result);
+      return respondValidated(result, ledgerReplaceResultDtoSchema);
     }
   );
 });

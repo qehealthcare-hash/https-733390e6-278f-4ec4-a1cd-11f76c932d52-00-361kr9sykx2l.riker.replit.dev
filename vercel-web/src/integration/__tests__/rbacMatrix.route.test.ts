@@ -42,20 +42,68 @@ vi.mock("@/services/dutyService", () => ({
 vi.mock("@/services/billingService", () => ({
   billingService: {
     list: vi.fn().mockResolvedValue({ success: true, data: { rows: [], total: 0 } }),
-    create: vi.fn().mockResolvedValue({ success: true, data: { id: "X" } }),
-    close: vi.fn().mockResolvedValue({ success: true, data: { id: "X" } }),
+    create: vi.fn().mockResolvedValue({
+      success: true,
+      data: { id: "X", patient_id: "PAT1", status: "Active" }
+    }),
+    close: vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        billing: { id: "X", patient_id: "PAT1", status: "Closed" },
+        services: [],
+        receipts: [],
+        invoices: [],
+        totals: {
+          services: 0,
+          billed: 0,
+          receipts: 0,
+          sec_dep: 0,
+          discount: 0,
+          advance: 0,
+          outstanding: 0
+        },
+        period: { months: ["2026-05"] },
+        patient: null,
+        permissions: {
+          canEdit: false,
+          canReceive: false,
+          canGenerateFinal: false,
+          canClose: false,
+          canReopen: true
+        }
+      }
+    }),
     listReceiptsForBilling: vi.fn().mockResolvedValue({ success: true, data: [] }),
-    recordPayment: vi.fn().mockResolvedValue({ success: true, data: { id: "X" } }),
+    recordPayment: vi.fn().mockResolvedValue({
+      success: true,
+      data: { id: "X", billing_id: "BILL1", amount: 1 }
+    }),
     listInvoices: vi.fn().mockResolvedValue({ success: true, data: [] }),
-    generateInvoice: vi.fn().mockResolvedValue({ success: true, data: { id: "X" } }),
-    cancelInvoice: vi.fn().mockResolvedValue({ success: true, data: { id: "X" } })
+    generateInvoice: vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        invoice: { id: "X", billing_id: "BILL1", status: "UNPAID" },
+        lines: [],
+        duplicate: false
+      }
+    }),
+    cancelInvoice: vi.fn().mockResolvedValue({
+      success: true,
+      data: { deleted: true as const, invoice_no: "1", receipts_detached: 0 }
+    })
   }
 }));
 vi.mock("@/services/payoutService", () => ({
   payoutService: {
     list: vi.fn().mockResolvedValue({ success: true, data: { rows: [], total: 0 } }),
-    ensure: vi.fn().mockResolvedValue({ success: true, data: { id: "X" } }),
-    markPaid: vi.fn().mockResolvedValue({ success: true, data: { id: "X" } })
+    ensure: vi.fn().mockResolvedValue({
+      success: true,
+      data: { id: "X", employee_id: "EMP1", period_month: "2026-05", status: "OPEN" }
+    }),
+    markPaid: vi.fn().mockResolvedValue({
+      success: true,
+      data: { id: "X", employee_id: "EMP1", period_month: "2026-05", status: "PAID" }
+    })
   }
 }));
 vi.mock("@/services/attendanceService", () => ({

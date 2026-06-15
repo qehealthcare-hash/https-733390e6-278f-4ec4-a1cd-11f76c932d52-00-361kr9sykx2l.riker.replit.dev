@@ -33,6 +33,7 @@ import {
   setActor
 } from "@/test/routeHarness";
 import { billingService } from "@/services/billingService";
+import { billingSummaryFixture } from "@/test/billingSummaryFixture";
 import { PATCH as BillingPatch } from "../../../app/api/v1/billings/[id]/route";
 import { POST as BillingStatusPost } from "../../../app/api/v1/billings/[id]/status/route";
 import { POST as BillingClosePost } from "../../../app/api/v1/billings/[id]/close/route";
@@ -41,6 +42,12 @@ import { POST as BillingReopenPost } from "../../../app/api/v1/billings/[id]/reo
 const m = billingService as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 const VERSION = "2026-06-01T12:00:00.000Z";
+
+const minimalBillingRow = {
+  id: "BILL1",
+  patient_id: "PAT1",
+  status: "Active" as const
+};
 
 describe("Billing module smoke — optimistic concurrency at HTTP layer", () => {
   beforeEach(() => {
@@ -167,7 +174,7 @@ describe("Billing module smoke — RBAC on lifecycle mutations", () => {
     setActor(ACTORS.accountant);
     m.update.mockResolvedValue({
       success: true,
-      data: { id: "BILL1", status: "Active", updated_at: VERSION, sec_dep: 2000 }
+      data: { ...minimalBillingRow, updated_at: VERSION, sec_dep: 2000 }
     });
     const patchRes = await BillingPatch(
       makeRequest("PATCH", "/api/v1/billings/BILL1", {
@@ -180,7 +187,9 @@ describe("Billing module smoke — RBAC on lifecycle mutations", () => {
     setActor(ACTORS.manager);
     m.close.mockResolvedValue({
       success: true,
-      data: { id: "BILL1", status: "Closed" }
+      data: billingSummaryFixture({
+        billing: { id: "BILL1", patient_id: "PAT1", status: "Closed" }
+      })
     });
     const closeRes = await BillingClosePost(
       makeRequest("POST", "/api/v1/billings/BILL1/close", {

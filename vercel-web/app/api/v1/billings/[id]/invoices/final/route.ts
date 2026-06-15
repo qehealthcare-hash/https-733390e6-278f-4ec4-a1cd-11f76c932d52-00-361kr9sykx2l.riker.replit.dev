@@ -3,7 +3,8 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { billingService } from "@/services/billingService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { finalInvoiceResultDtoSchema } from "@/validation/billingDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,7 +34,7 @@ export const POST = withAuth<Params>(async (req: NextRequest, { params, actor })
         { ...(body as object), billing_id: params.id },
         { actor }
       );
-      return respond(result, 201);
+      return respondValidated(result, finalInvoiceResultDtoSchema, 201);
     }
   );
 });

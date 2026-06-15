@@ -24,7 +24,8 @@ import { requireRole } from "@/lib/api/auth";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { PAYOUT_WRITE_ROLES } from "@/lib/api/payoutRoles";
 import { payoutService } from "@/services/payoutService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { payoutDetailDtoSchema } from "@/validation/payoutDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,7 +43,7 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
       // collapse across distinct payloads.
       const body = await parseJsonBody(req);
       const result = await payoutService.setEmployeePeriodPayoutRate(body, { actor });
-      return respond(result);
+      return respondValidated(result, payoutDetailDtoSchema);
     }
   );
 });

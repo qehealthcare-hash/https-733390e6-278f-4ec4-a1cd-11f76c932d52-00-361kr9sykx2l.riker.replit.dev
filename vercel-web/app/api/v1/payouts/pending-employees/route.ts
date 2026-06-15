@@ -15,7 +15,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { PAYOUT_READ_ROLES } from "@/lib/api/payoutRoles";
 import { payoutService } from "@/services/payoutService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { payoutPendingEmployeesDtoSchema } from "@/validation/payoutDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,5 +28,5 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     { period: url.searchParams.get("period") || "" },
     { actor }
   );
-  return respond(result);
+  return respondValidated(result, payoutPendingEmployeesDtoSchema);
 });

@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { BILLING_WRITE_ROLES } from "@/lib/api/billingRoles";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { billingService } from "@/services/billingService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { ledgerReplaceResultDtoSchema } from "@/validation/billingDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +26,7 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
     async () => {
       const body = await parseJsonBody(req);
       const result = await billingService.replaceServiceEntries(body, { actor });
-      return respond(result);
+      return respondValidated(result, ledgerReplaceResultDtoSchema);
     }
   );
 });

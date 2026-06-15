@@ -3,7 +3,8 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { BILLING_WRITE_ROLES } from "@/lib/api/billingRoles";
 import { billingService } from "@/services/billingService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respond, respondValidated } from "@/lib/api/apiResultBridge";
+import { dutyLedgerSyncSummaryDtoSchema } from "@/validation/billingDto";
 import { failure } from "@/utils/apiResponse";
 import { ErrorCodes } from "@/types/common";
 
@@ -25,5 +26,5 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
     return respond(failure("patient_id is required", ErrorCodes.validation));
   }
   const result = await billingService.syncDutyLedgerForPatient(patientId, { actor });
-  return respond(result);
+  return respondValidated(result, dutyLedgerSyncSummaryDtoSchema);
 });

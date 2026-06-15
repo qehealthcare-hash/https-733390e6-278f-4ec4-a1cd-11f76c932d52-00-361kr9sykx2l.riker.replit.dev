@@ -45,6 +45,7 @@ import {
   setActor
 } from "@/test/routeHarness";
 import { payoutService } from "@/services/payoutService";
+import { payoutDetailFixture } from "@/test/payoutDetailFixture";
 
 import {
   GET as PayoutsGet,
@@ -61,6 +62,13 @@ import { GET as PayoutTotalsGet } from "../../../app/api/v1/payouts/totals/route
 import { POST as PayoutChargesReplace } from "../../../app/api/v1/payouts/charges/replace/route";
 
 const m = payoutService as unknown as Record<string, ReturnType<typeof vi.fn>>;
+
+const minimalPayoutRow = {
+  id: "PAY1",
+  employee_id: "EMP1",
+  period_month: "2026-05",
+  status: "OPEN" as const
+};
 
 describe("GET /api/v1/payouts", () => {
   beforeEach(() => {
@@ -127,7 +135,7 @@ describe("POST /api/v1/payouts", () => {
 
   it("creates a payout for Manager", async () => {
     setActor(ACTORS.manager);
-    m.ensure.mockResolvedValue({ success: true, data: { id: "PAY1" } });
+    m.ensure.mockResolvedValue({ success: true, data: minimalPayoutRow });
     const req = makeRequest("POST", "/api/v1/payouts", {
       body: { employee_id: "EMP1", period_month: "2026-05" }
     });
@@ -169,7 +177,7 @@ describe("POST /api/v1/payouts/[id]/recompute", () => {
       success: true,
       data: { payout: { employee_id: "EMP1", period_month: "2026-05" } }
     });
-    m.recompute.mockResolvedValue({ success: true, data: { recomputed: true } });
+    m.recompute.mockResolvedValue({ success: true, data: minimalPayoutRow });
     const req = makeRequest("POST", "/api/v1/payouts/PAY1/recompute");
     const res = await PayoutRecompute(req, ctx({ id: "PAY1" }));
     await expectOkEnvelope(res);
@@ -188,7 +196,10 @@ describe("POST /api/v1/payouts/[id]/lock", () => {
 
   it("locks when authorised with reason", async () => {
     setActor(ACTORS.manager);
-    m.lock.mockResolvedValue({ success: true, data: { id: "PAY1", status: "Locked" } });
+    m.lock.mockResolvedValue({
+      success: true,
+      data: { ...minimalPayoutRow, status: "LOCKED" as const }
+    });
     const req = makeRequest("POST", "/api/v1/payouts/PAY1/lock", {
       body: { reason: "Verified duty days for payment" }
     });
@@ -265,7 +276,10 @@ describe("POST /api/v1/payouts/pay", () => {
 
   it("pays when Accountant with proof", async () => {
     setActor(ACTORS.accountant);
-    m.markPaid.mockResolvedValue({ success: true, data: { id: "PAY1", status: "Paid" } });
+    m.markPaid.mockResolvedValue({
+      success: true,
+      data: { ...minimalPayoutRow, status: "PAID" as const }
+    });
     const req = makeRequest("POST", "/api/v1/payouts/pay", {
       body: {
         payout_id: "PAY1",
@@ -315,7 +329,7 @@ describe("POST /api/v1/payouts/[id]/pay-advance", () => {
     setActor(ACTORS.accountant);
     m.payAdvance.mockResolvedValue({
       success: true,
-      data: { id: "PAY1", status: "OPEN" }
+      data: minimalPayoutRow
     });
     const req = makeRequest("POST", "/api/v1/payouts/PAY1/pay-advance", {
       body: {
@@ -378,6 +392,7 @@ describe("GET /api/v1/payouts/pending", () => {
         paid: 5000,
         pending: 7000,
         duty_count: 24,
+        hours: 176,
         payout: null,
         paid_transactions: []
       }
@@ -418,6 +433,7 @@ describe("GET /api/v1/payouts/pending-employees", () => {
       data: {
         period: "2026-05",
         total_pending: 14500,
+        source: "rpc" as const,
         rows: [
           {
             employee_id: "EMP1",
@@ -496,10 +512,16 @@ describe("POST /api/v1/payouts/set-rate", () => {
     setActor(ACTORS.manager);
     m.setEmployeePeriodPayoutRate.mockResolvedValue({
       success: true,
-      data: {
-        payout: { id: "PAY1", gross_amount: 1600, net_amount: 1600 },
-        diagnostics: { duties_needing_rate: [], warning: "" }
-      }
+      data: payoutDetailFixture({
+        payout: {
+          id: "PAY1",
+          employee_id: "EMP1",
+          period_month: "2026-05",
+          status: "OPEN",
+          gross_amount: 1600,
+          net_amount: 1600
+        }
+      })
     });
     const req = makeRequest("POST", "/api/v1/payouts/set-rate", {
       body: { employee_id: "EMP1", period: "2026-05", payout_per_day: 800 }
