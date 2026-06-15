@@ -24,6 +24,7 @@ vi.mock("@/services/inquiryService", () => ({
   }
 }));
 
+import { inquiryDetailFixture } from "@/test/inquiryDetailFixture";
 import {
   ACTORS,
   ctx,
@@ -123,7 +124,7 @@ describe("POST /api/v1/inquiries", () => {
 
   it("creates and returns 201 for Staff", async () => {
     setActor(ACTORS.staff);
-    inq.create.mockResolvedValue({ success: true, data: { id: "INQ1" } });
+    inq.create.mockResolvedValue({ success: true, data: inquiryDetailFixture({ id: "INQ1" }) });
     const req = makeRequest("POST", "/api/v1/inquiries", {
       body: { name: "Caller", mobile: "9999999999" }
     });

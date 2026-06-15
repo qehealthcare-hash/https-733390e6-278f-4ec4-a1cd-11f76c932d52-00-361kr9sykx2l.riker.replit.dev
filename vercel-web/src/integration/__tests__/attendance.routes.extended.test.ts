@@ -32,6 +32,11 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import {
+  attendanceDayBoardSummaryFixture,
+  attendanceRangeBoardSummaryFixture,
+  attendanceRowFixture
+} from "@/test/attendanceRowFixture";
 import { attendanceService } from "@/services/attendanceService";
 
 import {
@@ -53,7 +58,7 @@ describe("GET /api/v1/attendance/[id]", () => {
 
   it("allows Executive (attendance.read parity, M8)", async () => {
     setActor({ ...ACTORS.staff, role: "Executive", email: "executive@hominal.test" });
-    m.getById.mockResolvedValue({ success: true, data: { id: "ATT1" } });
+    m.getById.mockResolvedValue({ success: true, data: attendanceRowFixture({ id: "ATT1" }) });
     const req = makeRequest("GET", "/api/v1/attendance/ATT1");
     const res = await AttendanceByIdGet(req, ctx({ id: "ATT1" }));
     await expectOkEnvelope(res);
@@ -87,7 +92,10 @@ describe("PATCH /api/v1/attendance/[id]", () => {
 
   it("forwards body for Admin", async () => {
     setActor(ACTORS.admin);
-    m.update.mockResolvedValue({ success: true, data: { id: "ATT1", status: "LATE" } });
+    m.update.mockResolvedValue({
+      success: true,
+      data: attendanceRowFixture({ id: "ATT1", status: "LATE" })
+    });
     const req = makeRequest("PATCH", "/api/v1/attendance/ATT1", {
       body: { status: "LATE" }
     });
@@ -129,7 +137,14 @@ describe("GET /api/v1/attendance/day", () => {
 
   it("forwards date filter for Supervisor", async () => {
     setActor({ ...ACTORS.staff, role: "Supervisor", email: "supervisor@hominal.test" });
-    m.dayBoard.mockResolvedValue({ success: true, data: { date: "2026-05-25", rows: [] } });
+    m.dayBoard.mockResolvedValue({
+      success: true,
+      data: {
+        date: "2026-05-25",
+        rows: [],
+        summary: attendanceDayBoardSummaryFixture()
+      }
+    });
     const req = makeRequest("GET", "/api/v1/attendance/day?date=2026-05-25&employee_id=EMP1");
     const res = await AttendanceDayGet(req, ctx({}));
     await expectOkEnvelope(res);
@@ -149,7 +164,15 @@ describe("GET /api/v1/attendance/range", () => {
 
   it("forwards window for Staff", async () => {
     setActor(ACTORS.staff);
-    m.rangeBoard.mockResolvedValue({ success: true, data: { rows: [], summary: {} } });
+    m.rangeBoard.mockResolvedValue({
+      success: true,
+      data: {
+        from: "2026-05-01",
+        to: "2026-05-31",
+        rows: [],
+        summary: attendanceRangeBoardSummaryFixture()
+      }
+    });
     const req = makeRequest(
       "GET",
       "/api/v1/attendance/range?from=2026-05-01&to=2026-05-31&employee_id=EMP1"
@@ -183,7 +206,7 @@ describe("POST /api/v1/attendance/mark", () => {
 
   it("marks for Admin", async () => {
     setActor(ACTORS.admin);
-    m.mark.mockResolvedValue({ success: true, data: { id: "ATT1" } });
+    m.mark.mockResolvedValue({ success: true, data: attendanceRowFixture({ id: "ATT1" }) });
     const req = makeRequest("POST", "/api/v1/attendance/mark", {
       body: { employee_id: "EMP1", status: "PRESENT", duty_id: "DUTY1" }
     });

@@ -109,8 +109,14 @@ vi.mock("@/services/payoutService", () => ({
 vi.mock("@/services/attendanceService", () => ({
   attendanceService: {
     list: vi.fn().mockResolvedValue({ success: true, data: { rows: [], total: 0 } }),
-    create: vi.fn().mockResolvedValue({ success: true, data: { id: "X" } }),
-    dayMark: vi.fn().mockResolvedValue({ success: true, data: { id: "X" } })
+    create: vi.fn().mockResolvedValue({
+      success: true,
+      data: { id: "X", status: "PRESENT" }
+    }),
+    dayMark: vi.fn().mockResolvedValue({
+      success: true,
+      data: { id: "X", status: "PRESENT" }
+    })
   }
 }));
 

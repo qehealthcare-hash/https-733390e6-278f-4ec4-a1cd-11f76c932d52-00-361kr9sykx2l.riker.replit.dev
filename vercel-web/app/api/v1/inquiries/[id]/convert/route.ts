@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { INQUIRY_WRITE_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { inquiryService } from "@/services/inquiryService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { inquiryConvertResultDtoSchema } from "@/validation/inquiryDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,7 +28,7 @@ export const POST = withAuth<Params>(async (req: NextRequest, { params, actor })
     // P1-33: surface parse errors instead of treating them as an empty body.
     const body = await parseJsonBody(req);
     const result = await inquiryService.convertToPatient(params.id, body, { actor });
-      return respond(result, 201);
+      return respondValidated(result, inquiryConvertResultDtoSchema, 201);
     }
   );
 });

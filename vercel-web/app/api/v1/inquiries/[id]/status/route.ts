@@ -3,7 +3,8 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { INQUIRY_WRITE_ROLES } from "@/business/rbac";
 import { inquiryService } from "@/services/inquiryService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { inquiryDetailDtoSchema } from "@/validation/inquiryDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,5 +22,5 @@ export const POST = withAuth<Params>(async (req: NextRequest, { params, actor })
   requireRole(actor, INQUIRY_WRITE_ROLES);
   const body = await parseJsonBody(req);
   const result = await inquiryService.setStatus(params.id, body, { actor });
-  return respond(result);
+  return respondValidated(result, inquiryDetailDtoSchema);
 });

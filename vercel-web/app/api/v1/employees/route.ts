@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { EMPLOYEE_READ_ROLES, EMPLOYEE_WRITE_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { employeeService } from "@/services/employeeService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { employeeDetailDtoSchema, employeeListResponseDtoSchema } from "@/validation/employeeDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +19,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     dept: url.searchParams.get("dept") || undefined
   };
   const result = await employeeService.list(opts, { actor });
-  return respond(result);
+  return respondValidated(result, employeeListResponseDtoSchema);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
@@ -26,6 +27,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /employees" }, async () => {
     const body = await parseJsonBody(req);
     const result = await employeeService.create(body, { actor });
-    return respond(result, 201);
+    return respondValidated(result, employeeDetailDtoSchema, 201);
   });
 });

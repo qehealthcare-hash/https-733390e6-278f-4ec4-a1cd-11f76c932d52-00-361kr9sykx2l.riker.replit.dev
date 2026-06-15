@@ -58,6 +58,7 @@ import {
 } from "@/test/routeHarness";
 import { dutyDetailFixture } from "@/test/dutyDetailFixture";
 import { billingSummaryFixture } from "@/test/billingSummaryFixture";
+import { patientDetailFixture } from "@/test/patientDetailFixture";
 import { patientService } from "@/services/patientService";
 import { billingService } from "@/services/billingService";
 import { dutyService } from "@/services/dutyService";
@@ -86,7 +87,7 @@ describe("E2E lifecycle — patient → bill → invoice → receipt → close",
     // 1. Create patient
     pat.create.mockResolvedValue({
       success: true,
-      data: { id: "PAT1", name: "Anita", status: "Active" }
+      data: patientDetailFixture({ id: "PAT1", name: "Anita", full_name: "Anita" })
     });
     const patientRes = await PatientsPost(
       makeRequest("POST", "/api/v1/patients", {

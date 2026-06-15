@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { ATTENDANCE_READ_ROLES } from "@/business/rbac";
 import { attendanceService } from "@/services/attendanceService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { attendanceRangeBoardDtoSchema } from "@/validation/attendanceDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,5 +31,5 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     { employee_id, patient_id, status },
     { actor }
   );
-  return respond(result);
+  return respondValidated(result, attendanceRangeBoardDtoSchema);
 });

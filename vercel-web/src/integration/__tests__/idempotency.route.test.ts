@@ -41,6 +41,7 @@ import {
   resetIdempotencyStore,
   setActor
 } from "@/test/routeHarness";
+import { patientDetailFixture } from "@/test/patientDetailFixture";
 import { patientService } from "@/services/patientService";
 import { dutyService } from "@/services/dutyService";
 
@@ -62,7 +63,7 @@ describe("Idempotency-Key replay", () => {
   it("POST /patients with the same Idempotency-Key replays the cached envelope", async () => {
     mPatient.create.mockResolvedValueOnce({
       success: true,
-      data: { id: "PAT1", name: "Anita" }
+      data: patientDetailFixture({ id: "PAT1", name: "Anita", full_name: "Anita" })
     });
 
     const key = "11111111-1111-4111-8111-111111111111";
@@ -96,8 +97,8 @@ describe("Idempotency-Key replay", () => {
 
   it("Different Idempotency-Keys run the service twice", async () => {
     mPatient.create
-      .mockResolvedValueOnce({ success: true, data: { id: "PAT_A" } })
-      .mockResolvedValueOnce({ success: true, data: { id: "PAT_B" } });
+      .mockResolvedValueOnce({ success: true, data: patientDetailFixture({ id: "PAT_A" }) })
+      .mockResolvedValueOnce({ success: true, data: patientDetailFixture({ id: "PAT_B" }) });
 
     for (const key of ["aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"]) {
       const req = makeRequest("POST", "/api/v1/patients", {
@@ -115,8 +116,8 @@ describe("Idempotency-Key replay", () => {
     // and dedupes anyway. Identical bodies from the same actor must collapse
     // to a single service call.
     mPatient.create
-      .mockResolvedValueOnce({ success: true, data: { id: "A" } })
-      .mockResolvedValueOnce({ success: true, data: { id: "WOULD_NEVER_BE_RETURNED" } });
+      .mockResolvedValueOnce({ success: true, data: patientDetailFixture({ id: "A" }) })
+      .mockResolvedValueOnce({ success: true, data: patientDetailFixture({ id: "WOULD_NEVER_BE_RETURNED" }) });
 
     for (let i = 0; i < 2; i++) {
       const req = makeRequest("POST", "/api/v1/patients", {
@@ -129,8 +130,8 @@ describe("Idempotency-Key replay", () => {
 
   it("No Idempotency-Key header — different bodies still run the service once each (P0-3)", async () => {
     mPatient.create
-      .mockResolvedValueOnce({ success: true, data: { id: "A" } })
-      .mockResolvedValueOnce({ success: true, data: { id: "B" } });
+      .mockResolvedValueOnce({ success: true, data: patientDetailFixture({ id: "A" }) })
+      .mockResolvedValueOnce({ success: true, data: patientDetailFixture({ id: "B" }) });
 
     await PatientsPost(
       makeRequest("POST", "/api/v1/patients", { body: { name: "Alpha", mobile: "9000000010" } }),

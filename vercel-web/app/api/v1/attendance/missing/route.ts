@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { ATTENDANCE_READ_ROLES } from "@/business/rbac";
 import { attendanceService } from "@/services/attendanceService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respond, respondValidated } from "@/lib/api/apiResultBridge";
+import { attendanceMissingListDtoSchema } from "@/validation/attendanceDto";
 import { ErrorCodes, type ApiResult } from "@/types/common";
 
 export const runtime = "nodejs";
@@ -32,5 +33,5 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
   const result = await attendanceService.listMissingForEmployee(employeeId, from, to, {
     actor
   });
-  return respond(result);
+  return respondValidated(result, attendanceMissingListDtoSchema);
 });

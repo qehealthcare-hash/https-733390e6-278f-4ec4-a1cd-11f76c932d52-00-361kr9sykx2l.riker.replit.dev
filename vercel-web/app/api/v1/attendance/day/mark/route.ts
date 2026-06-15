@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { ATTENDANCE_WRITE_ROLES } from "@/business/rbac";
 import { attendanceService } from "@/services/attendanceService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { attendanceRowDtoSchema } from "@/validation/attendanceDto";
 import { parseJsonBody } from "@/lib/api/handler";
 
 export const runtime = "nodejs";
@@ -34,5 +35,5 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, [...ATTENDANCE_WRITE_ROLES]);
   const body = await parseJsonBody(req);
   const result = await attendanceService.dayMark(body, { actor });
-  return respond(result);
+  return respondValidated(result, attendanceRowDtoSchema);
 });

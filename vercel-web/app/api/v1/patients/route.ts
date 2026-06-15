@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { PATIENT_READ_ROLES, PATIENT_WRITE_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { patientService } from "@/services/patientService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { patientDetailDtoSchema, patientListResponseDtoSchema } from "@/validation/patientDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,7 +27,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     to: url.searchParams.get("to") ?? undefined
   };
   const result = await patientService.list(query, { actor });
-  return respond(result);
+  return respondValidated(result, patientListResponseDtoSchema);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
@@ -34,6 +35,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /patients" }, async () => {
     const body = await parseJsonBody(req);
     const result = await patientService.create(body, { actor });
-    return respond(result, 201);
+    return respondValidated(result, patientDetailDtoSchema, 201);
   });
 });

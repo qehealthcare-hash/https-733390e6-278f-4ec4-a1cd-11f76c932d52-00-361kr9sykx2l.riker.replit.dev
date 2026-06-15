@@ -3,7 +3,8 @@ import { withAuth, parseJsonBody } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { EMPLOYEE_STATUS_ROLES } from "@/business/rbac";
 import { employeeService } from "@/services/employeeService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { employeeDetailDtoSchema } from "@/validation/employeeDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,7 @@ export const POST = withAuth<Params>(async (req: NextRequest, { params, actor })
   requireRole(actor, EMPLOYEE_STATUS_ROLES);
   const body = await parseJsonBody(req);
   const result = await employeeService.setStatus(params.id, body, { actor });
-  return respond(result);
+  return respondValidated(result, employeeDetailDtoSchema);
 });
 
 export const PATCH = POST;

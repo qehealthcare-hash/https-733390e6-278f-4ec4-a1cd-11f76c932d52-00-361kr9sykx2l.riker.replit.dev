@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { PATIENT_SYNC_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { patientService } from "@/services/patientService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { patientRowDtoSchema } from "@/validation/patientDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /patients/sync" }, async () => {
     const body = await parseJsonBody(req);
     const result = await patientService.syncLegacy(body, { actor });
-    return respond(result);
+    return respondValidated(result, patientRowDtoSchema);
   });
 });

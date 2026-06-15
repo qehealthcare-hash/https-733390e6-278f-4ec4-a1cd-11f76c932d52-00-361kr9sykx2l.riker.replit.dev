@@ -34,6 +34,26 @@ export const inquiryDetailDtoSchema = inquiryRowDtoSchema.extend({
 });
 export type InquiryDetailDto = z.infer<typeof inquiryDetailDtoSchema>;
 
+export const inquiryListResponseDtoSchema = z.object({
+  rows: z.array(inquiryDetailDtoSchema),
+  total: z.number().int().nonnegative()
+});
+export type InquiryListResponseDto = z.infer<typeof inquiryListResponseDtoSchema>;
+
+export const inquiryRemoveResultDtoSchema = z.object({
+  id: idSchema,
+  mode: z.enum(["soft", "hard"])
+});
+export type InquiryRemoveResultDto = z.infer<typeof inquiryRemoveResultDtoSchema>;
+
+export const inquiryConvertResultDtoSchema = z.object({
+  patient_id: idSchema,
+  inquiry_id: idSchema,
+  inquiry: inquiryRowDtoSchema,
+  alreadyConverted: z.boolean()
+});
+export type InquiryConvertResultDto = z.infer<typeof inquiryConvertResultDtoSchema>;
+
 export function parseInquiryDetailDto(data: unknown) {
   return inquiryDetailDtoSchema.safeParse(data);
 }

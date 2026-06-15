@@ -29,6 +29,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { employeeDetailFixture } from "@/test/employeeDetailFixture";
 import { employeeService } from "@/services/employeeService";
 
 import { POST as EmployeeStatusPost } from "../../../app/api/v1/employees/[id]/status/route";
@@ -57,7 +58,7 @@ describe("POST /api/v1/employees/[id]/status", () => {
     setActor(ACTORS.manager);
     m.setStatus.mockResolvedValue({
       success: true,
-      data: { id: "EMP1", status: "OnLeave" }
+      data: employeeDetailFixture({ id: "EMP1", status: "OnLeave" })
     });
     const req = makeRequest("POST", "/api/v1/employees/EMP1/status", {
       body: { status: "OnLeave", reason: "Medical" }
@@ -90,7 +91,7 @@ describe("GET /api/v1/employees/[id]/links", () => {
     setActor(ACTORS.accountant);
     m.linkCounts.mockResolvedValue({
       success: true,
-      data: { duties: 2, attendance: 1, payouts: 0, patients: 1 }
+      data: { duties: 2, attendance: 1, payouts: 0, caretakerOf: 1 }
     });
     const req = makeRequest("GET", "/api/v1/employees/EMP1/links");
     const res = await EmployeeLinksGet(req, ctx({ id: "EMP1" }));
@@ -122,7 +123,7 @@ describe("POST /api/v1/employees/sync", () => {
     setActor(ACTORS.manager);
     m.syncLegacy.mockResolvedValue({
       success: true,
-      data: { id: "EMP_LEGACY", name: "Legacy" }
+      data: { id: "EMP_LEGACY", status: "Active", name: "Legacy" }
     });
     const req = makeRequest("POST", "/api/v1/employees/sync", {
       body: { name: "Legacy", phone: "9876543210", status: "Active" }

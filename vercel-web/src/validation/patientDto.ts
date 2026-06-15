@@ -33,6 +33,31 @@ export const patientDetailDtoSchema = patientRowDtoSchema.extend({
 });
 export type PatientDetailDto = z.infer<typeof patientDetailDtoSchema>;
 
+export const patientListResponseDtoSchema = z.object({
+  rows: z.array(patientDetailDtoSchema),
+  total: z.number().int().nonnegative()
+});
+export type PatientListResponseDto = z.infer<typeof patientListResponseDtoSchema>;
+
+export const patientHardDeleteResultDtoSchema = z.object({
+  id: idSchema,
+  deleted: z.literal(true)
+});
+export type PatientHardDeleteResultDto = z.infer<typeof patientHardDeleteResultDtoSchema>;
+
+export const patientHistoryDtoSchema = z.object({
+  patient: patientRowDtoSchema,
+  billings: z.array(z.record(z.unknown())),
+  receipts: z.array(z.record(z.unknown())),
+  duties: z.array(z.record(z.unknown())),
+  audits: z.array(z.record(z.unknown())),
+  linkCounts: z.object({
+    billings: z.number().int().nonnegative(),
+    duties: z.number().int().nonnegative()
+  })
+});
+export type PatientHistoryDto = z.infer<typeof patientHistoryDtoSchema>;
+
 export function parsePatientDetailDto(data: unknown) {
   return patientDetailDtoSchema.safeParse(data);
 }

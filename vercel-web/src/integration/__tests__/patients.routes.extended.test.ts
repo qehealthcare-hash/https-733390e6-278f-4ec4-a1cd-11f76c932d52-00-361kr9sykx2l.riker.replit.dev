@@ -30,6 +30,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { patientDetailFixture } from "@/test/patientDetailFixture";
 import { patientService } from "@/services/patientService";
 
 import { POST as PatientAssignPost } from "../../../app/api/v1/patients/[id]/assign/route";
@@ -59,7 +60,7 @@ describe("POST /api/v1/patients/[id]/assign", () => {
     setActor(ACTORS.staff);
     m.assignCaretaker.mockResolvedValue({
       success: true,
-      data: { id: "PAT1", caretaker_id: "EMP1" }
+      data: patientDetailFixture({ id: "PAT1", caretaker_id: "EMP1" })
     });
     const req = makeRequest("POST", "/api/v1/patients/PAT1/assign", {
       body: { caretaker_id: "EMP1", shift: "NIGHT" }
@@ -94,7 +95,7 @@ describe("POST /api/v1/patients/[id]/reopen", () => {
     setActor(ACTORS.manager);
     m.reopen.mockResolvedValue({
       success: true,
-      data: { id: "PAT1", status: "Active" }
+      data: patientDetailFixture({ id: "PAT1", status: "Active" })
     });
     const req = makeRequest("POST", "/api/v1/patients/PAT1/reopen", {
       body: { reason: "Returned from hospital" }
@@ -129,7 +130,7 @@ describe("GET /api/v1/patients/[id]/history", () => {
     m.history.mockResolvedValue({
       success: true,
       data: {
-        patient: { id: "PAT1" },
+        patient: { id: "PAT1", status: "Active" },
         billings: [],
         receipts: [],
         duties: [],
@@ -167,7 +168,7 @@ describe("POST /api/v1/patients/sync", () => {
     setActor(ACTORS.manager);
     m.syncLegacy.mockResolvedValue({
       success: true,
-      data: { id: "PAT_LEGACY", name: "Legacy" }
+      data: { id: "PAT_LEGACY", status: "Active", name: "Legacy" }
     });
     const req = makeRequest("POST", "/api/v1/patients/sync", {
       body: { name: "Legacy", phone: "9876543210", status: "Active" }

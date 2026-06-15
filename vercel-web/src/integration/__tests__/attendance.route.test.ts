@@ -35,6 +35,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { attendanceRowFixture } from "@/test/attendanceRowFixture";
 import { attendanceService } from "@/services/attendanceService";
 
 import {
@@ -88,7 +89,7 @@ describe("POST /api/v1/attendance", () => {
 
   it("creates and returns 201", async () => {
     setActor(ACTORS.admin);
-    m.create.mockResolvedValue({ success: true, data: { id: "ATT1" } });
+    m.create.mockResolvedValue({ success: true, data: attendanceRowFixture({ id: "ATT1" }) });
     const req = makeRequest("POST", "/api/v1/attendance", {
       body: {
         duty_id: "DUTY1",
@@ -139,7 +140,7 @@ describe("POST /api/v1/attendance/day/mark", () => {
     setActor(ACTORS.admin);
     m.dayMark.mockResolvedValue({
       success: true,
-      data: { id: "ATT1", duty_status: "IN_PROGRESS" }
+      data: attendanceRowFixture({ id: "ATT1", duty_status: "IN_PROGRESS" })
     });
     const req = makeRequest("POST", "/api/v1/attendance/day/mark", {
       body: {

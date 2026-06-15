@@ -33,6 +33,25 @@ export const employeeDetailDtoSchema = employeeRowDtoSchema.extend({
 });
 export type EmployeeDetailDto = z.infer<typeof employeeDetailDtoSchema>;
 
+export const employeeListResponseDtoSchema = z.object({
+  rows: z.array(employeeDetailDtoSchema),
+  total: z.number().int().nonnegative()
+});
+export type EmployeeListResponseDto = z.infer<typeof employeeListResponseDtoSchema>;
+
+export const employeeDeleteResultDtoSchema = employeeDetailDtoSchema.extend({
+  mode: z.enum(["soft", "hard"])
+});
+export type EmployeeDeleteResultDto = z.infer<typeof employeeDeleteResultDtoSchema>;
+
+export const employeeLinkCountsDtoSchema = z.object({
+  duties: z.number().int().nonnegative(),
+  attendance: z.number().int().nonnegative(),
+  payouts: z.number().int().nonnegative(),
+  caretakerOf: z.number().int().nonnegative()
+});
+export type EmployeeLinkCountsDto = z.infer<typeof employeeLinkCountsDtoSchema>;
+
 export function parseEmployeeDetailDto(data: unknown) {
   return employeeDetailDtoSchema.safeParse(data);
 }

@@ -7,7 +7,8 @@ import {
   EMPLOYEE_WRITE_ROLES
 } from "@/business/rbac";
 import { employeeService } from "@/services/employeeService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { employeeDeleteResultDtoSchema, employeeDetailDtoSchema } from "@/validation/employeeDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,14 +18,14 @@ type Params = { id: string };
 export const GET = withAuth<Params>(async (_req, { params, actor }) => {
   requireRole(actor, EMPLOYEE_READ_ROLES);
   const result = await employeeService.getById(params.id, { actor });
-  return respond(result);
+  return respondValidated(result, employeeDetailDtoSchema);
 });
 
 export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   requireRole(actor, EMPLOYEE_WRITE_ROLES);
   const body = await parseJsonBody(req);
   const result = await employeeService.update(params.id, body, { actor });
-  return respond(result);
+  return respondValidated(result, employeeDetailDtoSchema);
 });
 
 export const PUT = PATCH;
@@ -54,5 +55,5 @@ export const DELETE = withAuth<Params>(async (req, { params, actor }) => {
       : "";
 
   const result = await employeeService.remove(params.id, { actor }, { reason });
-  return respond(result);
+  return respondValidated(result, employeeDeleteResultDtoSchema);
 });

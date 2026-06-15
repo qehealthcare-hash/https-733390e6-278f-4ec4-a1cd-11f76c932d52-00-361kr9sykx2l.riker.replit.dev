@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { INQUIRY_SYNC_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { inquiryService } from "@/services/inquiryService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { inquiryRowDtoSchema } from "@/validation/inquiryDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /inquiries/sync" }, async () => {
     const body = await parseJsonBody(req);
     const result = await inquiryService.syncLegacy(body, { actor });
-    return respond(result);
+    return respondValidated(result, inquiryRowDtoSchema);
   });
 });

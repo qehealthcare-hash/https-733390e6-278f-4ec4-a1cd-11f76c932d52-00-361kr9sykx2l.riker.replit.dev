@@ -29,6 +29,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { attendanceRowFixture } from "@/test/attendanceRowFixture";
 import { attendanceService } from "@/services/attendanceService";
 import { POST as AttendanceMarkPost } from "../../../app/api/v1/attendance/mark/route";
 import { PATCH as AttendancePatch } from "../../../app/api/v1/attendance/[id]/route";
@@ -113,7 +114,7 @@ describe("Attendance module smoke — optimistic concurrency at HTTP layer", () 
 
   it("POST /attendance/day/mark forwards expected_updated_at", async () => {
     setActor(ACTORS.admin);
-    m.dayMark.mockResolvedValue({ success: true, data: { id: "ATT1" } });
+    m.dayMark.mockResolvedValue({ success: true, data: attendanceRowFixture({ id: "ATT1" }) });
     const req = makeRequest("POST", "/api/v1/attendance/day/mark", {
       body: {
         employee_id: "EMP1",

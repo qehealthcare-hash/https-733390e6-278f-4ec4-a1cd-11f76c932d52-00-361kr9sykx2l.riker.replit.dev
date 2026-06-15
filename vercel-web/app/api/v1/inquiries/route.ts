@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { INQUIRY_READ_ROLES, INQUIRY_WRITE_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { inquiryService } from "@/services/inquiryService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { inquiryDetailDtoSchema, inquiryListResponseDtoSchema } from "@/validation/inquiryDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     followup_to: url.searchParams.get("followup_to") ?? undefined
   };
   const result = await inquiryService.list(query, { actor });
-  return respond(result);
+  return respondValidated(result, inquiryListResponseDtoSchema);
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {
@@ -32,6 +33,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /inquiries" }, async () => {
     const body = await parseJsonBody(req);
     const result = await inquiryService.create(body, { actor });
-    return respond(result, 201);
+    return respondValidated(result, inquiryDetailDtoSchema, 201);
   });
 });

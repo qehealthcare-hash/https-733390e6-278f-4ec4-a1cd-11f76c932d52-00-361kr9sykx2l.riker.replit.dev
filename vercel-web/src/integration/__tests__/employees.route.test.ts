@@ -37,6 +37,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { employeeDetailFixture } from "@/test/employeeDetailFixture";
 import { employeeService } from "@/services/employeeService";
 
 import {
@@ -91,7 +92,10 @@ describe("POST /api/v1/employees", () => {
 
   it("creates and returns 201 with envelope for Admin", async () => {
     setActor(ACTORS.admin);
-    m.create.mockResolvedValue({ success: true, data: { id: "EMP1", full_name: "Alice" } });
+    m.create.mockResolvedValue({
+      success: true,
+      data: employeeDetailFixture({ id: "EMP1", full_name: "Alice", name: "Alice" })
+    });
     const req = makeRequest("POST", "/api/v1/employees", {
       body: { full_name: "Alice", mobile: "9876543211" }
     });
@@ -124,7 +128,7 @@ describe("GET/PATCH/DELETE /api/v1/employees/[id]", () => {
 
   it("GET returns the employee envelope", async () => {
     setActor(ACTORS.staff);
-    m.getById.mockResolvedValue({ success: true, data: { id: "EMP1" } });
+    m.getById.mockResolvedValue({ success: true, data: employeeDetailFixture({ id: "EMP1" }) });
     const req = makeRequest("GET", "/api/v1/employees/EMP1");
     const res = await EmployeeGet(req, ctx({ id: "EMP1" }));
     await expectOkEnvelope(res);
@@ -149,7 +153,10 @@ describe("GET/PATCH/DELETE /api/v1/employees/[id]", () => {
 
   it("DELETE soft-closes for Admin and forwards the reason", async () => {
     setActor(ACTORS.admin);
-    m.remove.mockResolvedValue({ success: true, data: { id: "EMP1", status: "Inactive" } });
+    m.remove.mockResolvedValue({
+      success: true,
+      data: { ...employeeDetailFixture({ id: "EMP1", status: "Inactive" }), mode: "soft" as const }
+    });
     const req = makeRequest("DELETE", "/api/v1/employees/EMP1", {
       body: { reason: "left" }
     });

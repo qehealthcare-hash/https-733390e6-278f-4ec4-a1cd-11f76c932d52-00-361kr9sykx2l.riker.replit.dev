@@ -3,7 +3,8 @@ import { withAuth } from "@/lib/api/handler";
 import { requireRole } from "@/lib/api/auth";
 import { PATIENT_REOPEN_ROLES } from "@/business/rbac";
 import { patientService } from "@/services/patientService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { patientDetailDtoSchema } from "@/validation/patientDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,5 +26,5 @@ export const POST = withAuth<Params>(async (req: NextRequest, { params, actor })
     body = undefined;
   }
   const result = await patientService.reopen(params.id, { actor }, body);
-  return respond(result);
+  return respondValidated(result, patientDetailDtoSchema);
 });

@@ -49,6 +49,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { patientDetailFixture } from "@/test/patientDetailFixture";
 import { patientService } from "@/services/patientService";
 
 import {
@@ -84,7 +85,7 @@ describe("GET /api/v1/patients", () => {
     setActor(ACTORS.manager);
     mPatient.list.mockResolvedValue({
       success: true,
-      data: { rows: [{ id: "PAT1" }], total: 1 }
+      data: { rows: [patientDetailFixture({ id: "PAT1" })], total: 1 }
     });
     const req = makeRequest(
       "GET",
@@ -116,7 +117,7 @@ describe("POST /api/v1/patients", () => {
 
   it("rejects Nurse role with 403 forbidden", async () => {
     setActor(ACTORS.nurse);
-    mPatient.create.mockResolvedValue({ success: true, data: { id: "PAT1" } });
+    mPatient.create.mockResolvedValue({ success: true, data: patientDetailFixture({ id: "PAT1" }) });
     const req = makeRequest("POST", "/api/v1/patients", { body: { name: "A" } });
     const res = await PatientsPost(req, ctx({}));
     await expectErrorEnvelope(res, 403, "forbidden");
@@ -125,7 +126,10 @@ describe("POST /api/v1/patients", () => {
 
   it("creates a patient and returns 201", async () => {
     setActor(ACTORS.staff);
-    mPatient.create.mockResolvedValue({ success: true, data: { id: "PAT9", name: "Anita" } });
+    mPatient.create.mockResolvedValue({
+      success: true,
+      data: patientDetailFixture({ id: "PAT9", name: "Anita", full_name: "Anita" })
+    });
     const req = makeRequest("POST", "/api/v1/patients", {
       body: { name: "Anita", mobile: "9876543210" }
     });
@@ -186,7 +190,7 @@ describe("GET /api/v1/patients/[id]", () => {
     setActor(ACTORS.staff);
     mPatient.getById.mockResolvedValue({
       success: true,
-      data: { id: "PAT1", name: "Anita" }
+      data: patientDetailFixture({ id: "PAT1", name: "Anita", full_name: "Anita" })
     });
     const req = makeRequest("GET", "/api/v1/patients/PAT1");
     const res = await PatientGet(req, ctx({ id: "PAT1" }));
@@ -215,7 +219,7 @@ describe("PATCH /api/v1/patients/[id]", () => {
     setActor(ACTORS.manager);
     mPatient.update.mockResolvedValue({
       success: true,
-      data: { id: "PAT1", name: "Anita Updated" }
+      data: patientDetailFixture({ id: "PAT1", name: "Anita Updated", full_name: "Anita Updated" })
     });
     const req = makeRequest("PATCH", "/api/v1/patients/PAT1", {
       body: { name: "Anita Updated" }
@@ -251,7 +255,7 @@ describe("DELETE /api/v1/patients/[id]", () => {
     setActor(ACTORS.manager);
     mPatient.remove.mockResolvedValue({
       success: true,
-      data: { id: "PAT1", status: "Closed" }
+      data: patientDetailFixture({ id: "PAT1", status: "Closed" })
     });
     const req = makeRequest("DELETE", "/api/v1/patients/PAT1", {
       body: { reason: "End of care" }
@@ -279,12 +283,12 @@ describe("DELETE /api/v1/patients/[id]", () => {
     setActor(ACTORS.admin);
     mPatient.removePermanent.mockResolvedValue({
       success: true,
-      data: { id: "PAT1", removed: true }
+      data: { id: "PAT1", deleted: true as const }
     });
     const req = makeRequest("DELETE", "/api/v1/patients/PAT1?hard=1");
     const res = await PatientDelete(req, ctx({ id: "PAT1" }));
-    const data = await expectOkEnvelope<{ removed: boolean }>(res);
-    expect(data.removed).toBe(true);
+    const data = await expectOkEnvelope<{ deleted: boolean }>(res);
+    expect(data.deleted).toBe(true);
     expect(mPatient.removePermanent).toHaveBeenCalledWith(
       "PAT1",
       expect.objectContaining({ actor: expect.any(Object) })
@@ -326,7 +330,7 @@ describe("POST /api/v1/patients/[id]/assign", () => {
     setActor(ACTORS.staff);
     mPatient.assignCaretaker.mockResolvedValue({
       success: true,
-      data: { id: "PAT1", caretaker_id: "EMP1" }
+      data: patientDetailFixture({ id: "PAT1", caretaker_id: "EMP1" })
     });
     const req = makeRequest("POST", "/api/v1/patients/PAT1/assign", {
       body: { caretaker_id: "EMP1", shift: "NIGHT" }
@@ -386,7 +390,7 @@ describe("POST /api/v1/patients/[id]/reopen", () => {
     setActor(ACTORS.manager);
     mPatient.reopen.mockResolvedValue({
       success: true,
-      data: { id: "PAT1", status: "Active" }
+      data: patientDetailFixture({ id: "PAT1", status: "Active" })
     });
     const req = makeRequest("POST", "/api/v1/patients/PAT1/reopen", {
       body: { reason: "Family requested resume" }
@@ -405,7 +409,7 @@ describe("POST /api/v1/patients/[id]/reopen", () => {
     setActor(ACTORS.admin);
     mPatient.reopen.mockResolvedValue({
       success: true,
-      data: { id: "PAT1", status: "Active" }
+      data: patientDetailFixture({ id: "PAT1", status: "Active" })
     });
     const req = makeRequest("POST", "/api/v1/patients/PAT1/reopen");
     const res = await PatientReopenPost(req, ctx({ id: "PAT1" }));
@@ -448,7 +452,7 @@ describe("GET /api/v1/patients/[id]/history", () => {
     mPatient.history.mockResolvedValue({
       success: true,
       data: {
-        patient: { id: "PAT1" },
+        patient: { id: "PAT1", status: "Active" },
         billings: [],
         receipts: [],
         duties: [],
@@ -471,7 +475,7 @@ describe("GET /api/v1/patients/[id]/history", () => {
     mPatient.history.mockResolvedValue({
       success: true,
       data: {
-        patient: { id: "PAT1", name: "Anita" },
+        patient: { id: "PAT1", status: "Active", name: "Anita" },
         billings: [{ id: "B1" }],
         receipts: [],
         duties: [],
@@ -520,7 +524,7 @@ describe("POST /api/v1/patients/sync", () => {
     setActor(ACTORS.manager);
     mPatient.syncLegacy.mockResolvedValue({
       success: true,
-      data: { id: "PAT_LEGACY_1", name: "Legacy Patient" }
+      data: { id: "PAT_LEGACY_1", status: "Active", name: "Legacy Patient" }
     });
     const req = makeRequest("POST", "/api/v1/patients/sync", {
       body: { name: "Legacy Patient", phone: "9876543210", status: "Active" }

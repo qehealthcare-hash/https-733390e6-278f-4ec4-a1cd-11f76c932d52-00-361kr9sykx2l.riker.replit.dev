@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/api/auth";
 import { EMPLOYEE_SYNC_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { employeeService } from "@/services/employeeService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import { employeeRowDtoSchema } from "@/validation/employeeDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,6 @@ export const POST = withAuth(async (req: NextRequest, { actor }) => {
   return withIdempotency(req, actor, { route: "POST /employees/sync" }, async () => {
     const body = await parseJsonBody(req);
     const result = await employeeService.syncLegacy(body, { actor });
-    return respond(result);
+    return respondValidated(result, employeeRowDtoSchema);
   });
 });

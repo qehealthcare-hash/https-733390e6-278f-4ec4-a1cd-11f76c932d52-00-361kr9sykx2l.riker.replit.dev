@@ -52,6 +52,7 @@ import {
   makeRequest,
   setActor
 } from "@/test/routeHarness";
+import { inquiryDetailFixture } from "@/test/inquiryDetailFixture";
 import { inquiryService } from "@/services/inquiryService";
 
 import {
@@ -106,7 +107,7 @@ describe("GET /api/v1/inquiries/[id]", () => {
     setActor(ACTORS.staff);
     m.getById.mockResolvedValue({
       success: true,
-      data: { id: "INQ1", patient_name: "Caller One" }
+      data: inquiryDetailFixture({ id: "INQ1", patient_name: "Caller One", name: "Caller One" })
     });
     const req = makeRequest("GET", "/api/v1/inquiries/INQ1");
     const res = await InquiryGet(req, ctx({ id: "INQ1" }));
@@ -171,7 +172,10 @@ describe("PATCH /api/v1/inquiries/[id]", () => {
 
   it("forwards id, body and actor to inquiryService.update", async () => {
     setActor(ACTORS.staff);
-    m.update.mockResolvedValue({ success: true, data: { id: "INQ1", name: "Edited" } });
+    m.update.mockResolvedValue({
+      success: true,
+      data: inquiryDetailFixture({ id: "INQ1", name: "Edited", patient_name: "Edited" })
+    });
     const req = makeRequest("PATCH", "/api/v1/inquiries/INQ1", {
       body: { name: "Edited", area: "Satellite" }
     });
@@ -299,7 +303,7 @@ describe("POST /api/v1/inquiries/[id]/status", () => {
     setActor(ACTORS.manager);
     m.setStatus.mockResolvedValue({
       success: true,
-      data: { id: "INQ1", status: "FollowUp" }
+      data: inquiryDetailFixture({ id: "INQ1", status: "FollowUp" })
     });
     const req = makeRequest("POST", "/api/v1/inquiries/INQ1/status", {
       body: { status: "FollowUp", reason: "Family will call back", followup_date: "2026-06-15" }
@@ -369,6 +373,7 @@ describe("POST /api/v1/inquiries/[id]/convert", () => {
       data: {
         patient_id: "PID_FROM_INQ",
         inquiry_id: "INQ1",
+        inquiry: { id: "INQ1", status: "Converted" },
         alreadyConverted: false
       }
     });
@@ -414,7 +419,7 @@ describe("POST /api/v1/inquiries/sync", () => {
     setActor(ACTORS.manager);
     m.syncLegacy.mockResolvedValue({
       success: true,
-      data: { id: "INQ_LEGACY_1", name: "Caller" }
+      data: { id: "INQ_LEGACY_1", status: "New", name: "Caller" }
     });
     const req = makeRequest("POST", "/api/v1/inquiries/sync", {
       body: { name: "Caller", phone: "9876543210", status: "New" }

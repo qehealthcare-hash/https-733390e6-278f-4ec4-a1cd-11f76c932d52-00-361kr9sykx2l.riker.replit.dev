@@ -7,7 +7,11 @@ import {
   INQUIRY_WRITE_ROLES
 } from "@/business/rbac";
 import { inquiryService } from "@/services/inquiryService";
-import { respond } from "@/lib/api/apiResultBridge";
+import { respondValidated } from "@/lib/api/apiResultBridge";
+import {
+  inquiryDetailDtoSchema,
+  inquiryRemoveResultDtoSchema
+} from "@/validation/inquiryDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,14 +21,14 @@ type Params = { id: string };
 export const GET = withAuth<Params>(async (_req: NextRequest, { params, actor }) => {
   requireRole(actor, INQUIRY_READ_ROLES);
   const result = await inquiryService.getById(params.id, { actor });
-  return respond(result);
+  return respondValidated(result, inquiryDetailDtoSchema);
 });
 
 export const PATCH = withAuth<Params>(async (req: NextRequest, { params, actor }) => {
   requireRole(actor, INQUIRY_WRITE_ROLES);
   const body = await parseJsonBody(req);
   const result = await inquiryService.update(params.id, body, { actor });
-  return respond(result);
+  return respondValidated(result, inquiryDetailDtoSchema);
 });
 
 export const PUT = PATCH;
@@ -55,5 +59,5 @@ export const DELETE = withAuth<Params>(async (req: NextRequest, { params, actor 
     reason,
     hard: hard === "1" || hard === "true"
   });
-  return respond(result);
+  return respondValidated(result, inquiryRemoveResultDtoSchema);
 });
