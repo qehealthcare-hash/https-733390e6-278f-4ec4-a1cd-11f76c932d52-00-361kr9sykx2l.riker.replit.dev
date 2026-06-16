@@ -291,13 +291,15 @@ export default function ReportsPage() {
       const byEmployee = (attendanceSummary && attendanceSummary.by_employee) || [];
       return {
         by: by,
+        // Attendance present-days are derived from the Duty Calendar ledger
+        // (hh_payout_charges). Absent/Late/Leave/Holiday are not tracked as
+        // attendance statuses in this report — they are managed as Duty
+        // Calendar day exclusions — so we only surface the real "present" figure
+        // rather than always-zero columns.
         byEmployee: byEmployee.map(function (e: AttendanceSummaryByEmployee) {
           return {
             employee_id: e.employee_id,
-            present: e.present || 0,
-            absent: e.absent || 0,
-            late: e.late || 0,
-            leave: (e.leave || 0) + (e.holiday || 0)
+            present: e.present || 0
           };
         }),
         total: attendanceSummary ? attendanceSummary.total : 0
@@ -737,10 +739,7 @@ export default function ReportsPage() {
                     onClick={function () {
                       printSection("Attendance " + period, attendanceStats.byEmployee, [
                         { key: "employee_id", label: "Employee" },
-                        { key: "present", label: "Present" },
-                        { key: "absent", label: "Absent" },
-                        { key: "late", label: "Late" },
-                        { key: "leave", label: "Leave/Holiday" }
+                        { key: "present", label: "Present (days)" }
                       ]);
                     }}
                   >
@@ -750,17 +749,17 @@ export default function ReportsPage() {
               }
             >
               <div className="helper-box">
-                Present {attendanceStats.by.PRESENT} · Absent {attendanceStats.by.ABSENT} ·
-                Late {attendanceStats.by.LATE} · Half {attendanceStats.by.HALF_DAY} ·
-                Leave {attendanceStats.by.LEAVE} · Holiday {attendanceStats.by.HOLIDAY}
+                Present {attendanceStats.by.PRESENT} present-days this period · derived from the
+                Duty Calendar. Absences and leave are recorded as Duty Calendar day exclusions,
+                not attendance marks.
               </div>
               {!attendanceStats.byEmployee.length ? (
-                <EmptyState title="No records" description="No attendance was marked in this period." />
+                <EmptyState title="No records" description="No duty-derived attendance in this period." />
               ) : (
                 <div className="table-wrap">
                   <table>
                     <thead>
-                      <tr><th>Employee</th><th>Present</th><th>Absent</th><th>Late</th><th>Leave/Holiday</th></tr>
+                      <tr><th>Employee</th><th>Present (days)</th></tr>
                     </thead>
                     <tbody>
                       {attendanceStats.byEmployee.map(function (r) {
@@ -768,9 +767,6 @@ export default function ReportsPage() {
                           <tr key={r.employee_id}>
                             <td>{r.employee_id}</td>
                             <td>{r.present}</td>
-                            <td>{r.absent}</td>
-                            <td>{r.late}</td>
-                            <td>{r.leave}</td>
                           </tr>
                         );
                       })}

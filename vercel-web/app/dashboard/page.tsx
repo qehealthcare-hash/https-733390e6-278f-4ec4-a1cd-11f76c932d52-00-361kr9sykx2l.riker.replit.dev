@@ -34,6 +34,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/components/providers/auth-provider";
 import { reportsClient } from "@/lib/clients";
+import { onDataInvalidated } from "@/lib/data-invalidation";
 import { formatCurrency } from "@/lib/formatters";
 import {
   currentPeriod,
@@ -170,6 +171,16 @@ export default function DashboardPage() {
     // object identity. Avoids spurious refetches when the auth provider
     // re-renders without the token changing.
   }, [accessToken, period, retryCount, fetchKpis]);
+
+  // Dashboard has no Supabase realtime subscription, so without this it stayed
+  // stale after a mutation in another module until a manual period change.
+  // Refetch the current period whenever a write broadcasts an invalidation.
+  useEffect(() => {
+    if (!accessToken) return undefined;
+    return onDataInvalidated(function () {
+      void fetchKpis(period);
+    });
+  }, [accessToken, period, fetchKpis]);
 
   const onManualRetry = useCallback(() => {
     autoRetryRef.current = false;

@@ -60,6 +60,7 @@ export function useRealtimeResource<T = Record<string, unknown>>(
   const sessionRef = useRef(auth.session);
   const supabaseRef = useRef(auth.supabase);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestSeqRef = useRef(0);
   const accessToken = auth.session?.access_token;
 
   useEffect(() => {
@@ -77,22 +78,28 @@ export function useRealtimeResource<T = Record<string, unknown>>(
     const signal = signalArg || { aborted: false };
     if (signal.aborted) return;
 
+    // Generation guard: only the most recently started fetch may commit its
+    // result. This prevents an earlier, slower request (e.g. a debounced
+    // realtime refetch overtaken by a manual reload) from overwriting newer
+    // data and showing stale/duplicate-looking rows.
+    requestSeqRef.current += 1;
+    const seq = requestSeqRef.current;
+    const isStale = () => signal.aborted || seq !== requestSeqRef.current;
+
     setLoading(true);
     try {
       const response = await fetchListRef.current(session);
-      if (signal.aborted) return;
+      if (isStale()) return;
       const payload = normalizeListPayload(response);
-      if (signal.aborted) return;
+      if (isStale()) return;
       setData(payload.rows as T[]);
-      if (signal.aborted) return;
       setTotal(payload.total);
-      if (signal.aborted) return;
       setError("");
     } catch (err: unknown) {
-      if (signal.aborted) return;
+      if (isStale()) return;
       setError(err instanceof Error ? err.message : "Could not load data");
     } finally {
-      if (!signal.aborted) setLoading(false);
+      if (!isStale()) setLoading(false);
     }
   }, []);
 

@@ -110,6 +110,20 @@ function unwrapResponse(json: Record<string, unknown>, response: Response): unkn
   return json.data !== undefined ? json.data : json;
 }
 
+/**
+ * After a successful mutating request, broadcast a single invalidation so that
+ * screens without their own Supabase realtime subscription (dashboard, reports)
+ * refetch immediately instead of showing stale numbers until the next manual
+ * reload. GET/HEAD/OPTIONS never broadcast (they would cause reload loops), and
+ * auth endpoints are excluded to avoid refresh-token churn.
+ */
+function maybeDispatchMutationInvalidation(method: string | undefined, path: string): void {
+  const upper = String(method || "GET").toUpperCase();
+  if (upper === "GET" || upper === "HEAD" || upper === "OPTIONS") return;
+  if (path.startsWith("/auth/")) return;
+  dispatchDataInvalidated("mutation");
+}
+
 function isExpiredAuthError(error: unknown): boolean {
   const err = error as ApiClientError;
   const msg = String(err?.message || "").toLowerCase();
@@ -235,14 +249,18 @@ export async function request<T = any>(
   }
 
   try {
-    return (await parseApiResponse(path, response)) as T;
+    const parsed = (await parseApiResponse(path, response)) as T;
+    maybeDispatchMutationInvalidation(options?.method, path);
+    return parsed;
   } catch (error: unknown) {
     if (!path.startsWith("/auth/") && isExpiredAuthError(error)) {
       const refreshed = await refreshSessionFromCookie();
       if (refreshed) {
         if (session && typeof session === "object") session.access_token = refreshed;
         const retried = await fetchApi(path, options, { access_token: refreshed });
-        return (await parseApiResponse(path, retried)) as T;
+        const parsedRetry = (await parseApiResponse(path, retried)) as T;
+        maybeDispatchMutationInvalidation(options?.method, path);
+        return parsedRetry;
       }
     }
     throw error;
