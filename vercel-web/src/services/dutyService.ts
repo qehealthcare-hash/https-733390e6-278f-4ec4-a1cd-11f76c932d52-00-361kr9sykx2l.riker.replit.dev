@@ -71,7 +71,7 @@ import {
 import { recomputePayoutIfEditable } from "@/services/recomputePayoutIfEditable";
 import { payoutRepository } from "@/database/payoutRepository";
 import { finalizeWithAudit, writeMutationAudit } from "@/services/mutationAudit";
-import type { JsonRow } from "@/database/types";
+import type { JsonRow, DbAccess } from "@/database/types";
 import {
   duplicateFailure,
   failure,
@@ -94,6 +94,19 @@ export interface DutyServiceContext {
 function dbAccess(ctx: DutyServiceContext) {
   const token = ctx.accessToken ?? ctx.actor.accessToken;
   return token ? { accessToken: token } : undefined;
+}
+
+/**
+ * Access for writes to the duty-materialized ledger tables (hh_svc_entries,
+ * hh_payout_charges). A DB trigger (migration
+ * `20260613110000_duty_ledger_allow_service_role`) only lets the `service_role`
+ * create/update/delete rows whose remarks start with `duty:`. This service is
+ * the trusted Duty Calendar authority, so its ledger writes must use the admin
+ * (service-role) client. Returning `undefined` makes `resolveClient` fall back
+ * to the service-role client; reads stay user-scoped via `dbAccess(ctx)`.
+ */
+function ledgerAccess(): DbAccess | undefined {
+  return undefined;
 }
 
 async function fireAudit(
@@ -444,7 +457,10 @@ async function rollbackBillingFromDuty(
   }
 
   if (billingId && legacyRows.data?.length) {
-    const cleanup = await dutyRepository.removeSvcEntriesForDuty(billingId, dutyId, access);
+    // These rows carry a duty_id, so they are duty-materialized ledger rows
+    // protected by the DB trigger — the delete must ride the service-role
+    // client (ledgerAccess), not the caller's authenticated token.
+    const cleanup = await dutyRepository.removeSvcEntriesForDuty(billingId, dutyId, ledgerAccess());
     if (!cleanup.success) return passFailure<null>(cleanup);
   }
 

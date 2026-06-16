@@ -229,10 +229,11 @@ describe("server-side role lists are subsets of CANONICAL_ROLES", () => {
     expect(hasCapability("Supervisor", "duties.read")).toBe(true);
   });
 
-  it("DUTY_WRITE_ROLES matches duties.write for Admin/Manager/Staff only (M7)", () => {
+  it("DUTY_WRITE_ROLES matches duties.write incl. Supervisor, excl. Executive/Nurse (M7)", () => {
     for (const role of DUTY_WRITE_ROLES) {
       expect(hasCapability(role, "duties.write")).toBe(true);
     }
+    expect(DUTY_WRITE_ROLES).toContain("Supervisor");
     expect(DUTY_WRITE_ROLES).not.toContain("Executive");
     expect(DUTY_WRITE_ROLES).not.toContain("Nurse");
   });

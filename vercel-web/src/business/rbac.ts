@@ -488,8 +488,14 @@ export const DUTY_READ_ROLES: readonly Role[] = [
   "Supervisor"
 ];
 
-/** Create/update duty assignments and materialize diary rows. */
-export const DUTY_WRITE_ROLES: readonly Role[] = ["Admin", "Manager", "Staff"];
+/**
+ * Create/update duty assignments and materialize diary rows. Matches
+ * `duties.write` in `ROLE_CAPABILITIES`. Supervisor is included (field
+ * oversight that also manages the duty calendar) — this also flows through
+ * the `DUTY_DIARY_WRITE_ROLES` / `DUTY_MATERIALIZE_ROLES` /
+ * `DUTY_PARTNERS_ROLES` aliases below. Cancel + check-in stay narrower.
+ */
+export const DUTY_WRITE_ROLES: readonly Role[] = ["Admin", "Manager", "Staff", "Supervisor"];
 
 /** Cancel duty or soft-delete via DELETE without `?hard`. */
 export const DUTY_CANCEL_ROLES: readonly Role[] = ["Admin", "Manager"];
