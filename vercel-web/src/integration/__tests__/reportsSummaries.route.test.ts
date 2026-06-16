@@ -138,23 +138,29 @@ describe("GET /api/v1/reports/* summaries", () => {
     mReport.attendanceSummary.mockResolvedValue({
       success: true,
       data: {
-        period: "2026-05",
-        range: reportRange,
-        total: 3,
-        by_status: { PRESENT: 2, ABSENT: 1 },
-        by_shift: { DAY: 3 },
-        by_employee: [
-          {
-            employee_id: "EMP1",
-            present: 2,
-            absent: 1,
-            late: 0,
-            half_day: 0,
-            leave: 0,
-            holiday: 0,
-            hours: 16
-          }
-        ]
+        summary: {
+          period: "2026-05",
+          range: reportRange,
+          total: 3,
+          by_status: { PRESENT: 2, ABSENT: 1 },
+          by_shift: { DAY: 3 },
+          by_employee: [
+            {
+              employee_id: "EMP1",
+              present: 2,
+              absent: 1,
+              late: 0,
+              half_day: 0,
+              leave: 0,
+              holiday: 0,
+              hours: 16
+            }
+          ]
+        },
+        rows: [],
+        rows_total: 3,
+        limit: 200,
+        offset: 0
       }
     });
     const req = makeRequest("GET", "/api/v1/reports/attendance?period=2026-05&employee_id=EMP1");

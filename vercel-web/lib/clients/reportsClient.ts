@@ -2,12 +2,12 @@ import { requestValidated } from "@/lib/api-client";
 import type { ApiRequestOptions, ApiSession } from "@/lib/clients/types";
 import { withQuery } from "@/lib/clients/http";
 import {
-  attendanceSummaryReportDtoSchema,
   billingTotalsReportDtoSchema,
   dashboardReportDtoSchema,
   payoutTotalsReportDtoSchema,
   payrollReportDtoSchema,
   profitLossReportDtoSchema,
+  reportAttendanceSummaryResponseDtoSchema,
   reportBillingsSummaryResponseDtoSchema,
   reportInquiriesSummaryResponseDtoSchema,
   reportPatientsSummaryResponseDtoSchema,
@@ -85,7 +85,7 @@ export const reportsClient = {
       withQuery(REPORTS_BASE + "/attendance", { period, limit }),
       null,
       session,
-      attendanceSummaryReportDtoSchema
+      reportAttendanceSummaryResponseDtoSchema
     );
   },
 

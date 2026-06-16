@@ -149,6 +149,17 @@ export const moneySchema = z.preprocess(
   z.number().finite().min(0)
 );
 
+/**
+ * Money value that may legitimately be negative — e.g. net receipts after a
+ * refund/reversal receipt, or any balance that nets below zero. Use this for
+ * read-model aggregates that can go negative; keep `moneySchema` for inputs and
+ * fields that are non-negative by construction.
+ */
+export const signedMoneySchema = z.preprocess(
+  (v) => (typeof v === "string" ? Number(v) : v),
+  z.number().finite()
+);
+
 export const positiveInt = z.preprocess(
   (v) => (typeof v === "string" ? parseInt(v, 10) : v),
   z.number().int().min(0)

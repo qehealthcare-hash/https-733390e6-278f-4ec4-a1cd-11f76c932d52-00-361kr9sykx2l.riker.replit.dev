@@ -180,6 +180,16 @@ export const reportBillingsSummaryResponseDtoSchema = reportSummaryEnvelopeSchem
   billingPeriodSummaryReportDtoSchema
 );
 
+/**
+ * GET /reports/attendance response body. The service returns the standard
+ * summary envelope ({ summary, rows, rows_total, limit, offset }), so the
+ * wire contract must wrap the attendance summary the same way the patients,
+ * inquiries and billings reports do.
+ */
+export const reportAttendanceSummaryResponseDtoSchema = reportSummaryEnvelopeSchema(
+  attendanceSummaryReportDtoSchema
+);
+
 const dutyReconciliationMismatchDtoSchema = z.object({
   patient_id: z.string().optional(),
   employee_id: z.string().optional(),

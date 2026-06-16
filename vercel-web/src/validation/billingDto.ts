@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { idSchema, moneySchema, monthPeriodSchema } from "@/validation/commonValidation";
+import {
+  idSchema,
+  moneySchema,
+  monthPeriodSchema,
+  signedMoneySchema
+} from "@/validation/commonValidation";
 import { BILLING_STATUSES } from "@/validation/billingValidation";
 
 /**
@@ -28,7 +33,8 @@ export type InvoiceKindDto = z.infer<typeof invoiceKindSchema>;
 export const billingTotalsDtoSchema = z.object({
   services: moneySchema,
   billed: moneySchema,
-  receipts: moneySchema,
+  // Net of receipts; can be negative when a bill has refund/reversal receipts.
+  receipts: signedMoneySchema,
   sec_dep: moneySchema,
   discount: moneySchema,
   advance: moneySchema,
@@ -81,7 +87,8 @@ export type InvoiceRowDto = z.infer<typeof invoiceRowDtoSchema>;
 export const invoiceSummaryDtoSchema = z.object({
   invoice: invoiceRowDtoSchema.passthrough(),
   amount: moneySchema,
-  received: moneySchema,
+  // Net receipts applied to the invoice; negative when reversals exceed receipts.
+  received: signedMoneySchema,
   outstanding: moneySchema,
   status: invoicePaidStatusSchema
 });
@@ -94,7 +101,8 @@ export const receiptRowDtoSchema = z.object({
   patient_id: z.string().optional(),
   date: z.string().optional(),
   type: z.string().optional(),
-  amount: moneySchema,
+  // Refund / reversal receipts are stored as negative amounts.
+  amount: signedMoneySchema,
   method: z.string().optional(),
   ref: z.string().optional(),
   remarks: z.string().optional(),
@@ -192,7 +200,8 @@ export const invoiceDetailDtoSchema = z.object({
   invoice: invoiceRowDtoSchema.passthrough(),
   lines: z.array(z.record(z.unknown())),
   receipts: z.array(receiptRowDtoSchema.passthrough()),
-  received: moneySchema,
+  // Net receipts; negative when reversals exceed receipts on this invoice.
+  received: signedMoneySchema,
   outstanding: moneySchema,
   status: z.union([billingPaidStatusSchema, z.literal("CANCELLED")])
 });
