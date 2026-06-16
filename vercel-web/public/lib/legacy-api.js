@@ -18,8 +18,8 @@
  * Modules covered so far:
  *   - receipts       (Phase 7a)
  *   - billings       (Phase 7b)
- *   - svcEntries     (Phase 7c) — duty diary
- *   - payoutCharges  (Phase 7c)
+ *   - svcEntries     (Phase 7c) — manual diary rows only (SSOT: API replace disabled)
+ *   - payoutCharges  (Phase 7c) — manual charge rows only (SSOT: API replace disabled)
  *   - duties         (Phase 7c) — new hh_duties calendar
  *   - patients       (Phase 7d)
  *   - employees      (Phase 7e)
@@ -323,19 +323,20 @@
 
   var svcEntries = {
     /**
-     * Atomically replace the entire svc_entries slice for a `svc_key`.
-     * Server applies the close-bill guard + audit log.
+     * Legacy manual slice replace — disabled on /api/v1 (Duty Calendar SSOT).
+     * legacy-crm.html syncs manual rows via hominal_replace_* RPC instead.
      */
     replace: function (svcKey, rows) {
       if (!svcKey) {
         return Promise.resolve({ ok: false, status: 0, transport: "business", error: "svc_key required" });
       }
-      return request(
-        "POST",
-        "/billings/svc-entries/replace",
-        { svc_key: String(svcKey), rows: Array.isArray(rows) ? rows : [] },
-        { idempotencyKey: "svc-replace:" + svcKey + ":" + Date.now() }
-      );
+      return Promise.resolve({
+        ok: false,
+        status: 422,
+        transport: "business",
+        code: "business",
+        error: "Manual service-entry replace is disabled; use Duty Calendar or legacy RPC for manual rows."
+      });
     }
   };
 
@@ -344,17 +345,18 @@
   // ──────────────────────────────────────────────────────────────────────────
 
   var payoutCharges = {
-    /** Atomically replace the entire payout-charges slice for a `svc_key`. */
+    /** Legacy manual slice replace — disabled on /api/v1 (Duty Calendar SSOT). */
     replace: function (svcKey, rows) {
       if (!svcKey) {
         return Promise.resolve({ ok: false, status: 0, transport: "business", error: "svc_key required" });
       }
-      return request(
-        "POST",
-        "/payouts/charges/replace",
-        { svc_key: String(svcKey), rows: Array.isArray(rows) ? rows : [] },
-        { idempotencyKey: "charge-replace:" + svcKey + ":" + Date.now() }
-      );
+      return Promise.resolve({
+        ok: false,
+        status: 422,
+        transport: "business",
+        code: "business",
+        error: "Manual payout-charge replace is disabled; use Duty Calendar or legacy RPC for manual rows."
+      });
     }
   };
 

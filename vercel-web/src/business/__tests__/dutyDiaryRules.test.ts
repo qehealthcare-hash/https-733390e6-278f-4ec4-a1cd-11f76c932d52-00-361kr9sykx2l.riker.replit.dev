@@ -9,6 +9,7 @@ import {
   expectedDiarySlotKeys,
   diarySlotKey,
   findDutyLedgerRows,
+  filterManualLedgerRows,
   normalizeExcludedDays,
   addExcludedDaySlot,
   excludedDaySet,
@@ -109,6 +110,18 @@ describe("dutyDiaryRules", () => {
     expect(findDutyLedgerRows([])).toEqual([]);
     expect(findDutyLedgerRows(null)).toEqual([]);
     expect(findDutyLedgerRows([{ remarks: "legacy" }, { remarks: "" }])).toEqual([]);
+  });
+
+  it("filterManualLedgerRows excludes duty-calendar remarks", () => {
+    const rows = [
+      { remarks: "duty:D1:2026-05-01:EMP1", amt: 1 },
+      { remarks: "manual", amt: 2 },
+      { remarks: "", amt: 3 }
+    ];
+    expect(filterManualLedgerRows(rows)).toEqual([
+      { remarks: "manual", amt: 2 },
+      { remarks: "", amt: 3 }
+    ]);
   });
 
   it("builds expected slot keys for window (IST)", () => {

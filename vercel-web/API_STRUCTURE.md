@@ -1,13 +1,23 @@
 # Hominal CRM API — v1
 
 Next.js Route Handlers in `vercel-web/app/api/v1/*`, deployed to **`crm.hominalhealthcare.com`**.
-All endpoints respond with the envelope `{ ok: boolean, data?, code?, message?, details? }`.
+
+All endpoints respond with the canonical envelope:
+
+```json
+{ "success": true, "data": { } }
+{ "success": false, "error": "…", "code": "…", "details": { } }
+```
+
+Success payloads are validated on the server with `respondValidated()` (`lib/api/apiResultBridge.ts`) and on the browser with `requestValidated()` (`lib/api-client.ts`) using the same Zod DTOs in `src/validation/*Dto.ts`. Schema drift surfaces as `code: "contract_error"` in the client.
+
+The legacy SPA adapter (`public/lib/legacy-api.js`) uses `{ ok, data, error, code, status, transport }` internally after unwrapping the canonical envelope.
 
 ## Stack
 
 - **Next.js 15** (Route Handlers, Node runtime)
 - **TypeScript** (`tsconfig.json`)
-- **Zod** for input validation
+- **Zod** for input validation and wire-contract DTOs
 - **Supabase** (`@supabase/supabase-js`) — service role on server, anon for the browser
 - **Tailwind / React 19** on the UI side (unchanged)
 
@@ -68,34 +78,29 @@ vercel-web/
    ├─ env.ts               Centralized server env access
    ├─ supabase.ts          supabaseAdmin() + supabaseAsUser()
    ├─ auth.ts              requireActor() + requireRole()
-   ├─ errors.ts            ApiError, jsonOk/jsonError, 4xx helpers
+   ├─ errors.ts            ApiError, jsonError helpers
    ├─ handler.ts           withAuth / withoutAuth wrappers
+   ├─ apiResultBridge.ts   respond() + respondValidated()
    ├─ audit.ts             audit() fire-and-forget writer
-   ├─ ids.ts               Compact id generators (legacy-compatible)
-   ├─ validation.ts        Shared Zod schemas (phone, email, money, ...)
-   └─ services/
-      ├─ inquiry.service.ts
-      ├─ patient.service.ts
-      ├─ duty.service.ts
-      ├─ billing.service.ts
-      ├─ payout.service.ts
-      ├─ ai.service.ts
-      └─ whatsapp.service.ts
+   └─ …
+src/
+├─ services/              Business facades (billingService, dutyService, …)
+├─ validation/            Zod input schemas + *Dto.ts wire contracts
+└─ business/              Pure rules (dutyRules, payoutRules, dutySourceOfTruth, …)
 ```
 
-## SQL migration
+## SQL migrations
 
-Run **`hominal_crm_supabase_012_phase4_api_modules.sql`** in the Supabase SQL editor.
+Apply migrations from `vercel-web/supabase/migrations/` in timestamp order (Supabase CLI or SQL editor). Do not run ad-hoc DDL in production outside this folder.
 
-The migration is **safe / additive only** — no drops, no truncates. It adds:
+Recent duty-calendar SSOT migrations include:
 
-- Role + actor helpers (`hh_current_role`, `hh_has_role`, `hh_current_actor`).
-- Audit columns + a generic audit trigger that fills `hh_audit_logs` automatically.
-- New tables: `hh_duties`, `hh_attendance`, `hh_payouts`, `hh_whatsapp_messages`, `hh_ai_conversations`, `hh_ai_messages`.
-- Dedupe constraints (active inquiry per phone, active billing per patient, unique attendance per duty) + a btree_gist exclusion constraint that blocks overlapping non-cancelled duties for the same staff.
-- RLS on every new table (`hh_is_active_app_user`). Payout writes are restricted to `Admin / Manager / Accountant`.
-- Realtime publication entries for live UI sync.
-- `hh_convert_inquiry_to_patient` and `hh_recompute_payout` RPCs.
+- `20260612100000_duty_calendar_replace_guard.sql` — `hominal_replace_*` preserves `duty:` rows
+- `20260615100000_phase1_payout_freeze_guards.sql` / `20260615110000_phase1_integrity_checks.sql`
+- `20260616000000_phase2_ledger_duty_id_fk.sql` / `20260617200000_phase2_duty_id_day_partner_unique.sql`
+- `20260617300000_phase3_validate_integrity_checks.sql`
+
+The historical bootstrap file **`hominal_crm_supabase_012_phase4_api_modules.sql`** may still be useful for greenfield installs; existing production databases should rely on the numbered migration chain above.
 
 ## Endpoint reference
 
@@ -142,10 +147,13 @@ The migration is **safe / additive only** — no drops, no truncates. It adds:
 |---|---|---|---|
 | GET | `/?patient_id=` | any | Returns billings + receipts + services |
 | POST | `/` | Admin/Manager/Accountant | Ensures one active billing per patient |
-| POST | `/generate` | Admin/Manager/Accountant | From `{ duty_id, service_name?, rate_overrides? }`; idempotent on `remarks=duty:<id>` |
+| POST | `/generate` | — | **Disabled (SSOT)** — use Duty Calendar materialize |
+| POST | `/svc-entries/replace` | — | **Disabled (SSOT)** — manual slice replace blocked |
 | POST | `/:id/status` | Admin/Manager/Accountant | `{ status }` |
 | POST | `/:id/receipts` | Admin/Manager/Accountant/Staff | Calls `hominal_save_receipt` RPC |
 | GET | `/:id/invoice` | any | Payload for PDF renderer |
+
+Duty-calendar charges and payouts are owned by **`POST /duties/:id/materialize`** and diary sync routes. Legacy CRM manual grids sync non-`duty:` rows via guarded `hominal_replace_*` RPCs only.
 
 ### Payouts — `/api/v1/payouts`
 
@@ -153,6 +161,7 @@ The migration is **safe / additive only** — no drops, no truncates. It adds:
 |---|---|---|---|
 | GET | `/` | any | `?period=YYYY-MM`, `?employee_id`, `?status` |
 | POST | `/` | Admin/Manager/Accountant | Ensures one row per `(employee, period)` via `hh_recompute_payout` |
+| POST | `/charges/replace` | — | **Disabled (SSOT)** — manual slice replace blocked |
 | POST | `/adjust` | Admin/Accountant | `{ payout_id, advance?, deduction?, bonus?, remarks? }` |
 | POST | `/pay` | Admin/Accountant | `{ payout_id, paid_on?, method?, photo? }` + writes `hh_paid_transactions` |
 
@@ -195,7 +204,7 @@ After running the SQL migration and setting env vars:
 |---|---|---|
 | 1 | Inquiry → patient | `POST /inquiries` → `POST /inquiries/:id/convert` → GET `/patients/:id` |
 | 2 | Patient → duty | `POST /patients/:id/assign` → `POST /duties` |
-| 3 | Duty → billing | `POST /billings/generate` with duty id — re-run returns `duplicate:true` |
+| 3 | Duty → billing | `POST /duties/:id/materialize` (Duty Calendar SSOT) — not `/billings/generate` |
 | 4 | Duty → payout | `POST /duties/:id/check-out` → `GET /payouts?employee_id=...` shows updated gross |
 | 5 | Billing payment | `POST /billings/:id/receipts` → `GET /billings/:id/invoice` shows updated outstanding |
 | 6 | Refresh persistence | Reload page after each — rows must remain (Phase 3 already guarantees this in the legacy UI) |

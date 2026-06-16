@@ -595,6 +595,14 @@ export default function DutiesPage() {
     [viewMonth]
   );
 
+  // Deep-link from Classic CRM duty rows: /duties?patient_id=…&billing_id=…
+  useEffect(function () {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const patientId = (params.get("patient_id") || params.get("patientId") || "").trim();
+    if (patientId) setFilterPatient(patientId);
+  }, []);
+
   const loadDiaryFor = useCallback(
     async function loadDiaryFor(dutyId: string) {
       if (!dutyId || !accessToken) return;

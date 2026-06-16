@@ -67,6 +67,13 @@ export function findDutyLedgerRows<T extends { remarks?: string | null }>(
   return (rows || []).filter((r) => isDutyDiaryRemarks(r?.remarks));
 }
 
+/** Rows safe for legacy billing/payout slice-replace (excludes duty-calendar materialized rows). */
+export function filterManualLedgerRows<T extends { remarks?: string | null }>(
+  rows: T[] | null | undefined
+): T[] {
+  return (rows || []).filter((r) => !isDutyDiaryRemarks(r?.remarks));
+}
+
 export function dutyIdFromRemarks(remarks: string | null | undefined): string | null {
   const m = String(remarks || "").match(/^duty:([^:]+):/);
   return m ? m[1] || null : null;

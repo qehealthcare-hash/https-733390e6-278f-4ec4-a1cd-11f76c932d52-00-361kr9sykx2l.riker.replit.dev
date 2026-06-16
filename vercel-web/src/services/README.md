@@ -305,33 +305,41 @@ existing direct-Supabase paths stay as **transport** fallbacks only.
 | Pause bill | `syncLegacy` with `status: Paused` + `pause_reason` | `billingPauseRow` |
 | Refresh patient billing view | `GET /billings?patient_id=` bundle → local `DB.billings[patId]` | `refetchBillingForPatient` |
 
-### Phase 7c — Duties / svc-entries / payout-charges (complete)
+### Phase 7c — Duties / svc-entries / payout-charges (complete; SSOT supersede)
 
 Two distinct surfaces ship under Phase 7c because the legacy SPA models a
 "duty" as both a `hh_svc_entries` row (billable duty diary) and a per-partner
 `hh_payout_charges` row, whereas the new architecture also adds the structured
 `hh_duties` calendar.
 
-- New routes:
-  - `POST /api/v1/billings/svc-entries/replace` → `billingService.replaceServiceEntries` (atomic replace by `svc_key`; refuses on Closed/Cancelled parent bill).
-  - `POST /api/v1/payouts/charges/replace` → `payoutService.replacePayoutCharges` (atomic replace by `svc_key`).
-- `billingRepository.replaceSvcEntriesRpc` and `payoutRepository.replacePayoutChargesRpc` wrap `hominal_replace_service_entries` / `hominal_replace_payout_charges` and surface row counts.
-- `legacyApi`:
-  - `legacyApi.svcEntries.replace(svcKey, rows)`
-  - `legacyApi.payoutCharges.replace(svcKey, rows)`
-  - `legacyApi.duties.{ list, getById, create, update, cancel, checkIn, checkOut }` (covers the new `hh_duties` calendar for Phase 8 React UI; not yet wired into the legacy SPA which has no `hh_duties` flow).
-- Legacy SPA wiring:
-  - `syncServiceEntriesToSupabase(svcKey)` → API first, RPC fallback.
-  - `syncPayoutChargesToSupabase(svcKey)` → API first, RPC fallback.
+**Phase 1 SSOT (2026-06):** Duty Calendar is the single editable source for
+duty-derived ledger rows. The replace API routes remain wired but the service
+layer returns `business` failures; legacy SPA sync uses guarded
+`hominal_replace_*` RPCs for **manual** rows only (`remarks` not starting with
+`duty:`). See `src/business/dutySourceOfTruth.ts` and migration
+`20260612100000_duty_calendar_replace_guard.sql`.
+
+- Routes (replace paths **disabled at service layer**):
+  - `POST /api/v1/billings/svc-entries/replace` → `dutyCalendarSotFailure`
+  - `POST /api/v1/payouts/charges/replace` → `dutyCalendarSotFailure`
+  - `POST /api/v1/billings/generate` / `generate-range` → disabled (use materialize)
+- DB RPCs `hominal_replace_service_entries` / `hominal_replace_payout_charges`
+  preserve and reject `duty:` rows (non-duty slice only).
+- `legacyApi.svcEntries.replace` / `payoutCharges.replace` — stubbed; do not call API.
+- `legacyApi.duties.{ list, getById, create, update, cancel, checkIn, checkOut, materialize }`
+  — used by the Next.js Duty Calendar UI.
+- Legacy SPA wiring (`public/lib/duty-ledger-guards.js` + `legacy-crm.html`):
+  - `syncServiceEntriesToSupabase` / `syncPayoutChargesToSupabase` → RPC with manual rows only.
+  - Info toast when duty-calendar rows are skipped.
 
 | Scenario | Expected | Covered by |
 | --- | --- | --- |
-| Save duty diary on an Active bill | `POST /svc-entries/replace` replaces svc rows, audit `update` written | `billingService.replaceServiceEntries` |
-| Save duty diary on a Closed bill | 422 `business_rule_violation`; cashier sees toast, no fallback | `canEditBilling` + adapter `transport === "business"` branch |
-| Save duty diary while offline | Adapter returns `transport: "network"`; SPA falls back to direct RPC; offline queue catches up later | `legacy-api.js request()` |
-| Update payout-charges slice for a duty row | `POST /payouts/charges/replace` replaces rows, audit `update` written | `payoutService.replacePayoutCharges` |
-| Concurrent diary save (same svc_key) | In-flight Promise deduped by `svcSyncInFlight`; only one API call at a time | `syncServiceEntriesToSupabase` |
-| `GET /duties` from a React page (Phase 8) | Returns rows from `hh_duties` (new calendar); legacy SPA does not yet consume this surface | `dutyService.list` |
+| Save manual svc rows on Active bill | `hominal_replace_service_entries` replaces non-`duty:` slice | DB replace guard |
+| Save while slice includes duty-calendar rows | Duty rows skipped client-side; toast; RPC preserves existing `duty:` rows | `duty-ledger-guards.js` + migration |
+| Call `POST /svc-entries/replace` from adapter | 422 SSOT message; no RPC fallback | `billingService.replaceServiceEntries` |
+| Materialize duty to billing | `POST /duties/:id/materialize` | `dutyDiaryService` |
+| Concurrent diary save (same svc_key) | In-flight Promise deduped by `svcSyncInFlight` | `syncServiceEntriesToSupabase` |
+| `GET /duties` from React Duty Calendar | Returns `hh_duties` rows | `dutyService.list` + `dutiesClient` |
 
 ### Phase 7d — Patients (complete)
 

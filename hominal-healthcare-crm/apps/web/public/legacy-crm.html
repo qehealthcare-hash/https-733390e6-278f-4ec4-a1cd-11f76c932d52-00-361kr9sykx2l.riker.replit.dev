@@ -1070,7 +1070,7 @@ tr:hover td{background:#fafcff}
   <div class="tbl-wrap" style="max-height:340px;overflow-y:auto"><table><thead><tr><th style="width:40px"></th><th>ID</th><th>Name</th><th>Phone</th></tr></thead><tbody id="partnerPickBody"></tbody></table></div>
   <div style="padding:8px 16px;font-size:12px;color:#90a4ae" id="partnerPickCount"></div>
   <div style="padding:0 16px 12px;font-size:12px;color:#475569" id="partnerPickHint">Sets default partner for new duty rows. Tick below only to replace partner on every existing row.</div>
-  <div style="padding:0 16px 14px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="partnerApplyAllRows" style="width:16px;height:16px;accent-color:#1565c0"><label for="partnerApplyAllRows" style="font-size:12px;cursor:pointer">Apply to all existing duty rows for this service</label></div>
+  <div style="padding:0 16px 14px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="partnerApplyAllRows" style="width:16px;height:16px;accent-color:#1565c0"><label for="partnerApplyAllRows" style="font-size:12px;cursor:pointer">Apply to all manual rows for this service (Duty Calendar rows unchanged)</label></div>
   <div class="modal-footer"><button type="button" class="btn btn-ghost btn-sm" id="partnerModalCloseBtn">Close</button><button type="button" class="btn btn-primary btn-sm" id="partnerConfirmBtn">Okay</button></div>
 </div></div>
 
@@ -2005,6 +2005,10 @@ function findSvcEntryIndexByIdentity(svcKey, identity) {
 function beginEditSvcEntry(entry, displayIdx) {
   var key = currentBillIdForSvc + '_' + currentSvcName;
   if (!entry) return;
+  if (isDutyDiaryRemarks(entry.remarks)) {
+    toast(DUTY_CALENDAR_ROW_HINT, 'info');
+    return;
+  }
   editingSvcEntryIndex = displayIdx;
   editingSvcEntryIdentity = buildServiceEntryIdentity(entry, key);
   if (entry.partner) {
@@ -4723,12 +4727,23 @@ function setSvcPartnerPref(billId, serviceName, partner) {
 function setPartnerOnAllServiceEntries(key, partnerName, partnerIdOpt) {
   if (!key || !partnerName || !DB.svcEntries || !DB.svcEntries[key]) return;
   var pid = partnerIdOpt != null && String(partnerIdOpt).trim() !== '' ? String(partnerIdOpt).trim() : '';
+  var skippedDuty = 0;
   (DB.svcEntries[key] || []).forEach(function(entry){
     if (!entry) return;
+    if (isDutyDiaryRemarks(entry.remarks)) {
+      skippedDuty += 1;
+      return;
+    }
     entry.partner = partnerName;
     if (pid) entry.partner_id = pid;
     markDirty(entry);
   });
+  if (skippedDuty > 0 && typeof toast === 'function') {
+    toast(
+      skippedDuty + ' Duty Calendar row(s) were not changed. Edit partners in Duty Calendar.',
+      'info'
+    );
+  }
 }
 function findReceiptContext(receiptId, fallbackPatId, billingIdOverride) {
   var patient = null;
@@ -6478,6 +6493,46 @@ function getInquiryWhatsappMessage(i) {
 function getPartnerWhatsappMessage(name, amount) {
   return 'Hello '+name+', your pending payout of '+formatCurrency(amount)+' is ready. Please connect with Hominal Healthcare.';
 }
+/** Duty Calendar rows use remarks `duty:…` and are owned by the calendar materializer. */
+function isDutyDiaryRemarks(remarks) {
+  return String(remarks || '').indexOf('duty:') === 0;
+}
+function manualLedgerRows(rows) {
+  var manual = [];
+  var skippedDuty = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (isDutyDiaryRemarks(row && row.remarks)) skippedDuty += 1;
+    else manual.push(row);
+  }
+  return { rows: manual, skippedDuty: skippedDuty };
+}
+function maybeToastDutySliceSkipped(skipped, label) {
+  if (skipped > 0 && typeof toast === 'function') {
+    toast(
+      'Duty Calendar rows are read-only here (' + skipped + ' ' + label + ' skipped). Edit them in Duty Calendar.',
+      'info'
+    );
+  }
+}
+var DUTY_CALENDAR_ROW_HINT = 'This row is from Duty Calendar. Use the Duty button to open it for editing.';
+function openDutyCalendarFromLedgerRow(ctx) {
+  ctx = ctx || {};
+  var billingId = ctx.billingId != null && String(ctx.billingId).trim() !== '' ? String(ctx.billingId).trim() : String(currentBillIdForSvc || '').trim();
+  var serviceName = ctx.serviceName != null && String(ctx.serviceName).trim() !== '' ? String(ctx.serviceName).trim() : String(currentSvcName || '').trim();
+  var patientId = ctx.patientId != null && String(ctx.patientId).trim() !== '' ? String(ctx.patientId).trim() : String(currentBillingPatId || '').trim();
+  if (typeof openDutyDiary === 'function') {
+    if (openDutyDiary({ billingId: billingId, serviceName: serviceName, patientId: patientId })) return;
+  }
+  if (typeof location !== 'undefined' && location && String(location.pathname || '').indexOf('/legacy') === 0) {
+    var q = [];
+    if (patientId) q.push('patient_id=' + encodeURIComponent(patientId));
+    if (billingId) q.push('billing_id=' + encodeURIComponent(billingId));
+    window.open('/duties' + (q.length ? '?' + q.join('&') : ''), '_blank');
+    return;
+  }
+  toast(DUTY_CALENDAR_ROW_HINT, 'info');
+}
 function syncServiceEntriesToSupabase(svcKey) {
   if(!SB_READY) return Promise.resolve(false);
   if (svcSyncInFlight[svcKey]) return svcSyncInFlight[svcKey];
@@ -6487,6 +6542,9 @@ function syncServiceEntriesToSupabase(svcKey) {
     delete payload.id;
     return payload;
   });
+  var svcSplit = manualLedgerRows(rows);
+  maybeToastDutySliceSkipped(svcSplit.skippedDuty, 'service entries');
+  rows = svcSplit.rows;
   svcSyncInFlight[svcKey] = (async function(){
     return (await sbRpc('hominal_replace_service_entries', {
       p_svc_key:String(svcKey || ''),
@@ -6506,6 +6564,9 @@ function syncPayoutChargesToSupabase(svcKey) {
     delete payload.id;
     return payload;
   });
+  var payoutSplit = manualLedgerRows(rows);
+  maybeToastDutySliceSkipped(payoutSplit.skippedDuty, 'payout charges');
+  rows = payoutSplit.rows;
   payoutSyncInFlight[svcKey] = (async function(){
     return (await sbRpc('hominal_replace_payout_charges', {
       p_svc_key:String(svcKey || ''),
@@ -12940,6 +13001,10 @@ function confirmPartnerPick() {
   if (editingSvcEntryIdentity) {
     editIdx = findSvcEntryIndexByIdentity(svcKey, editingSvcEntryIdentity);
     if (editIdx >= 0 && DB.svcEntries[svcKey][editIdx]) {
+      if (isDutyDiaryRemarks(DB.svcEntries[svcKey][editIdx].remarks)) {
+        toast(DUTY_CALENDAR_ROW_HINT, 'info');
+        return;
+      }
       DB.svcEntries[svcKey][editIdx].partner = selectedPartner.name;
       DB.svcEntries[svcKey][editIdx].partner_id = selectedPartner.id || '';
       markDirty(DB.svcEntries[svcKey][editIdx]);
@@ -12961,7 +13026,7 @@ function confirmPartnerPick() {
   setSvcPartnerPref(currentBillIdForSvc, currentSvcName, selectedPartner);
   if (applyAll) {
     setPartnerOnAllServiceEntries(svcKey, selectedPartner.name, selectedPartner.id);
-    toast('Default set and applied to all existing duty rows', 'success');
+    toast('Default set and applied to manual duty rows (Duty Calendar rows unchanged)', 'success');
   } else {
     toast('Default partner set for new duty rows', 'success');
   }
@@ -13128,7 +13193,9 @@ function renderSvcEntries() {
     return;
   }
   entries.forEach(function(entry, idx){
+    var dutyRow = isDutyDiaryRemarks(entry.remarks);
     var tr = document.createElement('tr');
+    if (dutyRow) tr.style.background = '#f0fdf4';
     tr.appendChild(createTd(idx + 1));
     tr.appendChild(createTd(entry.date || ''));
     tr.appendChild(createTd(buildServiceFrequencyNode(entry)));
@@ -13138,55 +13205,72 @@ function renderSvcEntries() {
     tr.appendChild(createTd((parseFloat(entry.total) || 0).toFixed(2), 'fw7'));
     tr.appendChild(createTd(entry.partner || '-'));
     tr.appendChild(createTd(displayServiceRemarks(entry) + (entry.absent ? ' | Absent: ' + entry.absent : '')));
-    tr.appendChild(createActionCell([
-      createButton('Payout', 'btn btn-ghost btn-xs', function(){ openPayoutCharges(idx); }),
-      createButton('Edit', 'btn btn-outline btn-xs', function(ev){
-        if (ev) { ev.preventDefault(); ev.stopPropagation(); }
-        beginEditSvcEntry(entry, idx);
-      }),
-      createButton('Partner', 'btn btn-ghost btn-xs', function(ev){
-        if (ev) { ev.preventDefault(); ev.stopPropagation(); }
-        beginEditSvcEntry(entry, idx);
-        openPartnerPicker();
-      }),
-      createButton('Delete', 'btn btn-danger btn-xs', function(){
-        (async function(){
-          if (!confirm('Delete this service entry?')) return;
-          if (await hasServiceEntriesConflict(key, currentSvcEntriesBaselineSig, DB.svcEntries[key] || [])) {
-            setConflictBanner('svcConflictBanner', 'Another device changed these service entries. Reload this service before deleting.', 'error');
-            toast('Service entries changed on another device. Reload before deleting.','error');
-            return;
-          }
-          var delIdx = findSvcEntryIndexByIdentity(key, buildServiceEntryIdentity(entry, key));
-          if (delIdx < 0) delIdx = idx;
-          if (delIdx < 0 || !DB.svcEntries[key][delIdx]) {
-            toast('Could not find duty row to delete. Refresh and try again.', 'error');
-            return;
-          }
-          if (editingSvcEntryIdentity && buildServiceEntryIdentity(entry, key) === editingSvcEntryIdentity) {
-            resetSvcEntryFormAfterSave();
-          }
-          DB.svcEntries[key].splice(delIdx, 1);
-          var cloudSynced = true;
-          if (SB_READY) {
-            cloudSynced = (await syncServiceEntriesToSupabase(key)) !== false;
-          }
-          if (!cloudSynced) {
-            (DB.svcEntries[key] || []).forEach(function(r){ if (r) markDirty(r); });
-            setSharedSyncStatus(false);
-            setConflictBanner('svcConflictBanner', 'Removed on this device. Cloud sync pending—use Retry when online.', 'warn');
-            toast('Entry removed locally. Cloud will update when connected.', 'info');
-          } else {
-            (DB.svcEntries[key] || []).forEach(clearDirty);
-            setSharedSyncStatus(true);
-            setConflictBanner('svcConflictBanner', '');
-          }
-          recordAudit('service', key, 'delete-entry', buildStampText('Deleted service entry'), { service:currentSvcName, date:entry.date });
-          saveDB();
-          renderSvcEntries();
-        })();
-      })
-    ]));
+    var rowActions = [
+      createButton('Payout', 'btn btn-ghost btn-xs', function(){ openPayoutCharges(idx); })
+    ];
+    if (dutyRow) {
+      rowActions.push(createButton('Duty', 'btn btn-ghost btn-xs', function(){
+        if (typeof openDutyCalendarFromLedgerRow === 'function') {
+          openDutyCalendarFromLedgerRow({
+            billingId: currentBillIdForSvc,
+            serviceName: currentSvcName,
+            patientId: currentBillingPatId
+          });
+        } else {
+          toast(DUTY_CALENDAR_ROW_HINT, 'info');
+        }
+      }));
+    } else {
+      rowActions.push(
+        createButton('Edit', 'btn btn-outline btn-xs', function(ev){
+          if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+          beginEditSvcEntry(entry, idx);
+        }),
+        createButton('Partner', 'btn btn-ghost btn-xs', function(ev){
+          if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+          beginEditSvcEntry(entry, idx);
+          openPartnerPicker();
+        }),
+        createButton('Delete', 'btn btn-danger btn-xs', function(){
+          (async function(){
+            if (!confirm('Delete this service entry?')) return;
+            if (await hasServiceEntriesConflict(key, currentSvcEntriesBaselineSig, DB.svcEntries[key] || [])) {
+              setConflictBanner('svcConflictBanner', 'Another device changed these service entries. Reload this service before deleting.', 'error');
+              toast('Service entries changed on another device. Reload before deleting.','error');
+              return;
+            }
+            var delIdx = findSvcEntryIndexByIdentity(key, buildServiceEntryIdentity(entry, key));
+            if (delIdx < 0) delIdx = idx;
+            if (delIdx < 0 || !DB.svcEntries[key][delIdx]) {
+              toast('Could not find duty row to delete. Refresh and try again.', 'error');
+              return;
+            }
+            if (editingSvcEntryIdentity && buildServiceEntryIdentity(entry, key) === editingSvcEntryIdentity) {
+              resetSvcEntryFormAfterSave();
+            }
+            DB.svcEntries[key].splice(delIdx, 1);
+            var cloudSynced = true;
+            if (SB_READY) {
+              cloudSynced = (await syncServiceEntriesToSupabase(key)) !== false;
+            }
+            if (!cloudSynced) {
+              (DB.svcEntries[key] || []).forEach(function(r){ if (r) markDirty(r); });
+              setSharedSyncStatus(false);
+              setConflictBanner('svcConflictBanner', 'Removed on this device. Cloud sync pending—use Retry when online.', 'warn');
+              toast('Entry removed locally. Cloud will update when connected.', 'info');
+            } else {
+              (DB.svcEntries[key] || []).forEach(clearDirty);
+              setSharedSyncStatus(true);
+              setConflictBanner('svcConflictBanner', '');
+            }
+            recordAudit('service', key, 'delete-entry', buildStampText('Deleted service entry'), { service:currentSvcName, date:entry.date });
+            saveDB();
+            renderSvcEntries();
+          })();
+        })
+      );
+    }
+    tr.appendChild(createActionCell(rowActions));
     tb.appendChild(tr);
   });
 }
@@ -13329,58 +13413,76 @@ function renderPayoutCharges() {
     return;
   }
   entries.forEach(function(entry, idx){
+    var dutyRow = isDutyDiaryRemarks(entry.remarks);
     var tr = document.createElement('tr');
+    if (dutyRow) tr.style.background = '#f0fdf4';
     tr.appendChild(createTd(idx + 1));
     tr.appendChild(createTd(entry.date || ''));
     tr.appendChild(createTd(entry.partner || '', 'td-name'));
     tr.appendChild(createTd((entry.term || '') + ' | ' + getPayoutUnits(entry) + ' unit(s)'));
     tr.appendChild(createTd((parseFloat(entry.amount) || 0).toFixed(2), 'fw7'));
     tr.appendChild(createTd('Rate ' + formatCurrency(getPayoutRate(entry)) + (getPayoutDeduction(entry) ? ' | Deduction ' + formatCurrency(getPayoutDeduction(entry)) : '') + (displayPayoutRemarks(entry) ? ' | ' + displayPayoutRemarks(entry) : '')));
-    tr.appendChild(createActionCell([
-      createButton('Edit', 'btn btn-outline btn-xs', function(){
-        editingPayoutIndex = idx;
-        editingPayoutIdentity = buildPayoutChargeIdentity(entry, key);
-        sv('pcDate', toDateInputValue(entry.date));
-        sv('pcPartner', entry.partner || '');
-        sv('pcTerm', entry.term || 'Daily');
-        sv('pcRate', getPayoutRate(entry) || 0);
-        sv('pcUnits', getPayoutUnits(entry) || 1);
-        sv('pcDeduction', getPayoutDeduction(entry) || 0);
-        sv('pcAmt', parseFloat(entry.amount) || 0);
-        sv('pcRemarks', displayPayoutRemarks(entry));
-        currentPayoutSelectedDates = extractPayoutSelectedDates(entry);
-        syncPayoutTermFields(false);
-      }),
-      createButton('Delete', 'btn btn-danger btn-xs', function(){
-        (async function(){
-          var payoutDeleteSyncOk = true;
-          if (!confirm('Delete this payout charge?')) return;
-          if (!(await refreshLatestPayoutChargesForSave(key))) {
-            setConflictBanner('pcConflictBanner', 'Cloud sync is unavailable. Try again in a moment.', 'error');
-            toast('Cloud sync unavailable. Please try again.','error');
-            return;
+    if (dutyRow) {
+      tr.appendChild(createActionCell([
+        createButton('Duty', 'btn btn-ghost btn-xs', function(){
+          if (typeof openDutyCalendarFromLedgerRow === 'function') {
+            openDutyCalendarFromLedgerRow({
+              billingId: currentBillIdForSvc,
+              serviceName: currentSvcName,
+              patientId: currentBillingPatId
+            });
+          } else {
+            toast(DUTY_CALENDAR_ROW_HINT, 'info');
           }
-          var deleteIndex = (DB.payoutCharges[key] || []).findIndex(function(row){
-            return buildPayoutChargeIdentity(row, key) === buildPayoutChargeIdentity(entry, key);
-          });
-          if (deleteIndex < 0) {
-            toast('This payout charge was already removed.','warn');
+        })
+      ]));
+    } else {
+      tr.appendChild(createActionCell([
+        createButton('Edit', 'btn btn-outline btn-xs', function(){
+          editingPayoutIndex = idx;
+          editingPayoutIdentity = buildPayoutChargeIdentity(entry, key);
+          sv('pcDate', toDateInputValue(entry.date));
+          sv('pcPartner', entry.partner || '');
+          sv('pcTerm', entry.term || 'Daily');
+          sv('pcRate', getPayoutRate(entry) || 0);
+          sv('pcUnits', getPayoutUnits(entry) || 1);
+          sv('pcDeduction', getPayoutDeduction(entry) || 0);
+          sv('pcAmt', parseFloat(entry.amount) || 0);
+          sv('pcRemarks', displayPayoutRemarks(entry));
+          currentPayoutSelectedDates = extractPayoutSelectedDates(entry);
+          syncPayoutTermFields(false);
+        }),
+        createButton('Delete', 'btn btn-danger btn-xs', function(){
+          (async function(){
+            var payoutDeleteSyncOk = true;
+            if (!confirm('Delete this payout charge?')) return;
+            if (!(await refreshLatestPayoutChargesForSave(key))) {
+              setConflictBanner('pcConflictBanner', 'Cloud sync is unavailable. Try again in a moment.', 'error');
+              toast('Cloud sync unavailable. Please try again.','error');
+              return;
+            }
+            var deleteIndex = (DB.payoutCharges[key] || []).findIndex(function(row){
+              return buildPayoutChargeIdentity(row, key) === buildPayoutChargeIdentity(entry, key);
+            });
+            if (deleteIndex < 0) {
+              toast('This payout charge was already removed.','warn');
+              renderPayoutCharges();
+              return;
+            }
+            DB.payoutCharges[key].splice(deleteIndex, 1);
+            if (SB_READY) payoutDeleteSyncOk = (await syncPayoutChargesToSupabase(key)) !== false;
+            if (payoutDeleteSyncOk) {
+              (DB.payoutCharges[key] || []).forEach(clearDirty);
+            }
+            setSharedSyncStatus(payoutDeleteSyncOk);
+            setConflictBanner('pcConflictBanner', payoutDeleteSyncOk ? '' : 'Delete saved locally. Cloud sync is pending for these payout charges.', 'warn');
+            recordAudit('payout-charge', key, 'delete', buildStampText('Deleted payout charge'), { partner:entry.partner, amount:entry.amount });
+            saveDB();
             renderPayoutCharges();
-            return;
-          }
-          DB.payoutCharges[key].splice(deleteIndex, 1);
-          if (SB_READY) payoutDeleteSyncOk = (await syncPayoutChargesToSupabase(key)) !== false;
-          if (payoutDeleteSyncOk) {
-            (DB.payoutCharges[key] || []).forEach(clearDirty);
-          }
-          setSharedSyncStatus(payoutDeleteSyncOk);
-          setConflictBanner('pcConflictBanner', payoutDeleteSyncOk ? '' : 'Delete saved locally. Cloud sync is pending for these payout charges.', 'warn');
-          recordAudit('payout-charge', key, 'delete', buildStampText('Deleted payout charge'), { partner:entry.partner, amount:entry.amount });
-          saveDB();
-          renderPayoutCharges();
-        })();
-      })
-    ]));
+          })();
+        })
+      ]));
+    }
     tb.appendChild(tr);
   });
 }

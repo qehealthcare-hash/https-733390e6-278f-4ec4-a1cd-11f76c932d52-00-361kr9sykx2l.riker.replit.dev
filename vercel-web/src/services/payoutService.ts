@@ -52,6 +52,7 @@ import {
   canPayoutTransitionTo,
   canReopenPayout,
   computePayoutNet,
+  detectPayoutDesync,
   ensurePayoutHasSource,
   ensureWithinPayoutOutstanding,
   isPayoutFullyPaid,
@@ -652,6 +653,58 @@ async function loadPayoutDetail(
 }
 
 /**
+ * When an OPEN payout's cached `hh_payouts` aggregate lags the live duty
+ * ledger, refresh it before returning detail so list/detail/lock flows agree.
+ */
+async function healPayoutCacheIfDesynced(
+  payout: JsonRow,
+  ctx: PayoutServiceContext
+): Promise<ApiResult<JsonRow>> {
+  if (String(payout.status || "").toUpperCase() !== "OPEN") {
+    return success(payout);
+  }
+  const employeeId = String(payout.employee_id || "");
+  const period = String(payout.period_month || "");
+  if (!employeeId || !/^\d{4}-\d{2}$/.test(period)) {
+    return success(payout);
+  }
+
+  const access = dbAccess(ctx);
+  const { getEmployeePayoutLedger } = await import("@/src/lib/duty-ledger");
+  const ledger = await getEmployeePayoutLedger(employeeId, period, access);
+  if (!ledger.success || !ledger.data) {
+    return success(payout);
+  }
+
+  const desynced = detectPayoutDesync({
+    liveGross: Number(ledger.data.gross || 0),
+    liveDutyCount: Number(ledger.data.duty_count || 0),
+    cachedGross: Number(payout.gross_amount || 0),
+    cachedDutyCount: Number(payout.duty_count || 0),
+    status: String(payout.status || ""),
+    comparable: true
+  });
+  if (!desynced) {
+    return success(payout);
+  }
+
+  const healed = await recomputeAndPersist(employeeId, period, ctx, {
+    requireSource: false,
+    rematerialize: false
+  });
+  if (!healed.success || !healed.data) {
+    console.warn("[payoutService.healPayoutCacheIfDesynced] recompute failed", {
+      employeeId,
+      period,
+      payout_id: payout.id,
+      error: healed.error
+    });
+    return success(payout);
+  }
+  return success(healed.data);
+}
+
+/**
  * Run `hh_recompute_payout` for an (employee, period) pair, refetch the row,
  * apply any caller-supplied adjustments, and return the persisted result.
  *
@@ -817,7 +870,9 @@ export const payoutService = {
     if (!loaded.success) {
       return failure(loaded.error || "Payout not found", loaded.code, loaded.details);
     }
-    return loadPayoutDetail(loaded.data, ctx);
+    const healed = await healPayoutCacheIfDesynced(loaded.data, ctx);
+    const payout = healed.success && healed.data ? healed.data : loaded.data;
+    return loadPayoutDetail(payout, ctx);
   },
 
   /**

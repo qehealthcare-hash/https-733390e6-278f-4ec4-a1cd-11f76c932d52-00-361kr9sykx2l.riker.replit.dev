@@ -70,6 +70,35 @@ export function isPayoutPaid(status: string | null | undefined): boolean {
   return String(status || "") === "PAID";
 }
 
+export interface PayoutReconciliation {
+  /** Live duty-calendar gross (sum of hh_payout_charges.amount for the month). */
+  liveGross: number;
+  /** Live duty-calendar day count for the month. */
+  liveDutyCount: number;
+  /** Cached hh_payouts.gross_amount. */
+  cachedGross: number;
+  /** Cached hh_payouts.duty_count. */
+  cachedDutyCount: number;
+  /** Period status (PAID periods are frozen snapshots and never flagged). */
+  status: string;
+  /** True only when the live duty ledger can be compared to the cache. */
+  comparable: boolean;
+}
+
+/**
+ * The Duty Calendar (`hh_payout_charges`) is authoritative. A non-PAID payout
+ * whose cached aggregate disagrees with the live ledger is desynced and must be
+ * recomputed before it can be locked / paid.
+ */
+export function detectPayoutDesync(r: PayoutReconciliation): boolean {
+  if (!r.comparable) return false;
+  if (isPayoutPaid(r.status)) return false;
+  return (
+    Math.round(r.liveGross) !== Math.round(r.cachedGross) ||
+    Number(r.liveDutyCount) !== Number(r.cachedDutyCount)
+  );
+}
+
 export function canEditPayout(status: string | null | undefined): ApiResult<null> {
   if (isPayoutPaid(status)) {
     return businessFailure("Cannot adjust a PAID payout", { status });

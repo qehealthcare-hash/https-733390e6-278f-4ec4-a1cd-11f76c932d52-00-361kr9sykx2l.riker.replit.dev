@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectPayoutDesync } from "@/lib/payoutUi";
+import { detectPayoutDesync } from "@/business/payoutRules";
 
 describe("detectPayoutDesync — payout must match duty calendar", () => {
   const RATE = 433;
