@@ -16,16 +16,25 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/v1/billings
  *
- * - With `?patient_id=`: returns the patient's full billing history bundle
- *   (`{ billings, receipts, services, totalsByBilling }`) so the UI can
- *   render the whole ledger from a single refetch.
+ * - With `?patient_id=` only: returns the patient's full billing history bundle
+ *   (`{ billings, receipts, services, totalsByBilling }`) for legacy ledger views.
+ * - With `?patient_id=` plus list filters (`limit`, `status`, `period`, …): paginated
+ *   list scoped to that patient (fast path for duty calendar outstanding lookups).
  * - Without `patient_id`: paginated list across all billings.
  */
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, [...BILLING_READ_ROLES]);
   const url = new URL(req.url);
   const patientId = url.searchParams.get("patient_id");
-  if (patientId) {
+  const wantsHistoryBundle =
+    Boolean(patientId) &&
+    (url.searchParams.get("bundle") === "1" ||
+      (!url.searchParams.has("limit") &&
+        !url.searchParams.has("offset") &&
+        !url.searchParams.has("q") &&
+        !url.searchParams.has("status") &&
+        !url.searchParams.has("period")));
+  if (patientId && wantsHistoryBundle) {
     const result = await billingService.listByPatient(patientId, { actor });
     return respondValidated(result, billingPatientHistoryDtoSchema);
   }
@@ -33,6 +42,7 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     limit: url.searchParams.get("limit") ?? undefined,
     offset: url.searchParams.get("offset") ?? undefined,
     q: url.searchParams.get("q") ?? undefined,
+    patient_id: patientId ?? undefined,
     status: url.searchParams.get("status") ?? undefined,
     period: url.searchParams.get("period") ?? undefined
   };

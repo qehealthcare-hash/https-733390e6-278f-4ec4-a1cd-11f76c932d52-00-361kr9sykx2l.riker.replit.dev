@@ -10,6 +10,7 @@ import { ErrorCodes } from "@/types/common";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 /**
  * POST /api/v1/billings/duty-ledger-sync

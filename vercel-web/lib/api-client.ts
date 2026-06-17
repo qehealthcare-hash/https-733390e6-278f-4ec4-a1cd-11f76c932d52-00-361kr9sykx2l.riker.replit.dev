@@ -92,7 +92,9 @@ function saveQueue(queue: OfflineQueueEntry[]): void {
 function unwrapResponse(json: Record<string, unknown>, response: Response): unknown {
   if (typeof json.success === "boolean") {
     if (!json.success) {
-      const err: ApiClientError = new Error(String(json.error || "Request failed"));
+      const err: ApiClientError = new Error(
+        humanizeClientError(String(json.error || "Request failed"))
+      );
       if (json.code) err.code = String(json.code);
       if (json.details !== undefined) err.details = json.details;
       err.status = response.status;
@@ -102,7 +104,7 @@ function unwrapResponse(json: Record<string, unknown>, response: Response): unkn
   }
   if (!response.ok) {
     const hardErr: ApiClientError = new Error(
-      String(json.message || json.error || "Request failed")
+      humanizeClientError(String(json.message || json.error || "Request failed"))
     );
     hardErr.status = response.status;
     throw hardErr;
@@ -193,9 +195,8 @@ async function parseApiResponse(path: string, response: Response): Promise<unkno
     try {
       json = JSON.parse(raw) as Record<string, unknown>;
     } catch {
-      const preview = raw.length > 160 ? raw.slice(0, 160) + "…" : raw;
       const perr: ApiClientError = new Error(
-        "API " + path + " returned HTTP " + response.status + " with non-JSON body: " + preview
+        humanizeGatewayBody(response.status, raw)
       );
       perr.code = "bad_response";
       perr.status = response.status;
@@ -203,6 +204,52 @@ async function parseApiResponse(path: string, response: Response): Promise<unkno
     }
   }
   return unwrapResponse(json, response);
+}
+
+/** Map proxy / gateway HTML bodies to operator-friendly copy (never dump HTML in the UI). */
+function humanizeGatewayBody(status: number, raw: string): string {
+  const lower = raw.toLowerCase();
+  if (
+    status === 522 ||
+    status === 524 ||
+    status === 504 ||
+    lower.includes("connection timed out") ||
+    lower.includes("gateway time-out")
+  ) {
+    return "Server timed out — the request took too long. Try again or narrow your filters.";
+  }
+  if (status === 503 || lower.includes("temporarily unavailable")) {
+    return "Server is temporarily unavailable. Please try again in a moment.";
+  }
+  if (/<!doctype\s+html|<html[\s>]/i.test(raw)) {
+    return "Server returned an unexpected error page (HTTP " + status + "). Please try again.";
+  }
+  return "Server returned an invalid response (HTTP " + status + "). Please try again.";
+}
+
+/**
+ * Sanitize any client-side error message before showing it in banners/toasts.
+ * Strips HTML error pages from Cloudflare/Vercel and maps gateway timeouts.
+ */
+export function humanizeClientError(error: unknown): string {
+  const err = error as ApiClientError;
+  const raw =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : String(error || "");
+  const status = err?.status;
+  if (/<!doctype\s+html|<html[\s>]/i.test(raw) || /cloudflare/i.test(raw)) {
+    return humanizeGatewayBody(status || 0, raw);
+  }
+  if (/non-json body/i.test(raw)) {
+    return humanizeGatewayBody(status || 0, raw);
+  }
+  if (status === 522 || status === 524 || status === 504) {
+    return "Server timed out — the request took too long. Try again or narrow your filters.";
+  }
+  return raw.trim() || "Request failed";
 }
 
 export async function flushOfflineQueue(session: ApiSession): Promise<void> {

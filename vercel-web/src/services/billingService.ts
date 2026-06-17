@@ -887,10 +887,11 @@ export const billingService = {
     if (!billings.success) return passFailure(billings);
     const billingRows = billings.data || [];
     const billingIdList = billingRows.map((b) => String(b.id));
-    const billingIds = new Set(billingIdList);
 
     const [allReceipts, allSvc, invoiceRows] = await Promise.all([
-      billingRepository.listAllReceipts(access),
+      billingIdList.length
+        ? billingRepository.listActiveReceiptsByBillingIds(billingIdList, access)
+        : Promise.resolve(success([] as JsonRow[])),
       billingRepository.listSvcByBillingIds(billingIdList, access),
       billingRepository.listInvoicesByPatient(patientId, access)
     ]);
@@ -898,9 +899,7 @@ export const billingService = {
     if (!allSvc.success) return passFailure(allSvc);
     if (!invoiceRows.success) return passFailure(invoiceRows);
 
-    const receipts = (allReceipts.data || []).filter((r) =>
-      billingIds.has(String(r.billing_id || ""))
-    );
+    const receipts = allReceipts.data || [];
     const services = allSvc.data || [];
 
     const totalsByBilling: Record<string, BillingTotals> = {};

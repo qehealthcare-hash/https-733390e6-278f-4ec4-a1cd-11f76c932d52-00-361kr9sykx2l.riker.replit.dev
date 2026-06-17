@@ -153,7 +153,7 @@ describe("GET /api/v1/billings", () => {
     expect(m.list).not.toHaveBeenCalled();
   });
 
-  it("uses listByPatient when patient_id is present", async () => {
+  it("uses listByPatient when only patient_id is present (legacy ledger bundle)", async () => {
     setActor(ACTORS.accountant);
     m.listByPatient.mockResolvedValue({
       success: true,
@@ -170,6 +170,19 @@ describe("GET /api/v1/billings", () => {
     await expectOkEnvelope(res);
     expect(m.listByPatient).toHaveBeenCalledWith("PAT1", expect.any(Object));
     expect(m.list).not.toHaveBeenCalled();
+  });
+
+  it("uses paginated list when patient_id is combined with list filters", async () => {
+    setActor(ACTORS.accountant);
+    m.list.mockResolvedValue({ success: true, data: { rows: [], total: 0 } });
+    const req = makeRequest("GET", "/api/v1/billings?patient_id=PAT1&status=Active&limit=5");
+    const res = await BillingsGet(req, ctx({}));
+    await expectOkEnvelope(res);
+    expect(m.list).toHaveBeenCalledWith(
+      expect.objectContaining({ patient_id: "PAT1", status: "Active", limit: "5" }),
+      expect.any(Object)
+    );
+    expect(m.listByPatient).not.toHaveBeenCalled();
   });
 });
 

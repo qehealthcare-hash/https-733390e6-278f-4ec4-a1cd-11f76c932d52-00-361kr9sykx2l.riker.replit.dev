@@ -8,6 +8,7 @@ import { dutyTotalsResponseDtoSchema } from "@/validation/dutyDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, DUTY_TOTALS_ROLES);

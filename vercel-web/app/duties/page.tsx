@@ -19,6 +19,7 @@ import { ModuleShell } from "@/components/ui/module-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, SuccessBanner } from "@/components/ui/status-banner";
 import { useToast } from "@/components/ui/toast";
+import { humanizeClientError } from "@/lib/api-client";
 import { useBusyGuard } from "@/hooks/use-busy-guard";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { ModalDialog } from "@/components/ui/modal-dialog";
@@ -531,8 +532,8 @@ export default function DutiesPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const lastErrorToastRef = useRef({ message: "", at: 0 });
-  const setError = useCallback(function (msg: string) {
-    let text = String(msg || "").trim();
+  const setError = useCallback(function (msg: unknown) {
+    let text = humanizeClientError(msg);
     if (text.includes("auth/v1/user") || text.includes("supabase.co/auth")) {
       text =
         "Supabase connection failed — check NEXT_PUBLIC_SUPABASE_URL on Vercel matches project hkyjxdmkqkydnrafhpgn.";
@@ -618,7 +619,7 @@ export default function DutiesPage() {
           return next;
         });
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Unable to load day-wise entries");
+        setError(err);
       }
     },
     [accessToken, setError]
@@ -744,12 +745,12 @@ export default function DutiesPage() {
     if (!session) return;
     setLoading(true);
     try {
+      // Ledger sync is heavy (materialize + dedup). Run in the background so the
+      // calendar list stays responsive; cron + explicit "Sync diary" cover parity.
       if (filterPatient) {
-        try {
-          await billingsClient.syncDutyLedger(session, filterPatient);
-        } catch (syncErr) {
+        void billingsClient.syncDutyLedger(session, filterPatient).catch(function (syncErr) {
           console.warn("[duties] duty→billing ledger sync failed", syncErr);
-        }
+        });
       }
       // P1-20: bound the month window in IST (+05:30), not UTC. With a
       // UTC bound, queries near month-end on India time were returning
@@ -798,7 +799,7 @@ export default function DutiesPage() {
       setError("");
       loadDiariesForVisible(list);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Unable to load duties");
+      setError(err);
     } finally {
       setLoading(false);
     }
