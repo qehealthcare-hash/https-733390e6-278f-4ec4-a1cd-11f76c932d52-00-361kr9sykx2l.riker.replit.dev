@@ -34,6 +34,7 @@ export default function LoginPage() {
   const [error, setErrorState] = useState("");
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
+  const [dbHealthy, setDbHealthy] = useState<boolean | null>(null);
   const setError = useCallback(
     function (msg: string) {
       const text = String(msg || "");
@@ -96,6 +97,29 @@ export default function LoginPage() {
     },
     [cooldownUntil]
   );
+
+  useEffect(function () {
+    let cancelled = false;
+    async function pollHealth() {
+      try {
+        const res = await fetch("/api/v1/health", { cache: "no-store" });
+        const body = (await res.json()) as {
+          data?: { deps?: { supabase?: { ok?: boolean } } };
+        };
+        if (!cancelled) {
+          setDbHealthy(body?.data?.deps?.supabase?.ok === true);
+        }
+      } catch {
+        if (!cancelled) setDbHealthy(false);
+      }
+    }
+    void pollHealth();
+    const timer = window.setInterval(pollHealth, 30_000);
+    return function cleanup() {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -162,6 +186,24 @@ export default function LoginPage() {
           <h1 style={{ margin: "12px 0 4px" }}>{appConfig.appName}</h1>
           <div className="mini-muted">Sign in with your CRM username or email</div>
         </div>
+        {dbHealthy === false ? (
+          <div
+            className="error-text"
+            role="status"
+            style={{ background: "var(--surface-muted, #fff7ed)", padding: "10px 12px", borderRadius: 8 }}
+          >
+            Database is under heavy load right now. Close other CRM tabs, wait 2–3 minutes,
+            then try again. Sign-in will work once the status below turns green.
+          </div>
+        ) : null}
+        {dbHealthy !== null ? (
+          <div className="mini-muted" role="status">
+            Database status:{" "}
+            <strong style={{ color: dbHealthy ? "var(--success, #15803d)" : "var(--danger, #b91c1c)" }}>
+              {dbHealthy ? "ready" : "busy — retry shortly"}
+            </strong>
+          </div>
+        ) : null}
         <form className="stack" onSubmit={handleSubmit}>
           <div className="field">
             <label htmlFor="login-email-1">Username or email</label>

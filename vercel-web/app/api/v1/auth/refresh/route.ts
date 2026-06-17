@@ -10,6 +10,7 @@ import {
   clearRefreshCookie,
   readRefreshCookie
 } from "@/lib/auth/refreshCookie";
+import { fetchWithLoginTimeout } from "@/lib/auth/loginUpstream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
       return clearRefreshCookie(response);
     }
 
-    const tokenRes = await fetch(
+    const tokenRes = await fetchWithLoginTimeout(
       env.supabaseUrl.replace(/\/$/, "") + "/auth/v1/token?grant_type=refresh_token",
       {
         method: "POST",
@@ -49,7 +50,8 @@ export async function POST(req: NextRequest) {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({ refresh_token: refreshToken })
-      }
+      },
+      8_000
     );
     const tokenBody = (await tokenRes.json().catch(() => ({}))) as RefreshTokenBody;
     if (!tokenRes.ok || !tokenBody.access_token) {

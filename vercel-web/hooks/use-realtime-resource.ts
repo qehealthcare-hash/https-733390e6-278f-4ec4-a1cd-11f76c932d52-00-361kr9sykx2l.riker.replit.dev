@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/providers/auth-provider";
+import { isRealtimeEnabled } from "@/lib/realtimeConfig";
 import type { ApiSession } from "@/lib/clients/types";
 
 type RealtimeAuth = {
@@ -128,7 +129,7 @@ export function useRealtimeResource<T = Record<string, unknown>>(
   useEffect(
     function () {
       const supabase = supabaseRef.current;
-      if (!accessToken || !supabase) return undefined;
+      if (!accessToken || !supabase || !isRealtimeEnabled()) return undefined;
       const tables = tablesRef.current;
       if (!tables.length) return undefined;
 

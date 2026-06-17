@@ -31,7 +31,7 @@ export function loginUpstreamMessage(): string {
 export async function fetchWithLoginTimeout(
   url: string,
   init: RequestInit,
-  timeoutMs = 25_000
+  timeoutMs = 12_000
 ): Promise<Response> {
   const signal =
     init.signal ??

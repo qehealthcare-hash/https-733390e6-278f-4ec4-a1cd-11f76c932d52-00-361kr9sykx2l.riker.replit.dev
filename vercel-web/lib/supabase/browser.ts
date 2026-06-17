@@ -34,7 +34,16 @@ export function getBrowserSupabase(): SupabaseClient {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
     );
     const { url: supabaseUrl } = resolveSupabaseUrl(configuredUrl, supabaseAnonKey);
-    browserClient = createClient(supabaseUrl, supabaseAnonKey);
+    // CRM auth uses HttpOnly refresh cookies + /api/v1/auth/* — not Supabase
+    // browser sessions. Disable auto-refresh so stale localStorage sessions cannot
+    // storm GoTrue during database outages.
+    browserClient = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+        detectSessionInUrl: false
+      }
+    });
   }
   return browserClient;
 }

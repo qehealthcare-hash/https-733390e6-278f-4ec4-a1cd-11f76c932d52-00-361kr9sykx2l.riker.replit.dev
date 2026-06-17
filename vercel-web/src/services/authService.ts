@@ -34,6 +34,7 @@ import {
   isUpstreamHttpStatus,
   loginUpstreamMessage
 } from "@/lib/auth/loginUpstream";
+import { openSupabaseCircuit, probeSupabaseFast } from "@/lib/auth/supabaseCircuit";
 import { failure, success } from "@/utils/apiResponse";
 
 export type LogoutScope = "global" | "local" | "others";
@@ -79,57 +80,45 @@ async function signInWithPassword(
   | { ok: false; upstream: boolean; message: string }
 > {
   const tokenUrl = env.supabaseUrl.replace(/\/$/, "") + "/auth/v1/token?grant_type=password";
-  const payload = JSON.stringify({ email, password });
-  const headers = {
-    apikey: env.supabaseAnonKey,
-    "Content-Type": "application/json"
+  const tokenRes = await fetchWithLoginTimeout(tokenUrl, {
+    method: "POST",
+    headers: {
+      apikey: env.supabaseAnonKey,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ email, password })
+  });
+  const tokenBody = (await tokenRes.json().catch(() => ({}))) as LoginSessionResult & {
+    refresh_token?: string;
+    error_description?: string;
+    msg?: string;
+    error_code?: string;
+    error?: string;
+    code?: string;
   };
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const tokenRes = await fetchWithLoginTimeout(tokenUrl, {
-      method: "POST",
-      headers,
-      body: payload
-    });
-    const tokenBody = (await tokenRes.json().catch(() => ({}))) as LoginSessionResult & {
-      refresh_token?: string;
-      error_description?: string;
-      msg?: string;
-      error_code?: string;
-      error?: string;
-      code?: string;
-    };
-    if (tokenRes.ok && tokenBody?.access_token) {
-      return {
-        ok: true,
-        body: {
-          access_token: tokenBody.access_token,
-          refresh_token: tokenBody.refresh_token || "",
-          expires_in: tokenBody.expires_in,
-          expires_at: tokenBody.expires_at,
-          user: tokenBody.user
-        }
-      };
-    }
-    const upstream =
-      isUpstreamHttpStatus(tokenRes.status) ||
-      isUpstreamAuthBody(tokenBody as unknown as Record<string, unknown>);
-    if (upstream && attempt === 0) {
-      await new Promise(function (resolve) {
-        setTimeout(resolve, 600);
-      });
-      continue;
-    }
-    if (upstream) {
-      return { ok: false, upstream: true, message: loginUpstreamMessage() };
-    }
+  if (tokenRes.ok && tokenBody?.access_token) {
     return {
-      ok: false,
-      upstream: false,
-      message: tokenBody.error_description || tokenBody.msg || "Invalid username or password"
+      ok: true,
+      body: {
+        access_token: tokenBody.access_token,
+        refresh_token: tokenBody.refresh_token || "",
+        expires_in: tokenBody.expires_in,
+        expires_at: tokenBody.expires_at,
+        user: tokenBody.user
+      }
     };
   }
-  return { ok: false, upstream: true, message: loginUpstreamMessage() };
+  const upstream =
+    isUpstreamHttpStatus(tokenRes.status) ||
+    isUpstreamAuthBody(tokenBody as unknown as Record<string, unknown>);
+  if (upstream) {
+    return { ok: false, upstream: true, message: loginUpstreamMessage() };
+  }
+  return {
+    ok: false,
+    upstream: false,
+    message: tokenBody.error_description || tokenBody.msg || "Invalid username or password"
+  };
 }
 
 function resolveScope(input: unknown): LogoutScope {
@@ -165,6 +154,11 @@ async function revokeViaGoTrue(actor: AuthServiceActor, scope: LogoutScope): Pro
 
 export const authService = {
   async login(identifier: string, password: string): Promise<ApiResult<LoginSessionResult>> {
+    const healthy = await probeSupabaseFast();
+    if (!healthy) {
+      return failure(loginUpstreamMessage(), ErrorCodes.upstream);
+    }
+
     const lookup = await userRepository.resolveLoginEmail(identifier);
     if (!lookup.success) {
       if (lookup.code === ErrorCodes.database && isLookupUpstreamFailure(lookup.error || "")) {
@@ -194,6 +188,7 @@ export const authService = {
     const signIn = await signInWithPassword(email, password);
     if (!signIn.ok) {
       if (signIn.upstream) {
+        openSupabaseCircuit();
         return failure(signIn.message, ErrorCodes.upstream);
       }
       return failure(signIn.message, ErrorCodes.unauthorized);

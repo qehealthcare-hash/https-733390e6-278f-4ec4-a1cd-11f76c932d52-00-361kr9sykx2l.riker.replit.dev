@@ -5,6 +5,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
+vi.mock("@/lib/auth/supabaseCircuit", () => ({
+  probeSupabaseFast: vi.fn(async () => true),
+  openSupabaseCircuit: vi.fn(),
+  isSupabaseCircuitOpen: vi.fn(() => false),
+  closeSupabaseCircuit: vi.fn()
+}));
+
 vi.mock("@/lib/api/env", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/env")>();
   return {

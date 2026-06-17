@@ -28,6 +28,7 @@ import { formatCurrency, formatDate } from "@/lib/formatters";
 import { openPrintWindow, preOpenPrintWindow, reportPrintBlocked } from "@/lib/print";
 import { uploadDocument, getDocumentSignedUrl } from "@/lib/uploads";
 import { DUTY_LEDGER_READONLY_MESSAGE } from "@/lib/dutyLedgerUi";
+import { isRealtimeEnabled } from "@/lib/realtimeConfig";
 import {
   PAYOUT_PAY_ROLES,
   PAYOUT_REOPEN_ROLES,
@@ -403,7 +404,7 @@ function PayoutsPageContent() {
   useEffect(
     function () {
       const supabase = supabaseRef.current;
-      if (!accessToken || !supabase) return undefined;
+      if (!accessToken || !supabase || !isRealtimeEnabled()) return undefined;
       let timer: ReturnType<typeof setTimeout> | null = null;
 
       function scheduleRefresh() {

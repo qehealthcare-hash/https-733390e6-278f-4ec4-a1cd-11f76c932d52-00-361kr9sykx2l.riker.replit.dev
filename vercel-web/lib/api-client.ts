@@ -114,8 +114,14 @@ function envelopeFailureMessage(
   if (codeStr === CONTRACT_ERROR_CODE) {
     return "Data format mismatch — refresh the page and try again.";
   }
+  if (codeStr === "upstream_error") {
+    return "Sign-in service is temporarily unavailable — wait a minute and try again.";
+  }
   if (codeStr === RETRYABLE_ERROR_CODE) {
     return humanizeGatewayBody(status || 0, "");
+  }
+  if (codeStr === "upstream_error") {
+    return "Sign-in service is temporarily unavailable — wait a minute and try again.";
   }
   if (status === 401 || status === 403 || codeStr === "unauthorized") {
     return "Session expired — sign in again.";
@@ -259,17 +265,22 @@ async function fetchApiWithRetry(
   session: ApiSession
 ): Promise<Response> {
   let lastError: unknown;
+  const skipRetry = path.startsWith("/auth/");
   for (let attempt = 0; attempt < MAX_TRANSIENT_RETRIES; attempt += 1) {
     try {
       const response = await fetchApi(path, options, session);
-      if (isRetryableStatus(response.status) && attempt < MAX_TRANSIENT_RETRIES - 1) {
+      if (
+        !skipRetry &&
+        isRetryableStatus(response.status) &&
+        attempt < MAX_TRANSIENT_RETRIES - 1
+      ) {
         await sleep(retryBackoffMs(attempt));
         continue;
       }
       return response;
     } catch (networkError: unknown) {
       lastError = networkError;
-      if (attempt < MAX_TRANSIENT_RETRIES - 1) {
+      if (!skipRetry && attempt < MAX_TRANSIENT_RETRIES - 1) {
         await sleep(retryBackoffMs(attempt));
         continue;
       }
@@ -320,6 +331,11 @@ async function parseApiResponse(path: string, response: Response): Promise<unkno
       perr.retryable = isRetryableStatus(response.status);
       throw perr;
     }
+  }
+
+  // Canonical API envelope — unwrap even on 502/503 so upstream_error text is preserved.
+  if (typeof json.success === "boolean") {
+    return unwrapResponse(json, response);
   }
 
   if (!response.ok && isRetryableStatus(response.status)) {
@@ -386,6 +402,9 @@ export function humanizeClientError(error: unknown): string {
   }
   if (code === CONTRACT_ERROR_CODE && !trimmed.includes("contract validation")) {
     return "Data format mismatch — refresh the page and try again.";
+  }
+  if (code === "upstream_error") {
+    return trimmed || "Sign-in service is temporarily unavailable — wait a minute and try again.";
   }
   return trimmed;
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useAuth } from "@/components/providers/auth-provider";
+import { isRealtimeEnabled } from "@/lib/realtimeConfig";
 
 type RealtimeAuth = {
   session?: { access_token?: string } | null;
@@ -37,7 +38,7 @@ export function useRealtimeTableReload(
   useEffect(
     function () {
       const supabase = auth?.supabase;
-      if (!accessToken || !supabase || !tables.length) return undefined;
+      if (!accessToken || !supabase || !tables.length || !isRealtimeEnabled()) return undefined;
 
       let debounce: ReturnType<typeof setTimeout> | null = null;
       let inFlight = false;

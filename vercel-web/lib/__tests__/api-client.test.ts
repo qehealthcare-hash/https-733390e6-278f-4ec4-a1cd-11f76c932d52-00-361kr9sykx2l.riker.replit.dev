@@ -86,4 +86,26 @@ describe("api-client wire contract validation", () => {
       message: /timed out/i
     });
   });
+
+  it("preserves upstream_error JSON on 502 instead of generic gateway text", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          success: false,
+          error:
+            "Sign-in service is temporarily unavailable — the database took too long to respond. Wait a minute and try again.",
+          code: "upstream_error"
+        },
+        502
+      )
+    );
+    await expect(
+      requestValidated("/auth/login", { method: "POST", body: { identifier: "a", password: "b" } }, null, schema)
+    ).rejects.toMatchObject({
+      message: /database took too long/i,
+      code: "upstream_error",
+      status: 502
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
 });

@@ -28,6 +28,7 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { billingsClient, dutiesClient, lookupsClient } from "@/lib/clients";
 import { OFFLINE_QUEUED_CODE } from "@/lib/api-client";
 import { onDataInvalidated } from "@/lib/data-invalidation";
+import { isRealtimeEnabled } from "@/lib/realtimeConfig";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { crmDayStartIso, crmDayEndIso } from "@/src/utils/crmToday";
 import {
@@ -857,7 +858,7 @@ export default function DutiesPage() {
   useEffect(
     function () {
       const supabase = supabaseRef.current;
-      if (!accessToken || !supabase) return undefined;
+      if (!accessToken || !supabase || !isRealtimeEnabled()) return undefined;
       let debounce: ReturnType<typeof setTimeout> | null = null;
       let refreshInFlight = false;
       function scheduleRefresh() {

@@ -11,6 +11,7 @@ import { success } from "@/utils/apiResponse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 const loginSchema = z.object({
   identifier: z

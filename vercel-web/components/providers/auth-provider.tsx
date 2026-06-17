@@ -118,10 +118,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     async function bootstrap() {
       try {
+        const onLoginScreen =
+          typeof window !== "undefined" &&
+          (window.location.pathname === "/login" ||
+            window.location.pathname === "/reset-password");
+        if (onLoginScreen) {
+          if (!mounted) return;
+          setSession(null);
+          setProfile(null);
+          setLoading(false);
+          setSyncLabel("Signed out");
+          return;
+        }
+
         let activeSession: AuthSession = null;
-        const result = await supabase.auth.getSession();
-        activeSession = result.data.session || null;
-        if (!activeSession?.access_token && hasRefreshSessionHint()) {
+        if (hasRefreshSessionHint()) {
           activeSession = await refreshSessionFromCookie();
         }
         if (!mounted) return;
@@ -149,6 +160,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       event: string,
       nextSession: AuthSession
     ) {
+      const onLoginScreen =
+        typeof window !== "undefined" &&
+        (window.location.pathname === "/login" ||
+          window.location.pathname === "/reset-password");
+      if (onLoginScreen) {
+        setLoading(false);
+        return;
+      }
+
       if (event === "TOKEN_REFRESHED" && !nextSession?.access_token && hasRefreshSessionHint()) {
         const recovered = await refreshSessionFromCookie();
         if (recovered?.access_token) {

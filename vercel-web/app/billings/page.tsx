@@ -22,6 +22,7 @@ import {
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { crmTodayIso } from "@/src/utils/crmToday";
 import { ledgerBackdatedDateMax } from "@/lib/dateFieldBounds";
+import { isRealtimeEnabled } from "@/lib/realtimeConfig";
 import {
   openPrintWindow,
   preOpenPrintWindow,
@@ -264,7 +265,7 @@ export default function BillingsPage() {
   useEffect(
     function () {
       const supabase = supabaseRef.current;
-      if (!accessToken || !supabase) return undefined;
+      if (!accessToken || !supabase || !isRealtimeEnabled()) return undefined;
       const channel = supabase.channel("crm-billing-ledger");
       ["hh_billings", "hh_invoices", "hh_receipts", "hh_svc_entries"].forEach(function (table) {
         channel.on(

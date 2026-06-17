@@ -19,6 +19,7 @@ import { formatDate } from "@/lib/formatters";
 import { preOpenPrintWindow, PRINT_POPUP_BLOCKED_MESSAGE } from "@/lib/print";
 import { crmTodayIso } from "@/src/utils/crmToday";
 import { DUTY_LEDGER_READONLY_MESSAGE } from "@/lib/dutyLedgerUi";
+import { isRealtimeEnabled } from "@/lib/realtimeConfig";
 import Link from "next/link";
 import {
   ATTENDANCE_DELETE_ROLES,
@@ -168,7 +169,7 @@ export default function AttendancePage() {
   useEffect(
     function () {
       const supabase = supabaseRef.current;
-      if (!accessToken || !supabase) return undefined;
+      if (!accessToken || !supabase || !isRealtimeEnabled()) return undefined;
       let debounce: ReturnType<typeof setTimeout> | null = null;
       function scheduleRefresh() {
         if (debounce) clearTimeout(debounce);
