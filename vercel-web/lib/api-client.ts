@@ -94,11 +94,45 @@ function saveQueue(queue: OfflineQueueEntry[]): void {
   window.localStorage.setItem(offlineQueueKey, JSON.stringify(queue));
 }
 
+function envelopeFailureMessage(
+  error: unknown,
+  code: unknown,
+  status?: number
+): string {
+  const msg = String(error || "").trim();
+  const codeStr = String(code || "").trim();
+  if (msg && msg !== "Request failed") return msg;
+  if (codeStr === "internal_error") {
+    return "Server error — try again. If this persists, contact support.";
+  }
+  if (codeStr === "validation_error" || codeStr === "validation") {
+    return "Validation failed — check the form and try again.";
+  }
+  if (codeStr === "idempotent_pending") {
+    return "Save still processing — wait a moment and retry.";
+  }
+  if (codeStr === CONTRACT_ERROR_CODE) {
+    return "Data format mismatch — refresh the page and try again.";
+  }
+  if (codeStr === RETRYABLE_ERROR_CODE) {
+    return humanizeGatewayBody(status || 0, "");
+  }
+  if (status === 401 || status === 403 || codeStr === "unauthorized") {
+    return "Session expired — sign in again.";
+  }
+  if (status && status >= 500) {
+    return "Server error (HTTP " + status + ") — try again.";
+  }
+  return msg || "Request failed";
+}
+
 function unwrapResponse(json: Record<string, unknown>, response: Response): unknown {
   if (typeof json.success === "boolean") {
     if (!json.success) {
       const err: ApiClientError = new Error(
-        humanizeClientError(String(json.error || "Request failed"))
+        humanizeClientError(
+          envelopeFailureMessage(json.error, json.code, response.status)
+        )
       );
       if (json.code) err.code = String(json.code);
       if (json.details !== undefined) err.details = json.details;
@@ -109,7 +143,9 @@ function unwrapResponse(json: Record<string, unknown>, response: Response): unkn
   }
   if (!response.ok) {
     const hardErr: ApiClientError = new Error(
-      humanizeClientError(String(json.message || json.error || "Request failed"))
+      humanizeClientError(
+        envelopeFailureMessage(json.message || json.error, json.code, response.status)
+      )
     );
     hardErr.status = response.status;
     throw hardErr;
@@ -331,6 +367,7 @@ export function humanizeClientError(error: unknown): string {
         ? error
         : String(error || "");
   const status = err?.status;
+  const code = String(err?.code || "");
   if (/<!doctype\s+html|<html[\s>]/i.test(raw) || /cloudflare/i.test(raw)) {
     return humanizeGatewayBody(status || 0, raw);
   }
@@ -340,7 +377,17 @@ export function humanizeClientError(error: unknown): string {
   if (status === 522 || status === 524 || status === 504) {
     return "Server timed out — the request took too long. Try again or narrow your filters.";
   }
-  return raw.trim() || "Request failed";
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === "Request failed") {
+    return envelopeFailureMessage(trimmed, code, status);
+  }
+  if (trimmed === "Response validation failed") {
+    return "Server returned unexpected data — refresh the page. Support has been notified.";
+  }
+  if (code === CONTRACT_ERROR_CODE && !trimmed.includes("contract validation")) {
+    return "Data format mismatch — refresh the page and try again.";
+  }
+  return trimmed;
 }
 
 export async function flushOfflineQueue(session: ApiSession): Promise<void> {
@@ -398,7 +445,9 @@ export async function request<T = any>(
 
 function contractError(path: string, validated: { error?: string; code?: string; details?: unknown }): ApiClientError {
   const err: ApiClientError = new Error(
-    "API " + path + " returned data that failed contract validation"
+    validated.error && validated.error !== "Response validation failed"
+      ? "API " + path + ": " + validated.error
+      : "API " + path + " returned data that failed contract validation"
   );
   err.code = CONTRACT_ERROR_CODE;
   if (validated.details !== undefined) err.details = validated.details;

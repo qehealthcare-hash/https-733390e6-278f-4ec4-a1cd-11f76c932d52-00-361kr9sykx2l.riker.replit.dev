@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { billingListRowDtoSchema, billingTotalsDtoSchema } from "@/validation/billingDto";
+import { diaryListEntryDtoSchema, diaryListResultDtoSchema } from "@/validation/dutyDto";
 import { billingListResponseFixture } from "@/test/billingListFixture";
 import { parseOutputSanitized } from "@/validation/parseValidation";
 import { parseRowsTolerant } from "@/validation/tolerantListValidation";
@@ -88,6 +89,53 @@ describe("tolerantListValidation", () => {
     if (parsed.success) {
       expect(Object.keys(parsed.data.totalsByBilling)).toEqual(["B1"]);
       expect(parsed.data.totalsByBilling.B1?.receipts).toBe(-50);
+    }
+  });
+
+  it("coerces string diary amounts and drops only invalid entries in a batch", () => {
+    const parsed = parseOutputSanitized(
+      z.record(z.string(), diaryListResultDtoSchema),
+      {
+        DUTY1: {
+          duty_id: "DUTY1",
+          entries: [
+            {
+              date: "2026-06-16",
+              employee_id: "EMP1",
+              partner: "EMP1",
+              charge: "500",
+              payout: "300",
+              manual: false,
+              svc_id: "S1",
+              payout_id: "P1"
+            },
+            {
+              date: "bad",
+              employee_id: "",
+              partner: "",
+              charge: "nope",
+              payout: "nope",
+              manual: "maybe",
+              svc_id: null,
+              payout_id: null
+            }
+          ]
+        }
+      },
+      {
+        kind: "diary_batch",
+        diaryBatch: {
+          scope: "POST /duties/diary/batch",
+          dutyResultSchema: diaryListResultDtoSchema,
+          entrySchema: diaryListEntryDtoSchema
+        }
+      }
+    );
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.DUTY1?.entries).toHaveLength(1);
+      expect(parsed.data.DUTY1?.entries[0]?.charge).toBe(500);
+      expect(parsed.data.DUTY1?.entries[0]?.payout).toBe(300);
     }
   });
 });

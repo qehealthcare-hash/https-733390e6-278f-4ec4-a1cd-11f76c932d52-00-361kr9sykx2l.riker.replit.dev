@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { idSchema } from "@/validation/commonValidation";
-import { DUTY_STATUSES } from "@/validation/dutyValidation";
+import { idSchema, signedMoneySchema } from "@/validation/commonValidation";
 
 /**
  * Read-model contract for GET /duties/:id.
@@ -25,12 +24,18 @@ export const dutyPermissionsDtoSchema = z.object({
 });
 export type DutyPermissionsDto = z.infer<typeof dutyPermissionsDtoSchema>;
 
+/** Read-model status — tolerate legacy / mixed-case values from the DB. */
+const dutyReadStatusSchema = z.preprocess(
+  (v) => String(v || "SCHEDULED").trim().toUpperCase(),
+  z.string().min(1)
+);
+
 export const dutyRowDtoSchema = z
   .object({
     id: idSchema,
     employee_id: idSchema,
     patient_id: idSchema,
-    status: z.enum(DUTY_STATUSES),
+    status: dutyReadStatusSchema,
     start_at: z.string(),
     end_at: z.string().nullable().optional()
   })
@@ -48,18 +53,23 @@ export function parseDutyDetailDto(data: unknown) {
 
 export const dutyListResponseDtoSchema = z.object({
   rows: z.array(dutyRowDtoSchema),
-  total: z.number().int().nonnegative()
+  total: z.coerce.number().int().nonnegative()
 });
 export type DutyListResponseDto = z.infer<typeof dutyListResponseDtoSchema>;
+
+const diaryBoolSchema = z.preprocess(
+  (v) => (v === true || v === "true" || v === 1 || v === "1" ? true : false),
+  z.boolean()
+);
 
 export const diaryListEntryDtoSchema = z
   .object({
     date: z.string(),
     employee_id: z.string(),
     partner: z.string(),
-    charge: z.number(),
-    payout: z.number(),
-    manual: z.boolean(),
+    charge: signedMoneySchema,
+    payout: signedMoneySchema,
+    manual: diaryBoolSchema,
     svc_id: z.string().nullable(),
     payout_id: z.string().nullable(),
     svc_updated_at: z.string().optional(),

@@ -7,9 +7,11 @@ import type {
 } from "@/validation/tolerantListValidation";
 import {
   sanitizeBillingPatientHistory,
+  sanitizeDiaryBatchEnvelope,
   sanitizeListEnvelope,
   sanitizeMultiArrayPayload,
-  sanitizeTotalsByBilling
+  sanitizeTotalsByBilling,
+  type DiaryBatchSanitizeOptions
 } from "@/validation/tolerantListValidation";
 
 /**
@@ -76,7 +78,8 @@ export type OutputSanitizeOptions =
       receipts: ZodType;
       invoices: ZodType;
       totals: ZodType;
-    };
+    }
+  | { kind: "diary_batch"; diaryBatch: DiaryBatchSanitizeOptions };
 
 /**
  * Optionally sanitize list payloads row-by-row, then run strict envelope validation.
@@ -113,6 +116,10 @@ export function parseOutputSanitized<T>(
     const totalsDropped = sanitizeTotalsByBilling(result.data, sanitize.totals, sanitize.scope);
     payload = result.data;
     dropped = result.dropped.length + totalsDropped.length;
+  } else if (sanitize.kind === "diary_batch") {
+    const result = sanitizeDiaryBatchEnvelope(output, sanitize.diaryBatch);
+    payload = result.data;
+    dropped = result.dropped.length;
   }
 
   if (dropped > 0) {
@@ -122,7 +129,9 @@ export function parseOutputSanitized<T>(
           ? sanitize.list.scope
           : sanitize.kind === "multi"
             ? sanitize.multi.scope
-            : sanitize.scope,
+            : sanitize.kind === "diary_batch"
+              ? sanitize.diaryBatch.scope
+              : sanitize.scope,
       dropped
     });
   }

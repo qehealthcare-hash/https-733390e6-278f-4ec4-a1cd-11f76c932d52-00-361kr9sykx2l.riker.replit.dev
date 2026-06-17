@@ -5,6 +5,7 @@ import {
   diaryBatchResponseDtoSchema,
   diaryDayDeleteResponseDtoSchema,
   diaryDayPatchResponseDtoSchema,
+  diaryListEntryDtoSchema,
   diaryListResultDtoSchema,
   dutyDetailDtoSchema,
   dutyHardDeleteResponseDtoSchema,
@@ -49,7 +50,15 @@ export const dutiesClient = {
       DUTIES_BASE + "/diary/batch",
       { method: "POST", body: { duty_ids: dutyIds } },
       session,
-      diaryBatchResponseDtoSchema
+      diaryBatchResponseDtoSchema,
+      {
+        kind: "diary_batch",
+        diaryBatch: {
+          scope: "POST /duties/diary/batch",
+          dutyResultSchema: diaryListResultDtoSchema,
+          entrySchema: diaryListEntryDtoSchema
+        }
+      }
     );
   },
 

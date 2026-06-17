@@ -143,6 +143,66 @@ export function sanitizeTotalsByBilling(
   return dropped;
 }
 
+export type DiaryBatchSanitizeOptions = {
+  scope: string;
+  dutyResultSchema: ZodType;
+  entrySchema: ZodType;
+};
+
+/**
+ * Sanitize POST /duties/diary/batch payloads: drop invalid diary entries per
+ * duty instead of rejecting the whole calendar batch.
+ */
+export function sanitizeDiaryBatchEnvelope(
+  data: unknown,
+  options: DiaryBatchSanitizeOptions
+): { data: Record<string, unknown>; dropped: DroppedRow[] } {
+  const raw =
+    data && typeof data === "object" ? ({ ...(data as Record<string, unknown>) } as Record<string, unknown>) : {};
+  const allDropped: DroppedRow[] = [];
+  const next: Record<string, unknown> = {};
+
+  for (const [dutyId, value] of Object.entries(raw)) {
+    if (!value || typeof value !== "object") {
+      allDropped.push({
+        index: -1,
+        id: dutyId,
+        scope: `${options.scope}.${dutyId}`,
+        issues: "invalid diary result"
+      });
+      next[dutyId] = { duty_id: dutyId, entries: [], error: "Invalid diary payload" };
+      continue;
+    }
+    const dutyRaw = { ...(value as Record<string, unknown>) };
+    const { rows, dropped } = parseRowsTolerant(
+      options.entrySchema,
+      dutyRaw.entries,
+      `${options.scope}.${dutyId}.entries`,
+      "date"
+    );
+    allDropped.push(...dropped);
+    dutyRaw.entries = rows;
+    if (dutyRaw.duty_id == null || String(dutyRaw.duty_id).trim() === "") {
+      dutyRaw.duty_id = dutyId;
+    }
+    const parsedDuty = options.dutyResultSchema.safeParse(dutyRaw);
+    if (parsedDuty.success) {
+      next[dutyId] = parsedDuty.data;
+    } else {
+      allDropped.push({
+        index: -1,
+        id: dutyId,
+        scope: `${options.scope}.${dutyId}`,
+        issues:
+          parsedDuty.error.issues.map((issue) => issue.message).join("; ") || "invalid diary result"
+      });
+      next[dutyId] = { duty_id: dutyId, entries: rows, error: "Diary result failed contract validation" };
+    }
+  }
+
+  return { data: next, dropped: allDropped };
+}
+
 export const reportRowsEnvelopeMetaSchema = z.object({
   rows_total: z.number().int().nonnegative(),
   limit: z.number().int().nonnegative(),

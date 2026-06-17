@@ -9,6 +9,7 @@ import { dutyDetailDtoSchema, dutyListResponseDtoSchema, dutyRowDtoSchema } from
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 export const GET = withAuth(async (req: NextRequest, { actor }) => {
   requireRole(actor, DUTY_READ_ROLES);

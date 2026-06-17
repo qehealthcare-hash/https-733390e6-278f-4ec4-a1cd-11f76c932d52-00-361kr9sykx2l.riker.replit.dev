@@ -619,7 +619,7 @@ export default function DutiesPage() {
           return next;
         });
       } catch (err: unknown) {
-        setError(err);
+        console.warn("[duties] diary load failed for", dutyId, err);
       }
     },
     [accessToken, setError]
@@ -1183,7 +1183,20 @@ export default function DutiesPage() {
 
   async function submitPayload(payload: Record<string, unknown>) {
     await dutiesClient.save(sessionOrNull(auth), form.id || undefined, payload);
-    await reload();
+    try {
+      await reload();
+    } catch (refreshErr: unknown) {
+      console.warn("[duties] calendar refresh after save failed", refreshErr);
+      setMessage(
+        form.id
+          ? "Duty saved — calendar refresh failed; click Refresh"
+          : "Duty created — calendar refresh failed; click Refresh"
+      );
+      await loadOutstanding(form.patient_id);
+      await refreshFormTotals();
+      resetForm();
+      return;
+    }
     await loadOutstanding(form.patient_id);
     await refreshFormTotals();
     resetForm();
@@ -1208,14 +1221,15 @@ export default function DutiesPage() {
         code?: string;
         details?: { field?: string };
       };
-      const msg = String(err.message || "").toLowerCase();
+      const displayMessage = humanizeClientError(err);
+      const msg = displayMessage.toLowerCase();
       const code = err.code || "";
       const details = err.details || {};
       const field = String(details.field || "");
       if (field === "patient_window" || msg.indexOf("patient already has another duty") >= 0) {
         setOverlapDialog({
           kind: "patient",
-          message: err.message || "Patient already has another duty overlapping this time"
+          message: displayMessage || "Patient already has another duty overlapping this time"
         });
       } else if (
         field === "employee_window" ||
@@ -1225,13 +1239,13 @@ export default function DutiesPage() {
       ) {
         setOverlapDialog({
           kind: "staff",
-          message: err.message || "Staff has another overlapping duty"
+          message: displayMessage || "Staff has another overlapping duty"
         });
       } else if (code === "conflict" || msg.indexOf("stale") >= 0 || msg.indexOf("modified by another") >= 0) {
-        setConflictBanner(err.message || "Record changed elsewhere — reload and retry");
-        setError(err.message || "Unable to save duty");
+        setConflictBanner(displayMessage || "Record changed elsewhere — reload and retry");
+        setError(displayMessage || "Unable to save duty");
       } else {
-        setError(err.message || "Unable to save duty");
+        setError(displayMessage || "Unable to save duty");
       }
     } finally {
       end();
