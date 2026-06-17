@@ -622,7 +622,7 @@ export default function DutiesPage() {
         console.warn("[duties] diary load failed for", dutyId, err);
       }
     },
-    [accessToken, setError]
+    [accessToken]
   );
 
   const loadDiariesForVisible = useCallback(
