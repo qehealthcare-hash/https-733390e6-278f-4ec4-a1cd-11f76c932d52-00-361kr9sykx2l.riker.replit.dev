@@ -271,3 +271,8 @@ export type GenerateFromDutyRangeResultDto = z.infer<typeof generateFromDutyRang
 export function parseBillingSummaryDto(data: unknown) {
   return billingSummaryDtoSchema.safeParse(data);
 }
+
+/** Parse and validate a paginated billing list envelope (contract test hook). */
+export function parseBillingListResponseDto(data: unknown) {
+  return billingListResponseDtoSchema.safeParse(data);
+}
