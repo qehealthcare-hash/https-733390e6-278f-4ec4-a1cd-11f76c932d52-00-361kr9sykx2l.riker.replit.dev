@@ -18,6 +18,5 @@ export const modules: NavModule[] = [
   { href: "/reports", label: "Reports", permission: "reports.read" },
   { href: "/settings", label: "Settings", permission: "settings.read" },
   { href: "/users", label: "Users & roles", permission: "users.read" },
-  { href: "/audits", label: "Audit log", permission: "audits.read" },
-  { href: "/legacy", label: "Classic CRM", permission: null }
+  { href: "/audits", label: "Audit log", permission: "audits.read" }
 ];

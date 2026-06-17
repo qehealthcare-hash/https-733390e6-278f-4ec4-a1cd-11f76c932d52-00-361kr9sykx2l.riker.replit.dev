@@ -74,4 +74,16 @@ describe("api-client wire contract validation", () => {
       status: 403
     });
   });
+
+  it("never surfaces HTML error pages to the caller", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 522,
+      headers: { get: () => "text/html" },
+      text: async () => "<!DOCTYPE html><html><body>522 Connection timed out</body></html>"
+    } as unknown as Response);
+    await expect(requestValidated("/billings", null, { access_token: "tok" }, schema)).rejects.toMatchObject({
+      message: /timed out/i
+    });
+  });
 });

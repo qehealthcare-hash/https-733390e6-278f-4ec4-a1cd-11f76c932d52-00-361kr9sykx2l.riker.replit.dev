@@ -10,13 +10,17 @@
 import type { ZodType } from "zod";
 import { appConfig } from "./config";
 import { dispatchDataInvalidated } from "./data-invalidation";
-import { parseOutput } from "@/validation/parseValidation";
+import { parseOutput, parseOutputSanitized, type OutputSanitizeOptions } from "@/validation/parseValidation";
 import { refreshSessionDtoSchema } from "@/validation/authDto";
 
 const offlineQueueKey = "hhcrm-offline-queue";
 const OFFLINE_RETRY_CAP = 5;
 export const OFFLINE_QUEUED_CODE = "offline_queued";
 export const CONTRACT_ERROR_CODE = "contract_error";
+export const RETRYABLE_ERROR_CODE = "retryable";
+
+const MAX_TRANSIENT_RETRIES = 3;
+const RETRYABLE_HTTP = new Set([502, 503, 504, 522, 524]);
 
 export type ApiSession = { access_token?: string } | null | undefined;
 
@@ -33,6 +37,7 @@ type ApiClientError = Error & {
   code?: string;
   status?: number;
   details?: unknown;
+  retryable?: boolean;
 };
 
 type OfflineQueueEntry = {
@@ -186,8 +191,85 @@ async function fetchApi(
   });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
+function retryBackoffMs(attempt: number): number {
+  const base = 400 * Math.pow(2, attempt);
+  const jitter = Math.floor(Math.random() * 200);
+  return Math.min(base + jitter, 4000);
+}
+
+function isRetryableStatus(status: number): boolean {
+  return RETRYABLE_HTTP.has(status);
+}
+
+function isJsonContentType(contentType: string | null): boolean {
+  const ct = String(contentType || "").toLowerCase();
+  return ct.includes("application/json") || ct.includes("+json");
+}
+
+function logUpstreamBody(path: string, status: number, raw: string): void {
+  const preview = raw.length > 240 ? raw.slice(0, 240) + "…" : raw;
+  console.warn("[api-client] non-JSON upstream response", { path, status, preview });
+}
+
+async function fetchApiWithRetry(
+  path: string,
+  options: ApiRequestOptions | null | undefined,
+  session: ApiSession
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_TRANSIENT_RETRIES; attempt += 1) {
+    try {
+      const response = await fetchApi(path, options, session);
+      if (isRetryableStatus(response.status) && attempt < MAX_TRANSIENT_RETRIES - 1) {
+        await sleep(retryBackoffMs(attempt));
+        continue;
+      }
+      return response;
+    } catch (networkError: unknown) {
+      lastError = networkError;
+      if (attempt < MAX_TRANSIENT_RETRIES - 1) {
+        await sleep(retryBackoffMs(attempt));
+        continue;
+      }
+      const nerr: ApiClientError = new Error(
+        "Network error — could not reach " +
+          appConfig.apiUrl +
+          path +
+          " (" +
+          (networkError instanceof Error ? networkError.message : "offline") +
+          ")"
+      );
+      nerr.code = "network_error";
+      nerr.retryable = true;
+      throw nerr;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Request failed");
+}
+
 async function parseApiResponse(path: string, response: Response): Promise<unknown> {
   const raw = await response.text();
+  const contentType =
+    response.headers && typeof response.headers.get === "function"
+      ? response.headers.get("content-type")
+      : null;
+  const looksHtml = /^\s*</.test(raw) || /<!doctype\s+html|<html[\s>]/i.test(raw);
+
+  if (looksHtml || (!isJsonContentType(contentType) && raw.trim() && !raw.trim().startsWith("{"))) {
+    logUpstreamBody(path, response.status, raw);
+    const perr: ApiClientError = new Error(humanizeGatewayBody(response.status, raw));
+    perr.code = isRetryableStatus(response.status) ? RETRYABLE_ERROR_CODE : "bad_response";
+    perr.status = response.status;
+    perr.retryable = isRetryableStatus(response.status);
+    throw perr;
+  }
+
   let json: Record<string, unknown>;
   if (raw === "" || raw == null) {
     json = {};
@@ -195,14 +277,23 @@ async function parseApiResponse(path: string, response: Response): Promise<unkno
     try {
       json = JSON.parse(raw) as Record<string, unknown>;
     } catch {
-      const perr: ApiClientError = new Error(
-        humanizeGatewayBody(response.status, raw)
-      );
-      perr.code = "bad_response";
+      logUpstreamBody(path, response.status, raw);
+      const perr: ApiClientError = new Error(humanizeGatewayBody(response.status, raw));
+      perr.code = isRetryableStatus(response.status) ? RETRYABLE_ERROR_CODE : "bad_response";
       perr.status = response.status;
+      perr.retryable = isRetryableStatus(response.status);
       throw perr;
     }
   }
+
+  if (!response.ok && isRetryableStatus(response.status)) {
+    const perr: ApiClientError = new Error(humanizeGatewayBody(response.status, raw));
+    perr.code = RETRYABLE_ERROR_CODE;
+    perr.status = response.status;
+    perr.retryable = true;
+    throw perr;
+  }
+
   return unwrapResponse(json, response);
 }
 
@@ -281,18 +372,9 @@ export async function request<T = any>(
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetchApi(path, options, session);
+    response = await fetchApiWithRetry(path, options, session);
   } catch (networkError: unknown) {
-    const nerr: ApiClientError = new Error(
-      "Network error — could not reach " +
-        appConfig.apiUrl +
-        path +
-        " (" +
-        (networkError instanceof Error ? networkError.message : "offline") +
-        ")"
-    );
-    nerr.code = "network_error";
-    throw nerr;
+    throw networkError;
   }
 
   try {
@@ -304,7 +386,7 @@ export async function request<T = any>(
       const refreshed = await refreshSessionFromCookie();
       if (refreshed) {
         if (session && typeof session === "object") session.access_token = refreshed;
-        const retried = await fetchApi(path, options, { access_token: refreshed });
+        const retried = await fetchApiWithRetry(path, options, { access_token: refreshed });
         const parsedRetry = (await parseApiResponse(path, retried)) as T;
         maybeDispatchMutationInvalidation(options?.method, path);
         return parsedRetry;
@@ -325,8 +407,15 @@ function contractError(path: string, validated: { error?: string; code?: string;
 }
 
 /** Parse an already-unwrapped payload with a Zod read-model schema. */
-export function validateApiPayload<T>(path: string, payload: unknown, schema: ZodType<T>): T {
-  const validated = parseOutput(schema, payload);
+export function validateApiPayload<T>(
+  path: string,
+  payload: unknown,
+  schema: ZodType<T>,
+  sanitize?: OutputSanitizeOptions
+): T {
+  const validated = sanitize
+    ? parseOutputSanitized(schema, payload, sanitize)
+    : parseOutput(schema, payload);
   if (!validated.success) throw contractError(path, validated);
   if (validated.data === undefined) {
     throw contractError(path, { error: "Response validation returned no data" });
@@ -338,10 +427,11 @@ export async function requestValidated<T>(
   path: string,
   options: ApiRequestOptions | null | undefined,
   session: ApiSession,
-  schema: ZodType<T>
+  schema: ZodType<T>,
+  sanitize?: OutputSanitizeOptions
 ): Promise<T> {
   const payload = await request<unknown>(path, options, session);
-  return validateApiPayload(path, payload, schema);
+  return validateApiPayload(path, payload, schema, sanitize);
 }
 
 export async function requestValidatedWithOfflineFallback<T>(

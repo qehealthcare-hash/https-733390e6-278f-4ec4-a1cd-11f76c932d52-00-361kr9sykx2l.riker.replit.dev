@@ -9,6 +9,7 @@ import {
   dutyDetailDtoSchema,
   dutyHardDeleteResponseDtoSchema,
   dutyListResponseDtoSchema,
+  dutyRowDtoSchema,
   dutyMaterializeResultDtoSchema,
   dutyTotalsResponseDtoSchema,
 } from "@/validation/dutyDto";
@@ -26,7 +27,10 @@ export const dutiesClient = {
     session: ApiSession,
     params?: Record<string, string | number | boolean | undefined | null>
   ) {
-    return requestValidated(withQuery(DUTIES_BASE, params), null, session, dutyListResponseDtoSchema);
+    return requestValidated(withQuery(DUTIES_BASE, params), null, session, dutyListResponseDtoSchema, {
+      kind: "list",
+      list: { rowSchema: dutyRowDtoSchema, scope: "GET /duties", idField: "id" }
+    });
   },
 
   save(session: ApiSession, id: string | undefined, body: Record<string, unknown>) {

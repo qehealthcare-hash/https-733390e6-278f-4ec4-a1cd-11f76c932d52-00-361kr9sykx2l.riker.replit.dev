@@ -13,16 +13,18 @@ import {
 
 type ToastTone = "success" | "error" | "info" | "warn";
 
-type ToastItem = {
-  id: number;
-  tone: ToastTone;
-  message: string;
-};
-
 type ToastShowOptions = {
   message?: string;
   tone?: ToastTone;
   duration?: number;
+  onRetry?: () => void;
+};
+
+type ToastItem = {
+  id: number;
+  tone: ToastTone;
+  message: string;
+  onRetry?: () => void;
 };
 
 type ToastContextValue = {
@@ -89,7 +91,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         : tone === "error"
           ? ERROR_DURATION_MS
           : DEFAULT_DURATION_MS;
-      setToasts((prev) => [...prev, { id, tone, message }]);
+      setToasts((prev) => [...prev, { id, tone, message, onRetry: opts?.onRetry }]);
       if (duration > 0 && typeof window !== "undefined") {
         const timer = setTimeout(() => dismiss(id), duration);
         timersRef.current.set(id, timer);
@@ -124,6 +126,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               }}
             >
               <span className="toast-message">{t.message}</span>
+              {t.onRetry ? (
+                <button
+                  type="button"
+                  className="toast-retry"
+                  onClick={function (event) {
+                    event.stopPropagation();
+                    dismiss(t.id);
+                    t.onRetry?.();
+                  }}
+                >
+                  Retry
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="toast-close"

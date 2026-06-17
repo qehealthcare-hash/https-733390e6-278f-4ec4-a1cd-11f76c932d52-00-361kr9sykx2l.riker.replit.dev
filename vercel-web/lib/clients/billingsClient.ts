@@ -2,17 +2,21 @@ import { requestValidated, requestValidatedWithOfflineFallback } from "@/lib/api
 import type { ApiSession } from "@/lib/clients/types";
 import { withQuery } from "@/lib/clients/http";
 import {
-  billingListOrPatientHistoryDtoSchema,
+  billingListResponseDtoSchema,
+  billingListRowDtoSchema,
   billingPatientHistoryDtoSchema,
   billingRowDtoSchema,
   billingSummaryDtoSchema,
+  billingTotalsDtoSchema,
   cancelInvoiceResultDtoSchema,
   dutyLedgerSyncSummaryDtoSchema,
   finalInvoiceResultDtoSchema,
   generateInvoiceResultDtoSchema,
   invoiceDetailDtoSchema,
+  invoiceSummaryDtoSchema,
   patientDutyLedgerDtoSchema,
   receiptOrNullDtoSchema,
+  receiptRowDtoSchema,
   regenerateInvoiceResultDtoSchema,
 } from "@/validation/billingDto";
 
@@ -34,7 +38,31 @@ export const billingsClient = {
     session: ApiSession,
     params?: Record<string, string | number | boolean | undefined | null>
   ) {
-    return requestValidated(withQuery(BILLINGS_BASE, params), null, session, billingListOrPatientHistoryDtoSchema);
+    const query = params || {};
+    const patientId = query.patient_id != null ? String(query.patient_id) : "";
+    const wantsHistoryBundle =
+      Boolean(patientId) &&
+      (String(query.bundle || "") === "1" ||
+        (query.limit == null &&
+          query.offset == null &&
+          query.q == null &&
+          query.status == null &&
+          query.period == null));
+    const path = withQuery(BILLINGS_BASE, params);
+    if (patientId && wantsHistoryBundle) {
+      return requestValidated(path, null, session, billingPatientHistoryDtoSchema, {
+        kind: "billing_history",
+        scope: "GET /billings?patient_id",
+        billings: billingRowDtoSchema,
+        receipts: receiptRowDtoSchema,
+        invoices: invoiceSummaryDtoSchema,
+        totals: billingTotalsDtoSchema
+      });
+    }
+    return requestValidated(path, null, session, billingListResponseDtoSchema, {
+      kind: "list",
+      list: { rowSchema: billingListRowDtoSchema, scope: "GET /billings", idField: "id" }
+    });
   },
 
   get(session: ApiSession, id: string) {

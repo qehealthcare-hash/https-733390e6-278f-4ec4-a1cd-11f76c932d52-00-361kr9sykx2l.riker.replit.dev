@@ -7,7 +7,11 @@ import { respondValidated } from "@/lib/api/apiResultBridge";
 import {
   billingListResponseDtoSchema,
   billingPatientHistoryDtoSchema,
-  billingRowDtoSchema
+  billingRowDtoSchema,
+  billingListRowDtoSchema,
+  billingTotalsDtoSchema,
+  invoiceSummaryDtoSchema,
+  receiptRowDtoSchema
 } from "@/validation/billingDto";
 
 export const runtime = "nodejs";
@@ -36,7 +40,14 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
         !url.searchParams.has("period")));
   if (patientId && wantsHistoryBundle) {
     const result = await billingService.listByPatient(patientId, { actor });
-    return respondValidated(result, billingPatientHistoryDtoSchema);
+    return respondValidated(result, billingPatientHistoryDtoSchema, 200, {
+      kind: "billing_history",
+      scope: "GET /billings?patient_id",
+      billings: billingRowDtoSchema,
+      receipts: receiptRowDtoSchema,
+      invoices: invoiceSummaryDtoSchema,
+      totals: billingTotalsDtoSchema
+    });
   }
   const query = {
     limit: url.searchParams.get("limit") ?? undefined,
@@ -47,7 +58,10 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     period: url.searchParams.get("period") ?? undefined
   };
   const result = await billingService.list(query, { actor });
-  return respondValidated(result, billingListResponseDtoSchema);
+  return respondValidated(result, billingListResponseDtoSchema, 200, {
+    kind: "list",
+    list: { rowSchema: billingListRowDtoSchema, scope: "GET /billings", idField: "id" }
+  });
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {

@@ -7,6 +7,18 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env } from "@/lib/api/env";
 
+const SUPABASE_FETCH_TIMEOUT_MS = Number(process.env.SUPABASE_FETCH_TIMEOUT_MS || 20_000);
+
+function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const timeoutMs = SUPABASE_FETCH_TIMEOUT_MS;
+  const signal =
+    init?.signal ??
+    (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+      ? AbortSignal.timeout(timeoutMs)
+      : undefined);
+  return fetch(input, { ...init, signal });
+}
+
 let serviceClient: SupabaseClient | null = null;
 
 /** Server-only client backed by the SERVICE_ROLE key (bypasses RLS). */
@@ -16,7 +28,8 @@ export function supabaseAdmin(): SupabaseClient {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured");
   }
   serviceClient = createClient(env.supabaseUrl, env.supabaseServiceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false }
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { fetch: fetchWithTimeout }
   });
   return serviceClient;
 }
@@ -24,7 +37,7 @@ export function supabaseAdmin(): SupabaseClient {
 /** Per-request client carrying the user's JWT (RLS applies). */
 export function supabaseAsUser(accessToken: string): SupabaseClient {
   return createClient(env.supabaseUrl, env.supabaseAnonKey, {
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    global: { headers: { Authorization: `Bearer ${accessToken}` }, fetch: fetchWithTimeout },
     auth: { autoRefreshToken: false, persistSession: false }
   });
 }
@@ -43,7 +56,7 @@ export function supabaseRpcAsService(accessToken?: string | null): SupabaseClien
     headers.Authorization = `Bearer ${accessToken}`;
   }
   return createClient(env.supabaseUrl, env.supabaseServiceRoleKey, {
-    global: { headers },
+    global: { headers, fetch: fetchWithTimeout },
     auth: { autoRefreshToken: false, persistSession: false }
   });
 }

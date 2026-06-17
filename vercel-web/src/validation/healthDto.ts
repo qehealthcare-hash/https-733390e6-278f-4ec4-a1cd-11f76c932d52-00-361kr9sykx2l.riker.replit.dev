@@ -7,7 +7,8 @@ export const healthSnapshotDtoSchema = z.object({
   deps: z.object({
     supabase: z.object({
       ok: z.boolean(),
-      error: z.string().nullable()
+      error: z.string().nullable(),
+      latency_ms: z.number().int().nonnegative().nullable()
     }),
     openai: z.boolean(),
     whatsapp: z.boolean()

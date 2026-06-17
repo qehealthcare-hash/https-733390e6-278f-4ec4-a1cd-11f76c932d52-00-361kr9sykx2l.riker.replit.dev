@@ -5,7 +5,7 @@ import { DUTY_READ_ROLES, DUTY_WRITE_ROLES } from "@/business/rbac";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { dutyService } from "@/services/dutyService";
 import { respondValidated } from "@/lib/api/apiResultBridge";
-import { dutyDetailDtoSchema, dutyListResponseDtoSchema } from "@/validation/dutyDto";
+import { dutyDetailDtoSchema, dutyListResponseDtoSchema, dutyRowDtoSchema } from "@/validation/dutyDto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +24,10 @@ export const GET = withAuth(async (req: NextRequest, { actor }) => {
     to: url.searchParams.get("to") ?? undefined
   };
   const result = await dutyService.list(query, { actor });
-  return respondValidated(result, dutyListResponseDtoSchema);
+  return respondValidated(result, dutyListResponseDtoSchema, 200, {
+    kind: "list",
+    list: { rowSchema: dutyRowDtoSchema, scope: "GET /duties", idField: "id" }
+  });
 });
 
 export const POST = withAuth(async (req: NextRequest, { actor }) => {

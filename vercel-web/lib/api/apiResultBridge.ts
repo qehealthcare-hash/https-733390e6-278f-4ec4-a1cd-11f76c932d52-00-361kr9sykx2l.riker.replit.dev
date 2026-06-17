@@ -14,7 +14,7 @@ import type { ApiResult } from "@/types/common";
 import { ErrorCodes } from "@/types/common";
 import { ApiError } from "@/lib/api/errors";
 import { toNextResponse } from "@/utils/apiResponse";
-import { parseOutput } from "@/validation/parseValidation";
+import { parseOutput, parseOutputSanitized, type OutputSanitizeOptions } from "@/validation/parseValidation";
 
 function statusFor(code: string | undefined): number {
   switch (code) {
@@ -60,10 +60,13 @@ export function respond<T>(result: ApiResult<T>, successStatus = 200): NextRespo
 export function respondValidated<T>(
   result: ApiResult<unknown>,
   schema: ZodType<T>,
-  successStatus = 200
+  successStatus = 200,
+  sanitize?: OutputSanitizeOptions
 ): NextResponse {
   if (!result.success) return respond(result);
-  const validated = parseOutput(schema, result.data);
+  const validated = sanitize
+    ? parseOutputSanitized(schema, result.data, sanitize)
+    : parseOutput(schema, result.data);
   if (!validated.success) {
     console.error("[api] response validation failed", validated.details);
     return respond(validated);

@@ -850,6 +850,23 @@ th {
   outline: none;
 }
 
+.toast-retry {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.toast-retry:hover,
+.toast-retry:focus {
+  opacity: 0.85;
+  outline: none;
+}
+
 @keyframes toast-in {
   from { transform: translateY(-8px); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }

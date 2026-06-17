@@ -62,4 +62,22 @@ describe("BillingListResponseDTO contract", () => {
       expect(parsed.data.rows[0]?.totals?.receipts).toBe(-5000);
     }
   });
+
+  it("GET /api/v1/billings returns valid rows when one row fails validation", async () => {
+    setActor(ACTORS.accountant);
+    const good = billingListResponseFixture().rows[0];
+    m.list.mockResolvedValue({
+      success: true,
+      data: {
+        rows: [good, { id: "!!!bad!!!", patient_id: "P1", status: "Active" }],
+        total: 2
+      }
+    });
+
+    const res = await BillingsGet(makeRequest("GET", "/api/v1/billings?limit=50"), ctx({}));
+    const data = await expectOkEnvelope<{ rows: unknown[]; total: number }>(res);
+    expect(Array.isArray(data.rows)).toBe(true);
+    expect(data.rows).toHaveLength(1);
+    expect(data.total).toBe(2);
+  });
 });

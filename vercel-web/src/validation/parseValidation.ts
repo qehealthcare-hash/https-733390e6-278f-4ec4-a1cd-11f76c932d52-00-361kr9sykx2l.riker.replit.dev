@@ -1,6 +1,16 @@
 import type { ZodType } from "zod";
 import type { ApiResult } from "@/types/common";
 import { validationFailure } from "@/utils/apiResponse";
+import type {
+  ListValidationOptions,
+  MultiArrayValidationOptions
+} from "@/validation/tolerantListValidation";
+import {
+  sanitizeBillingPatientHistory,
+  sanitizeListEnvelope,
+  sanitizeMultiArrayPayload,
+  sanitizeTotalsByBilling
+} from "@/validation/tolerantListValidation";
 
 /**
  * Produce a one-line human-readable summary of a Zod flatten() error, e.g.
@@ -54,4 +64,68 @@ export function parseOutput<T>(schema: ZodType<T>, output: unknown): ApiResult<T
     };
   }
   return { success: true, data: result.data };
+}
+
+export type OutputSanitizeOptions =
+  | { kind: "list"; list: ListValidationOptions }
+  | { kind: "multi"; multi: MultiArrayValidationOptions }
+  | {
+      kind: "billing_history";
+      scope: string;
+      billings: ZodType;
+      receipts: ZodType;
+      invoices: ZodType;
+      totals: ZodType;
+    };
+
+/**
+ * Optionally sanitize list payloads row-by-row, then run strict envelope validation.
+ * Invalid rows are dropped with a server-side warning — the operator still sees valid data.
+ */
+export function parseOutputSanitized<T>(
+  schema: ZodType<T>,
+  output: unknown,
+  sanitize?: OutputSanitizeOptions
+): ApiResult<T> {
+  if (!sanitize) return parseOutput(schema, output);
+
+  let payload = output;
+  let dropped = 0;
+
+  if (sanitize.kind === "list") {
+    const result = sanitizeListEnvelope(output, sanitize.list);
+    payload = result.data;
+    dropped = result.dropped.length;
+  } else if (sanitize.kind === "multi") {
+    const result = sanitizeMultiArrayPayload(output, sanitize.multi);
+    payload = result.data;
+    dropped = result.dropped.length;
+  } else if (sanitize.kind === "billing_history") {
+    const result = sanitizeBillingPatientHistory(
+      output,
+      {
+        billings: sanitize.billings,
+        receipts: sanitize.receipts,
+        invoices: sanitize.invoices
+      },
+      sanitize.scope
+    );
+    const totalsDropped = sanitizeTotalsByBilling(result.data, sanitize.totals, sanitize.scope);
+    payload = result.data;
+    dropped = result.dropped.length + totalsDropped.length;
+  }
+
+  if (dropped > 0) {
+    console.warn("[api] response contained invalid rows that were dropped", {
+      scope:
+        sanitize.kind === "list"
+          ? sanitize.list.scope
+          : sanitize.kind === "multi"
+            ? sanitize.multi.scope
+            : sanitize.scope,
+      dropped
+    });
+  }
+
+  return parseOutput(schema, payload);
 }

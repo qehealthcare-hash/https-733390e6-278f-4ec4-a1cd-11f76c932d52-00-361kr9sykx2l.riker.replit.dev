@@ -240,7 +240,8 @@ export const patientDutyLedgerDtoSchema = z.object({
   period: monthPeriodSchema,
   duty_count: z.number().int().nonnegative(),
   billed: moneySchema,
-  received: moneySchema,
+  // Net receipts for the period; negative when reversals exceed receipts.
+  received: signedMoneySchema,
   outstanding: moneySchema
 });
 export type PatientDutyLedgerDto = z.infer<typeof patientDutyLedgerDtoSchema>;

@@ -12,6 +12,7 @@ import { adminClient } from "@/database/supabaseClient";
 export interface SupabaseProbeResult {
   ok: boolean;
   error?: string;
+  latency_ms?: number;
 }
 
 const PROBE_TIMEOUT_MS = 8_000;
@@ -35,8 +36,10 @@ export const healthRepository = {
     }
 
     try {
+      const started = Date.now();
       const probe = adminClient().rpc("hominal_health_ping");
       const { data, error } = await Promise.race([probe, probeTimeout()]);
+      const latency_ms = Date.now() - started;
       const ok =
         !error &&
         data != null &&
@@ -44,7 +47,7 @@ export const healthRepository = {
         (data as { ok?: boolean }).ok === true;
       return {
         success: true,
-        data: { ok, error: error?.message }
+        data: { ok, error: error?.message, latency_ms }
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

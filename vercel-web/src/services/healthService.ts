@@ -14,7 +14,7 @@ export interface HealthSnapshot {
   version: number;
   time: string;
   deps: {
-    supabase: { ok: boolean; error: string | null };
+    supabase: { ok: boolean; error: string | null; latency_ms: number | null };
     openai: boolean;
     whatsapp: boolean;
   };
@@ -30,10 +30,17 @@ export const healthService = {
       probe.success && probe.data
         ? {
             ok: probe.data.ok,
-            error: isProduction() ? (probe.data.ok ? null : "unavailable") : probe.data.error ?? null
+            latency_ms:
+              typeof probe.data.latency_ms === "number" ? probe.data.latency_ms : null,
+            error: isProduction()
+              ? probe.data.ok
+                ? null
+                : "unavailable"
+              : probe.data.error ?? null
           }
         : {
             ok: false,
+            latency_ms: null,
             error: isProduction() ? "unavailable" : probe.success ? null : probe.error || null
           };
     return {
