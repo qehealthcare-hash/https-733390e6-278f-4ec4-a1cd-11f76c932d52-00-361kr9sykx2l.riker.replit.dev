@@ -36,6 +36,9 @@ export function conflict(message: string, details?: unknown) {
 export function serverError(message = "Internal server error", details?: unknown) {
   return new ApiError(500, message, "internal_error", details);
 }
+export function serviceUnavailable(message: string, details?: unknown) {
+  return new ApiError(503, message, "upstream_error", details);
+}
 
 /**
  * Canonical API error envelope (Phase 6).

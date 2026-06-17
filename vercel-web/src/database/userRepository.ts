@@ -89,6 +89,61 @@ export const userRepository = {
     );
   },
 
+  /**
+   * Translate a CRM username or email into the Supabase Auth email used at login.
+   * Tries the service-role RPC first, then falls back to a direct hh_users read.
+   */
+  async resolveLoginEmail(loginInput: string): Promise<ApiResult<string | null>> {
+    const needle = String(loginInput || "").trim();
+    if (!needle) return { success: true, data: null };
+    if (needle.includes("@")) {
+      return { success: true, data: needle.toLowerCase() };
+    }
+    const admin = adminClient();
+    const rpc = await runQuery<string | null>(
+      () => admin.rpc("_hh_resolve_login_email", { login_input: needle }),
+      "user.resolveLoginEmail.rpc"
+    );
+    if (rpc.success && typeof rpc.data === "string" && rpc.data.trim()) {
+      return { success: true, data: rpc.data.trim().toLowerCase() };
+    }
+    const byUsername = await runQuery<JsonRow | null>(
+      () =>
+        admin
+          .from(USERS)
+          .select("email")
+          .eq("is_active", true)
+          .ilike("username", needle)
+          .limit(1)
+          .maybeSingle(),
+      "user.resolveLoginEmail.byUsername"
+    );
+    if (byUsername.success && byUsername.data?.email) {
+      return {
+        success: true,
+        data: String(byUsername.data.email).trim().toLowerCase() || null
+      };
+    }
+    const byEmail = await runQuery<JsonRow | null>(
+      () =>
+        admin
+          .from(USERS)
+          .select("email")
+          .eq("is_active", true)
+          .ilike("email", needle)
+          .limit(1)
+          .maybeSingle(),
+      "user.resolveLoginEmail.byEmail"
+    );
+    if (byEmail.success && byEmail.data?.email) {
+      return {
+        success: true,
+        data: String(byEmail.data.email).trim().toLowerCase() || null
+      };
+    }
+    return { success: true, data: null };
+  },
+
   async listForSequence(opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
     const db = resolveClient(opts);
     return runListQuery(

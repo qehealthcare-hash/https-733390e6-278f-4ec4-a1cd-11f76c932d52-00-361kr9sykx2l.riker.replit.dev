@@ -23,6 +23,26 @@ vi.mock("@/lib/api/supabase", async () => {
   return harness.buildSupabaseMock();
 });
 
+vi.mock("@/database/userRepository", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/database/userRepository")>();
+  return {
+    ...actual,
+    userRepository: {
+      ...actual.userRepository,
+      resolveLoginEmail: vi.fn(async (identifier: string) => {
+        const id = String(identifier || "").trim().toLowerCase();
+        if (id === "admin" || id === "admin@hominal.test") {
+          return { success: true, data: "admin@hominal.test" };
+        }
+        if (id.includes("@")) {
+          return { success: true, data: id };
+        }
+        return { success: true, data: null };
+      })
+    }
+  };
+});
+
 import {
   ACTORS,
   ctx,
@@ -94,6 +114,34 @@ describe("Auth module smoke — login proxy", () => {
     const setCookie = res.headers.get("set-cookie") || "";
     expect(setCookie).toContain(REFRESH_COOKIE_NAME);
     expect(setCookie).toContain(SESSION_HINT_COOKIE_NAME + "=1");
+  });
+
+  it("returns 503 upstream_error when Supabase Auth times out", async () => {
+    global.fetch = vi.fn(async (url: string | URL) => {
+      const href = String(url);
+      if (href.includes("_hh_resolve_login_email")) {
+        return new Response(JSON.stringify("admin@hominal.test"), { status: 200 });
+      }
+      if (href.includes("/auth/v1/token")) {
+        return new Response(
+          JSON.stringify({ error_code: "request_timeout", msg: "context deadline exceeded" }),
+          { status: 504 }
+        );
+      }
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+
+    const req = new NextRequest("http://test.local/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier: "admin@hominal.test", password: "secret" })
+    });
+    const res = await LoginPost(req);
+    const body = await res.json();
+    expect(res.status).toBe(502);
+    expect(body.success).toBe(false);
+    expect(body.code).toBe("upstream_error");
+    expect(String(body.error)).toMatch(/temporarily unavailable/i);
   });
 });
 

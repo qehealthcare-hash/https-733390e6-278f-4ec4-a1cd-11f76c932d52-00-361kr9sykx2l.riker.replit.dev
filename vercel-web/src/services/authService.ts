@@ -26,7 +26,14 @@
 import type { ApiResult } from "@/types/common";
 import { ErrorCodes } from "@/types/common";
 import { auditRepository } from "@/database/auditRepository";
+import { userRepository } from "@/database/userRepository";
 import { env } from "@/lib/api/env";
+import {
+  fetchWithLoginTimeout,
+  isUpstreamAuthBody,
+  isUpstreamHttpStatus,
+  loginUpstreamMessage
+} from "@/lib/auth/loginUpstream";
 import { failure, success } from "@/utils/apiResponse";
 
 export type LogoutScope = "global" | "local" | "others";
@@ -49,7 +56,81 @@ export interface LogoutResult {
   revoke_error?: string | null;
 }
 
+export interface LoginSessionResult {
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
+  expires_at: number;
+  user: { id: string; email: string };
+}
+
 const DEFAULT_SCOPE: LogoutScope = "global";
+
+function isLookupUpstreamFailure(message: string): boolean {
+  const lower = String(message || "").toLowerCase();
+  return /timeout|timed out|deadline|unavailable|fetch failed|network|econnreset/.test(lower);
+}
+
+async function signInWithPassword(
+  email: string,
+  password: string
+): Promise<
+  | { ok: true; body: LoginSessionResult & { refresh_token: string } }
+  | { ok: false; upstream: boolean; message: string }
+> {
+  const tokenUrl = env.supabaseUrl.replace(/\/$/, "") + "/auth/v1/token?grant_type=password";
+  const payload = JSON.stringify({ email, password });
+  const headers = {
+    apikey: env.supabaseAnonKey,
+    "Content-Type": "application/json"
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const tokenRes = await fetchWithLoginTimeout(tokenUrl, {
+      method: "POST",
+      headers,
+      body: payload
+    });
+    const tokenBody = (await tokenRes.json().catch(() => ({}))) as LoginSessionResult & {
+      refresh_token?: string;
+      error_description?: string;
+      msg?: string;
+      error_code?: string;
+      error?: string;
+      code?: string;
+    };
+    if (tokenRes.ok && tokenBody?.access_token) {
+      return {
+        ok: true,
+        body: {
+          access_token: tokenBody.access_token,
+          refresh_token: tokenBody.refresh_token || "",
+          expires_in: tokenBody.expires_in,
+          expires_at: tokenBody.expires_at,
+          user: tokenBody.user
+        }
+      };
+    }
+    const upstream =
+      isUpstreamHttpStatus(tokenRes.status) ||
+      isUpstreamAuthBody(tokenBody as unknown as Record<string, unknown>);
+    if (upstream && attempt === 0) {
+      await new Promise(function (resolve) {
+        setTimeout(resolve, 600);
+      });
+      continue;
+    }
+    if (upstream) {
+      return { ok: false, upstream: true, message: loginUpstreamMessage() };
+    }
+    return {
+      ok: false,
+      upstream: false,
+      message: tokenBody.error_description || tokenBody.msg || "Invalid username or password"
+    };
+  }
+  return { ok: false, upstream: true, message: loginUpstreamMessage() };
+}
 
 function resolveScope(input: unknown): LogoutScope {
   if (input === "local" || input === "others" || input === "global") return input;
@@ -83,6 +164,51 @@ async function revokeViaGoTrue(actor: AuthServiceActor, scope: LogoutScope): Pro
 }
 
 export const authService = {
+  async login(identifier: string, password: string): Promise<ApiResult<LoginSessionResult>> {
+    const lookup = await userRepository.resolveLoginEmail(identifier);
+    if (!lookup.success) {
+      if (lookup.code === ErrorCodes.database && isLookupUpstreamFailure(lookup.error || "")) {
+        return failure(loginUpstreamMessage(), ErrorCodes.upstream);
+      }
+      return failure(loginUpstreamMessage(), ErrorCodes.upstream);
+    }
+
+    const email = lookup.data;
+    if (!email) {
+      await fetchWithLoginTimeout(
+        env.supabaseUrl.replace(/\/$/, "") + "/auth/v1/token?grant_type=password",
+        {
+          method: "POST",
+          headers: {
+            apikey: env.supabaseAnonKey,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ email: "no-such-user@example.invalid", password })
+        }
+      ).catch(function () {
+        return undefined;
+      });
+      return failure("Invalid username or password", ErrorCodes.unauthorized);
+    }
+
+    const signIn = await signInWithPassword(email, password);
+    if (!signIn.ok) {
+      if (signIn.upstream) {
+        return failure(signIn.message, ErrorCodes.upstream);
+      }
+      return failure(signIn.message, ErrorCodes.unauthorized);
+    }
+
+    const tokenBody = signIn.body;
+    return success({
+      access_token: tokenBody.access_token,
+      refresh_token: tokenBody.refresh_token,
+      expires_in: tokenBody.expires_in,
+      expires_at: tokenBody.expires_at,
+      user: tokenBody.user
+    });
+  },
+
   /**
    * Revoke the caller's session(s) server-side. Always returns success
    * (with `revoked: false` and an error string when the underlying call

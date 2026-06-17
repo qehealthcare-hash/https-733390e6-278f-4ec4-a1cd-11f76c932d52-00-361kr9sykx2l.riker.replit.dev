@@ -119,6 +119,18 @@ export default function LoginPage() {
         setError("Too many login attempts. Please wait " + Math.max(10, retryAfter) + " seconds and try once.");
         return;
       }
+      if (
+        richError?.status === 503 ||
+        richError?.status === 502 ||
+        richError?.code === "upstream_error" ||
+        /temporarily unavailable|timed out|too long to respond/i.test(String(richError?.message || ""))
+      ) {
+        setError(
+          richError?.message ||
+            "Sign-in service is temporarily unavailable. Wait a minute and try again."
+        );
+        return;
+      }
       const message =
         signInError instanceof Error ? signInError.message : "Sign-in failed";
       setError(message);
@@ -148,15 +160,16 @@ export default function LoginPage() {
             priority
           />
           <h1 style={{ margin: "12px 0 4px" }}>{appConfig.appName}</h1>
-          <div className="mini-muted">Sign in with your CRM email (Supabase Auth)</div>
+          <div className="mini-muted">Sign in with your CRM username or email</div>
         </div>
         <form className="stack" onSubmit={handleSubmit}>
           <div className="field">
-            <label htmlFor="login-email-1">Email</label>
+            <label htmlFor="login-email-1">Username or email</label>
             <input
               id="login-email-1"
-              type="email"
+              type="text"
               autoComplete="username"
+              spellCheck={false}
               value={email}
               onChange={function (event) {
                 setEmail(event.target.value);

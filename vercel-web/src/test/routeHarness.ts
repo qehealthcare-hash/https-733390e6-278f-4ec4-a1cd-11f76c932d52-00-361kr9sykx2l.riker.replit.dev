@@ -427,9 +427,16 @@ export function buildSupabaseMock(): {
         if (table === "hh_idempotency") return idempotencyChain();
         return noopChain();
       },
-      rpc: async (fn: string) => {
+      rpc: async (fn: string, args?: { login_input?: string }) => {
         if (fn === "hominal_health_ping") {
           return { data: { ok: true, ts: new Date().toISOString() }, error: null };
+        }
+        if (fn === "_hh_resolve_login_email") {
+          const login = String(args?.login_input || "").trim().toLowerCase();
+          if (login === "admin") {
+            return { data: "admin@hominal.test", error: null };
+          }
+          return { data: null, error: null };
         }
         return { data: null, error: null };
       },

@@ -52,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileError, setProfileError] = useState("");
   const [syncLabel, setSyncLabel] = useState("Connecting...");
   const sessionRef = useRef<AuthSession>(null);
+  const refreshInFlightRef = useRef<Promise<AuthSession> | null>(null);
   useEffect(function () {
     sessionRef.current = session;
   }, [session]);
@@ -97,13 +98,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     async function refreshSessionFromCookie(): Promise<AuthSession> {
-      try {
-        const tokens = await authClient.refresh();
-        if (!tokens.access_token) return null;
-        return { access_token: tokens.access_token };
-      } catch {
-        return null;
+      if (refreshInFlightRef.current) {
+        return refreshInFlightRef.current;
       }
+      const pending = (async function () {
+        try {
+          const tokens = await authClient.refresh();
+          if (!tokens.access_token) return null;
+          return { access_token: tokens.access_token };
+        } catch {
+          return null;
+        } finally {
+          refreshInFlightRef.current = null;
+        }
+      })();
+      refreshInFlightRef.current = pending;
+      return pending;
     }
 
     async function bootstrap() {
