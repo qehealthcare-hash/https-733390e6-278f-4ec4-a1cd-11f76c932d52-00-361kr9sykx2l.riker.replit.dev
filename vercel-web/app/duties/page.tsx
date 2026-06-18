@@ -822,7 +822,8 @@ export default function DutiesPage() {
     filterPatient,
     filterEmployee,
     loadDiariesForVisible,
-    setError
+    setError,
+    toast
   ]);
 
   useEffect(function () {

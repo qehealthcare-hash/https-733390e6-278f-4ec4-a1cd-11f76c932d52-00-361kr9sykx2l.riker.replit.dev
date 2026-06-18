@@ -6,9 +6,9 @@ describe("isRealtimeEnabled", () => {
     vi.unstubAllEnvs();
   });
 
-  it("defaults to enabled", () => {
+  it("defaults to disabled during database recovery", () => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_REALTIME", undefined);
-    expect(isRealtimeEnabled()).toBe(true);
+    expect(isRealtimeEnabled()).toBe(false);
   });
 
   it("disables when env is 0", () => {
