@@ -19,6 +19,32 @@ const PAID_TX = "hh_paid_transactions";
 const CHARGES = "hh_payout_charges";
 const SCOPE = "payoutRepository";
 
+type PaidSlot = { employee_id: string; iso_date: string };
+
+function dedupePaidSlots(slots: PaidSlot[]): PaidSlot[] {
+  return Array.from(
+    new Map(
+      (slots || [])
+        .map((s) => ({
+          employee_id: String(s.employee_id || "").trim(),
+          iso_date: String(s.iso_date || "").trim()
+        }))
+        .filter((s) => s.employee_id && s.iso_date)
+        .map((s) => [`${s.employee_id}|${s.iso_date}`, s] as const)
+    ).values()
+  );
+}
+
+function paidTransactionCoversDate(tx: JsonRow, isoDate: string): boolean {
+  const paidDates = tx.paid_dates;
+  if (Array.isArray(paidDates) && paidDates.map(String).includes(isoDate)) {
+    return true;
+  }
+  const from = String(tx.from_date || "");
+  const to = String(tx.to_date || "");
+  return Boolean(from && to && isoDate >= from && isoDate <= to);
+}
+
 /**
  * `period` is YYYY-MM; return the first day of the *next* month as YYYY-MM-DD.
  * Used to bound a half-open `[period-01, nextMonth-01)` date range filter
@@ -348,35 +374,112 @@ export const payoutRepository = {
    * diary rows that were already disbursed.
    */
   async anyDayPaid(
-    slots: Array<{ employee_id: string; iso_date: string }>,
+    slots: PaidSlot[],
     opts?: DbAccess
   ): Promise<ApiResult<{ paid: boolean; employee_id?: string; iso_date?: string }>> {
-    const unique = Array.from(
-      new Map(
-        (slots || [])
-          .map((s) => ({
-            employee_id: String(s.employee_id || "").trim(),
-            iso_date: String(s.iso_date || "").trim()
-          }))
-          .filter((s) => s.employee_id && s.iso_date)
-          .map((s) => [`${s.employee_id}|${s.iso_date}`, s] as const)
-      ).values()
+    const unique = dedupePaidSlots(slots);
+    if (!unique.length) return { success: true, data: { paid: false } };
+
+    const employeeIds = Array.from(new Set(unique.map((s) => s.employee_id)));
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(PAID_TX)
+          .select("employee_id, paid_dates, from_date, to_date")
+          .in("employee_id", employeeIds),
+      `${SCOPE}.anyDayPaid.batch`
     );
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        code: result.code,
+        details: result.details
+      };
+    }
+    const byEmployee = new Map<string, JsonRow[]>();
+    for (const row of result.data || []) {
+      const emp = String(row.employee_id || "");
+      if (!emp) continue;
+      const list = byEmployee.get(emp) || [];
+      list.push(row);
+      byEmployee.set(emp, list);
+    }
     for (const slot of unique) {
-      const hit = await payoutRepository.isDayPaid(slot.employee_id, slot.iso_date, opts);
-      if (!hit.success) {
+      const txs = byEmployee.get(slot.employee_id) || [];
+      if (txs.some((tx) => paidTransactionCoversDate(tx, slot.iso_date))) {
         return {
-          success: false,
-          error: hit.error,
-          code: hit.code,
-          details: hit.details
+          success: true,
+          data: { paid: true, employee_id: slot.employee_id, iso_date: slot.iso_date }
         };
-      }
-      if (hit.data) {
-        return { success: true, data: { paid: true, employee_id: slot.employee_id, iso_date: slot.iso_date } };
       }
     }
     return { success: true, data: { paid: false } };
+  },
+
+  /**
+   * Count how many (employee_id, isoDate) slots are already disbursed.
+   * One query per unique employee instead of one query per slot — critical
+   * for decorateDutyPermissions after materializing month-long duties.
+   */
+  async countPaidSlots(slots: PaidSlot[], opts?: DbAccess): Promise<ApiResult<number>> {
+    const keyed = await payoutRepository.paidSlotKeySet(slots, opts);
+    if (!keyed.success) {
+      return {
+        success: false,
+        error: keyed.error,
+        code: keyed.code,
+        details: keyed.details
+      };
+    }
+    return { success: true, data: keyed.data?.size ?? 0 };
+  },
+
+  /**
+   * Returns the subset of (employee_id, isoDate) slots already disbursed.
+   */
+  async paidSlotKeySet(
+    slots: PaidSlot[],
+    opts?: DbAccess
+  ): Promise<ApiResult<Set<string>>> {
+    const unique = dedupePaidSlots(slots);
+    if (!unique.length) return { success: true, data: new Set() };
+
+    const employeeIds = Array.from(new Set(unique.map((s) => s.employee_id)));
+    const db = resolveClient(opts);
+    const result = await runListQuery<JsonRow>(
+      () =>
+        db
+          .from(PAID_TX)
+          .select("employee_id, paid_dates, from_date, to_date")
+          .in("employee_id", employeeIds),
+      `${SCOPE}.paidSlotKeySet`
+    );
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        code: result.code,
+        details: result.details
+      };
+    }
+    const byEmployee = new Map<string, JsonRow[]>();
+    for (const row of result.data || []) {
+      const emp = String(row.employee_id || "");
+      if (!emp) continue;
+      const list = byEmployee.get(emp) || [];
+      list.push(row);
+      byEmployee.set(emp, list);
+    }
+    const paid = new Set<string>();
+    for (const slot of unique) {
+      const txs = byEmployee.get(slot.employee_id) || [];
+      if (txs.some((tx) => paidTransactionCoversDate(tx, slot.iso_date))) {
+        paid.add(`${slot.employee_id}|${slot.iso_date}`);
+      }
+    }
+    return { success: true, data: paid };
   },
 
   findPaidTransaction(payoutId: string, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {

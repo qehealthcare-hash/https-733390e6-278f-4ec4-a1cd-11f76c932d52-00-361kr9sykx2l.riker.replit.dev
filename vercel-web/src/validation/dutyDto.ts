@@ -10,16 +10,16 @@ import { idSchema, signedMoneySchema } from "@/validation/commonValidation";
  */
 
 export const dutyPermissionsDtoSchema = z.object({
-  canEdit: z.boolean(),
-  canCancel: z.boolean(),
-  canCheckIn: z.boolean(),
-  canCheckOut: z.boolean(),
-  canMaterialize: z.boolean(),
-  canHardDelete: z.boolean(),
+  canEdit: z.coerce.boolean(),
+  canCancel: z.coerce.boolean(),
+  canCheckIn: z.coerce.boolean(),
+  canCheckOut: z.coerce.boolean(),
+  canMaterialize: z.coerce.boolean(),
+  canHardDelete: z.coerce.boolean(),
   /** True when billing/payout has fully locked the duty (no editable days). */
-  frozen: z.boolean().optional(),
+  frozen: z.coerce.boolean().optional(),
   /** True when some days are locked but others remain editable. */
-  partiallyFrozen: z.boolean().optional(),
+  partiallyFrozen: z.coerce.boolean().optional(),
   blockReasons: z.record(z.string(), z.string()).optional()
 });
 export type DutyPermissionsDto = z.infer<typeof dutyPermissionsDtoSchema>;
@@ -155,18 +155,18 @@ export type DutyMaterializeResultDto = z.infer<typeof dutyMaterializeResultDtoSc
 
 const dutyTotalsPatientDtoSchema = z.object({
   patient_id: z.string(),
-  bills: z.number().int().nonnegative(),
-  billed: z.number(),
-  received: z.number(),
-  outstanding: z.number(),
-  sec_dep: z.number()
+  bills: z.coerce.number().int().nonnegative(),
+  billed: signedMoneySchema,
+  received: signedMoneySchema,
+  outstanding: signedMoneySchema,
+  sec_dep: signedMoneySchema
 });
 
 const dutyTotalsPartnerDtoSchema = z.object({
   employee_id: z.string(),
-  charged: z.number(),
-  paid: z.number(),
-  pending: z.number()
+  charged: signedMoneySchema,
+  paid: signedMoneySchema,
+  pending: signedMoneySchema
 });
 
 /** GET /duties/totals response body. */

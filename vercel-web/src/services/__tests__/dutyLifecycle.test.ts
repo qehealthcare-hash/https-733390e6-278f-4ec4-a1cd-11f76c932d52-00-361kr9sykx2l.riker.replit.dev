@@ -21,6 +21,8 @@ vi.mock("@/database/payoutRepository", () => ({
     recomputeRpc: vi.fn().mockResolvedValue({ success: true, data: null }),
     isDayPaid: vi.fn().mockResolvedValue({ success: true, data: false }),
     anyDayPaid: vi.fn().mockResolvedValue({ success: true, data: { paid: false } }),
+    countPaidSlots: vi.fn().mockResolvedValue({ success: true, data: 0 }),
+    paidSlotKeySet: vi.fn().mockResolvedValue({ success: true, data: new Set() }),
     findByEmployeePeriod: vi.fn().mockResolvedValue({ success: true, data: null })
   }
 }));

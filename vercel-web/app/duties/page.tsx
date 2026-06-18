@@ -192,7 +192,8 @@ interface DutyTotalsBundle {
 }
 
 interface OutstandingState {
-  billing_id: string;
+  billing_id: string | null;
+  hasActiveBill: boolean;
   totals?: { outstanding?: number } | null;
 }
 
@@ -469,13 +470,17 @@ function FinancialBifurcation(props: FinancialBifurcationProps) {
           {totals.patient.sec_dep ? " · sec.dep " + formatCurrency(totals.patient.sec_dep) : ""}
           <span className="mini-muted"> · {totals.patient.bills} bill(s)</span>
         </div>
-      ) : props.patientId && outstanding && outstanding.totals ? (
+      ) : props.patientId && outstanding && outstanding.hasActiveBill && outstanding.totals ? (
         <div>
           <span className="mini-muted">Active bill {outstanding.billing_id} · </span>
           outstanding {formatCurrency(outstanding.totals.outstanding)}
         </div>
       ) : props.patientId ? (
-        <div className="mini-muted">No billing on file for this patient</div>
+        <div className="mini-muted">
+          {outstanding && !outstanding.hasActiveBill
+            ? "No active bill — open Billing before materializing duties"
+            : "No billing on file for this patient"}
+        </div>
       ) : null}
       {props.employeeId && totals && totals.partner ? (
         <div style={{ marginTop: totals.patient || outstanding ? 6 : 0 }}>
@@ -696,7 +701,7 @@ export default function DutiesPage() {
           return b.status === "Active";
         });
         if (!active) {
-          setOutstanding(null);
+          setOutstanding({ billing_id: null, hasActiveBill: false, totals: null });
           return;
         }
         const bundle = (await billingsClient.get(session, active.id)) as {
@@ -704,6 +709,7 @@ export default function DutiesPage() {
         };
         setOutstanding({
           billing_id: active.id,
+          hasActiveBill: true,
           totals: bundle.totals || null
         });
       } catch (_e) {
@@ -800,7 +806,10 @@ export default function DutiesPage() {
       setError("");
       loadDiariesForVisible(list);
     } catch (err: unknown) {
-      setError(err);
+      const message = humanizeClientError(err);
+      console.warn("[duties] calendar reload failed", err);
+      setErrorState(message || "Calendar refresh failed — click Refresh to retry");
+      toast.error(message || "Calendar refresh failed — click Refresh to retry");
     } finally {
       setLoading(false);
     }
@@ -1214,6 +1223,13 @@ export default function DutiesPage() {
     setError("");
     setMessage("");
     setConflictBanner("");
+    if (form.materialize && form.patient_id && outstanding && !outstanding.hasActiveBill) {
+      setError(
+        "No active bill for this patient — open or create an Active bill in Billing before saving with materialize."
+      );
+      end();
+      return;
+    }
     try {
       await submitPayload(buildPayload({}));
     } catch (submitError: unknown) {
@@ -1262,7 +1278,8 @@ export default function DutiesPage() {
       await submitPayload(buildPayload(confirmFlags));
       setOverlapDialog(null);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      const message = humanizeClientError(err);
+      setError(message || "Save failed");
     } finally {
       end();
     }

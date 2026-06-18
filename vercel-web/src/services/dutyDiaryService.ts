@@ -404,12 +404,23 @@ export const dutyDiaryService = {
     if (!receiptCount.success) return passFailure(receiptCount);
     const billHasReceipt = (receiptCount.data ?? 0) > 0;
 
+    const prefetchSlots = [...expectedKeys].map((key) => {
+      const parts = key.split(":");
+      return { employee_id: parts[1] || "", iso_date: parts[0] || "" };
+    });
+    let prefetchedPaid = new Set<string>();
+    if (!billHasReceipt && prefetchSlots.length) {
+      const paidKeys = await payoutRepository.paidSlotKeySet(prefetchSlots, access);
+      if (paidKeys.success && paidKeys.data) {
+        prefetchedPaid = paidKeys.data;
+      }
+    }
+
     async function isSlotPaid(employeeId: string, isoDate: string): Promise<boolean> {
       if (!employeeId || !isoDate) return false;
       const cacheKey = `${employeeId}:${isoDate}`;
       if (dayPaidCache.has(cacheKey)) return dayPaidCache.get(cacheKey)!;
-      const paid = await payoutRepository.isDayPaid(employeeId, isoDate, access);
-      const value = paid.success && Boolean(paid.data);
+      const value = prefetchedPaid.has(`${employeeId}|${isoDate}`);
       dayPaidCache.set(cacheKey, value);
       return value;
     }

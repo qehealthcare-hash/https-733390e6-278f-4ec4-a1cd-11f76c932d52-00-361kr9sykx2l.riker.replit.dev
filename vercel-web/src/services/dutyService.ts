@@ -509,11 +509,17 @@ async function dutyFreezeSignals(
   let paidSlots = 0;
   // When the bill is already receipted every day is frozen, so the per-day
   // paid scan is redundant — skip the extra queries.
-  if (!billHasReceipt) {
-    for (const slot of list) {
-      const paid = await payoutRepository.isDayPaid(slot.employee_id, slot.iso_date, access);
-      if (paid.success && paid.data) paidSlots += 1;
+  if (!billHasReceipt && list.length) {
+    const counted = await payoutRepository.countPaidSlots(list, access);
+    if (!counted.success) {
+      return {
+        billHasReceipt,
+        totalSlots,
+        paidSlots: 0,
+        hasBillingServiceLine: totalSlots > 0
+      };
     }
+    paidSlots = counted.data ?? 0;
   }
 
   return { billHasReceipt, totalSlots, paidSlots, hasBillingServiceLine: totalSlots > 0 };
