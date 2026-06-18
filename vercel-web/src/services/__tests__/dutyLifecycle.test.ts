@@ -33,6 +33,17 @@ vi.mock("@/services/mutationAudit", () => ({
 
 const ctx = { actor: { email: "ops@test.com", accessToken: "tok" } };
 
+beforeEach(() => {
+  vi.mocked(billingRepository.listSvcByBillingServiceWindow).mockResolvedValue({
+    success: true,
+    data: []
+  });
+  vi.mocked(billingRepository.listPayoutChargesBySvcKeyWindow).mockResolvedValue({
+    success: true,
+    data: []
+  });
+});
+
 const baseDuty = {
   id: "DUTY1",
   patient_id: "PAT1",

@@ -754,7 +754,7 @@ export const dutyService = {
         return passFailure(mat);
       }
       const affected = await payoutPeriodsTouchedByDuty(fresh.data, ctx);
-      await recomputeAffectedPayoutPeriods(affected, ctx, "create");
+      void recomputeAffectedPayoutPeriods(affected, ctx, "create");
     }
 
     const decorated = await decorateDutyPermissions(fresh.data, ctx);

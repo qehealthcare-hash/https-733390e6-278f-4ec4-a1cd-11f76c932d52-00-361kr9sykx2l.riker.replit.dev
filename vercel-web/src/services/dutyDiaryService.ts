@@ -495,6 +495,48 @@ export const dutyDiaryService = {
       return iso >= startDay && iso <= endDay;
     }
 
+    const externalSvcByKey = new Map<string, JsonRow>();
+    const externalPayByKey = new Map<string, JsonRow>();
+    const [windowSvc, windowPay] = await Promise.all([
+      billingRepository.listSvcByBillingServiceWindow(
+        billingId,
+        serviceName,
+        startDay,
+        endDay,
+        access
+      ),
+      billingRepository.listPayoutChargesBySvcKeyWindow(svcKey, startDay, endDay, access)
+    ]);
+    if (!windowSvc.success) return passFailure(windowSvc);
+    if (!windowPay.success) return passFailure(windowPay);
+    for (const row of windowSvc.data || []) {
+      const date = String(row.date || "");
+      const partnerId = String(row.partner_id || "");
+      if (!date) continue;
+      externalSvcByKey.set(diarySlotKey(date, partnerId), row);
+    }
+    for (const row of windowPay.data || []) {
+      const date = String(row.date || "");
+      const partnerId = String(row.partner_id || "");
+      if (!date) continue;
+      externalPayByKey.set(diarySlotKey(date, partnerId), row);
+    }
+
+    await Promise.all(partners.map((p) => resolveName(p.employee_id)));
+    const warmedLocks = new Set<string>();
+    const lockWarmTasks: Promise<unknown>[] = [];
+    for (const isoDate of eachDutyCalendarDay(String(duty.start_at), materializeEnd)) {
+      if (opts?.from && isoDate < opts.from) continue;
+      if (opts?.to && isoDate > opts.to) continue;
+      for (const partner of partners) {
+        const lk = `${partner.employee_id}:${isoDate.slice(0, 7)}`;
+        if (warmedLocks.has(lk)) continue;
+        warmedLocks.add(lk);
+        lockWarmTasks.push(isPartnerPayoutPeriodLocked(partner.employee_id, isoDate));
+      }
+    }
+    await Promise.all(lockWarmTasks);
+
     async function pruneOrphans(): Promise<ApiResult<null>> {
       for (const [key, row] of svcByKey) {
         if (expectedKeys.has(key)) continue;
@@ -610,25 +652,18 @@ export const dutyDiaryService = {
           svcAction = sameAmt && sameSvcDiaryIdentity(ownedSvc, svcRow) ? "skip" : "update";
         }
       } else {
-        const daySvc = await billingRepository.findSvcByDayPartner(
-          billingId,
-          serviceName,
-          isoDate,
-          empId,
-          access
-        );
-        if (!daySvc.success) return passFailure(daySvc);
-        if (daySvc.data) {
-          if (rowOwnedByDuty(String(daySvc.data.remarks), dutyId)) {
-            svcByKey.set(key, daySvc.data);
-            const parsed = parseDutyDiaryRemarks(String(daySvc.data.remarks || ""));
+        const daySvc = externalSvcByKey.get(key) || null;
+        if (daySvc) {
+          if (rowOwnedByDuty(String(daySvc.remarks), dutyId)) {
+            svcByKey.set(key, daySvc);
+            const parsed = parseDutyDiaryRemarks(String(daySvc.remarks || ""));
             if (parsed?.manual) {
               svcAction = "skip";
             } else {
               const sameAmt =
-                Number(daySvc.data.amt) === chargeAmt && Number(daySvc.data.total) === svcRow.total;
+                Number(daySvc.amt) === chargeAmt && Number(daySvc.total) === svcRow.total;
               svcAction =
-                sameAmt && sameSvcDiaryIdentity(daySvc.data, svcRow) ? "skip" : "update";
+                sameAmt && sameSvcDiaryIdentity(daySvc, svcRow) ? "skip" : "update";
             }
           } else {
             svcAction = "skip";
@@ -647,23 +682,17 @@ export const dutyDiaryService = {
           payoutAction = sameAmt && samePayoutDiaryIdentity(ownedPay, payRow) ? "skip" : "update";
         }
       } else {
-        const dayPay = await billingRepository.findPayoutByDayPartner(
-          svcKey,
-          isoDate,
-          empId,
-          access
-        );
-        if (!dayPay.success) return passFailure(dayPay);
-        if (dayPay.data) {
-          if (rowOwnedByDuty(String(dayPay.data.remarks), dutyId)) {
-            payByKey.set(key, dayPay.data);
-            const parsed = parseDutyDiaryRemarks(String(dayPay.data.remarks || ""));
+        const dayPay = externalPayByKey.get(key) || null;
+        if (dayPay) {
+          if (rowOwnedByDuty(String(dayPay.remarks), dutyId)) {
+            payByKey.set(key, dayPay);
+            const parsed = parseDutyDiaryRemarks(String(dayPay.remarks || ""));
             if (parsed?.manual) {
               payoutAction = "skip";
             } else {
               payoutAction =
-                Number(dayPay.data.amount) === payoutAmt &&
-                samePayoutDiaryIdentity(dayPay.data, payRow)
+                Number(dayPay.amount) === payoutAmt &&
+                samePayoutDiaryIdentity(dayPay, payRow)
                   ? "skip"
                   : "update";
             }

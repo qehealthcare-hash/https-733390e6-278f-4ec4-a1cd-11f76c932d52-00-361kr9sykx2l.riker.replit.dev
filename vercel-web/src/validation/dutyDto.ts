@@ -43,7 +43,21 @@ export const dutyRowDtoSchema = z
 export type DutyRowDto = z.infer<typeof dutyRowDtoSchema>;
 
 export const dutyDetailDtoSchema = dutyRowDtoSchema.extend({
-  permissions: dutyPermissionsDtoSchema
+  permissions: z.preprocess(
+    (v) =>
+      v ??
+      ({
+        canEdit: true,
+        canCancel: true,
+        canCheckIn: true,
+        canCheckOut: false,
+        canMaterialize: true,
+        canHardDelete: true,
+        frozen: false,
+        partiallyFrozen: false
+      } as const),
+    dutyPermissionsDtoSchema
+  )
 });
 export type DutyDetailDto = z.infer<typeof dutyDetailDtoSchema>;
 

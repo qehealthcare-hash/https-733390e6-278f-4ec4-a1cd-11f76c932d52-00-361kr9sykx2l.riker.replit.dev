@@ -466,6 +466,32 @@ export const billingRepository = {
     return runQuery(() => q.maybeSingle(), `${SCOPE}.findSvcByDayPartner`);
   },
 
+  /** All svc rows for a billing + service inside an inclusive date window. */
+  listSvcByBillingServiceWindow(
+    billingId: string,
+    serviceName: string,
+    fromDate: string,
+    toDate: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    if (!billingId || !fromDate || !toDate) {
+      return Promise.resolve({ success: true, data: [] });
+    }
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from(SVC)
+          .select("*")
+          .eq("billing_id", billingId)
+          .eq("service_name", serviceName)
+          .gte("date", fromDate)
+          .lte("date", toDate)
+          .order("date", { ascending: true }),
+      `${SCOPE}.listSvcByBillingServiceWindow`
+    );
+  },
+
   findPayoutByDayPartner(
     svcKey: string,
     date: string,
@@ -477,6 +503,30 @@ export const billingRepository = {
     if (partnerId) q = q.eq("partner_id", partnerId);
     else q = q.is("partner_id", null);
     return runQuery(() => q.maybeSingle(), `${SCOPE}.findPayoutByDayPartner`);
+  },
+
+  /** All payout charge rows for a svc_key inside an inclusive date window. */
+  listPayoutChargesBySvcKeyWindow(
+    svcKey: string,
+    fromDate: string,
+    toDate: string,
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    if (!svcKey || !fromDate || !toDate) {
+      return Promise.resolve({ success: true, data: [] });
+    }
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from(PAYOUT_CHARGES)
+          .select("*")
+          .eq("svc_key", svcKey)
+          .gte("date", fromDate)
+          .lte("date", toDate)
+          .order("date", { ascending: true }),
+      `${SCOPE}.listPayoutChargesBySvcKeyWindow`
+    );
   },
 
   insertSvc(row: JsonRow, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {

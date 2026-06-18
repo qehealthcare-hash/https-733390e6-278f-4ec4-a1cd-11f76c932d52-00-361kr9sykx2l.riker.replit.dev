@@ -395,7 +395,13 @@ export function humanizeClientError(error: unknown): string {
   }
   const trimmed = raw.trim();
   if (!trimmed || trimmed === "Request failed") {
-    return envelopeFailureMessage(trimmed, code, status);
+    const humanized = envelopeFailureMessage(trimmed, code, status);
+    if (humanized && humanized !== "Request failed") return humanized;
+    if (status && status >= 500) {
+      return "Server error (HTTP " + status + ") — try again or refresh the page.";
+    }
+    if (code) return "Request failed (" + code + ") — refresh and try again.";
+    return "Request failed — refresh the page and try again.";
   }
   if (trimmed === "Response validation failed") {
     return "Server returned unexpected data — refresh the page. Support has been notified.";
