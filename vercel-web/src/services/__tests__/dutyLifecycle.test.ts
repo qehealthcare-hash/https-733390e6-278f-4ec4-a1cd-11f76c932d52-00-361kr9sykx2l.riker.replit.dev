@@ -42,6 +42,10 @@ beforeEach(() => {
     success: true,
     data: []
   });
+  vi.mocked(billingRepository.findActiveBillsByPatientIds).mockResolvedValue({
+    success: true,
+    data: []
+  });
 });
 
 const baseDuty = {

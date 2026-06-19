@@ -658,9 +658,14 @@ export const dutyService = {
       new Set(baseRows.map((r) => String(r.patient_id || "")).filter(Boolean))
     );
     const billByPatient = new Map<string, string>();
-    for (const pid of patientIds) {
-      const active = await billingRepository.findActiveByPatient(pid, access);
-      if (active.success && active.data) billByPatient.set(pid, String(active.data.id));
+    if (patientIds.length) {
+      const activeBills = await billingRepository.findActiveBillsByPatientIds(patientIds, access);
+      if (!activeBills.success) return passFailure(activeBills);
+      for (const bill of activeBills.data || []) {
+        const pid = String(bill.patient_id || "");
+        const bid = String(bill.id || "");
+        if (pid && bid && !billByPatient.has(pid)) billByPatient.set(pid, bid);
+      }
     }
     const billingIds = Array.from(new Set([...billByPatient.values()]));
     const receiptedBills = new Set<string>();

@@ -144,6 +144,62 @@ export interface DiaryListResult {
   error?: string;
 }
 
+type DiarySlot = DiaryListEntry & { svc_updated_at?: string; payout_updated_at?: string };
+
+/** Merge svc + payout ledger rows into per-day diary entries for one duty. */
+function buildDiaryEntriesFromLedgerRows(
+  svcRows: JsonRow[] | null | undefined,
+  payRows: JsonRow[] | null | undefined
+): DiaryListEntry[] {
+  const slots = new Map<string, DiarySlot>();
+  for (const row of svcRows || []) {
+    const parsed = parseDutyDiaryRemarks(String(row.remarks || ""));
+    if (!parsed) continue;
+    const key = `${parsed.isoDate}|${parsed.employeeId}`;
+    const slot: DiarySlot = slots.get(key) || {
+      date: parsed.isoDate,
+      employee_id: parsed.employeeId,
+      partner: String(row.partner || ""),
+      charge: Number(row.total ?? row.amt ?? 0),
+      payout: 0,
+      manual: parsed.manual,
+      svc_id: String(row.id),
+      payout_id: null
+    };
+    slot.charge = Number(row.total ?? row.amt ?? 0);
+    slot.partner = String(row.partner || slot.partner);
+    slot.svc_id = String(row.id);
+    slot.manual = slot.manual || parsed.manual;
+    if (row.updated_at) slot.svc_updated_at = String(row.updated_at);
+    slots.set(key, slot);
+  }
+  for (const row of payRows || []) {
+    const parsed = parseDutyDiaryRemarks(String(row.remarks || ""));
+    if (!parsed) continue;
+    const key = `${parsed.isoDate}|${parsed.employeeId}`;
+    const slot: DiarySlot = slots.get(key) || {
+      date: parsed.isoDate,
+      employee_id: parsed.employeeId,
+      partner: String(row.partner || ""),
+      charge: 0,
+      payout: Number(row.amount ?? 0),
+      manual: parsed.manual,
+      svc_id: null,
+      payout_id: String(row.id)
+    };
+    slot.payout = Number(row.amount ?? 0);
+    slot.partner = slot.partner || String(row.partner || "");
+    slot.payout_id = String(row.id);
+    slot.manual = slot.manual || parsed.manual;
+    if (row.updated_at) slot.payout_updated_at = String(row.updated_at);
+    slots.set(key, slot);
+  }
+  return [...slots.values()].sort((a, b) => {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return a.employee_id < b.employee_id ? -1 : 1;
+  });
+}
+
 export interface MaterializePreviewRow {
   date: string;
   employee_id: string;
@@ -935,57 +991,10 @@ export const dutyDiaryService = {
     if (!svcRows.success) return passFailure(svcRows);
     const payRows = await dutyRepository.findPayoutChargesByDutyId(dutyId, access);
     if (!payRows.success) return passFailure(payRows);
-
-    type Slot = DiaryListEntry & { svc_updated_at?: string; payout_updated_at?: string };
-    const slots = new Map<string, Slot>();
-    for (const row of svcRows.data || []) {
-      const parsed = parseDutyDiaryRemarks(String(row.remarks || ""));
-      if (!parsed) continue;
-      const key = `${parsed.isoDate}|${parsed.employeeId}`;
-      const slot: Slot = slots.get(key) || {
-        date: parsed.isoDate,
-        employee_id: parsed.employeeId,
-        partner: String(row.partner || ""),
-        charge: Number(row.total ?? row.amt ?? 0),
-        payout: 0,
-        manual: parsed.manual,
-        svc_id: String(row.id),
-        payout_id: null
-      };
-      slot.charge = Number(row.total ?? row.amt ?? 0);
-      slot.partner = String(row.partner || slot.partner);
-      slot.svc_id = String(row.id);
-      slot.manual = slot.manual || parsed.manual;
-      if (row.updated_at) slot.svc_updated_at = String(row.updated_at);
-      slots.set(key, slot);
-    }
-    for (const row of payRows.data || []) {
-      const parsed = parseDutyDiaryRemarks(String(row.remarks || ""));
-      if (!parsed) continue;
-      const key = `${parsed.isoDate}|${parsed.employeeId}`;
-      const slot: Slot = slots.get(key) || {
-        date: parsed.isoDate,
-        employee_id: parsed.employeeId,
-        partner: String(row.partner || ""),
-        charge: 0,
-        payout: Number(row.amount ?? 0),
-        manual: parsed.manual,
-        svc_id: null,
-        payout_id: String(row.id)
-      };
-      slot.payout = Number(row.amount ?? 0);
-      slot.partner = slot.partner || String(row.partner || "");
-      slot.payout_id = String(row.id);
-      slot.manual = slot.manual || parsed.manual;
-      if (row.updated_at) slot.payout_updated_at = String(row.updated_at);
-      slots.set(key, slot);
-    }
-
-    const entries = [...slots.values()].sort((a, b) => {
-      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-      return a.employee_id < b.employee_id ? -1 : 1;
+    return success({
+      duty_id: dutyId,
+      entries: buildDiaryEntriesFromLedgerRows(svcRows.data, payRows.data)
     });
-    return success({ duty_id: dutyId, entries });
   },
 
   /**
@@ -1444,24 +1453,38 @@ export const dutyDiaryService = {
   ): Promise<ApiResult<Record<string, DiaryListResult>>> {
     const unique = Array.from(new Set((dutyIds || []).map((d) => String(d || "").trim()).filter(Boolean)));
     const out: Record<string, DiaryListResult> = {};
-    // Concurrency is capped at 10 to avoid stampeding the database from
-    // huge calendars; in practice each call resolves in tens of ms.
-    const concurrency = 10;
-    for (let i = 0; i < unique.length; i += concurrency) {
-      const batch = unique.slice(i, i + concurrency);
-      const results = await Promise.all(batch.map((id) => dutyDiaryService.listDays(id, ctx)));
-      batch.forEach((id, idx) => {
-        const r = results[idx];
-        if (r && r.success && r.data) {
-          out[id] = r.data;
-        } else {
-          out[id] = {
-            duty_id: id,
-            entries: [],
-            error: (r && r.success ? "Empty diary payload" : r?.error) || "Failed to load diary"
-          };
-        }
-      });
+    if (!unique.length) return success(out);
+
+    const access = dbAccess(ctx);
+    const [svcAll, payAll] = await Promise.all([
+      dutyRepository.findSvcEntriesByDutyIds(unique, access),
+      dutyRepository.findPayoutChargesByDutyIds(unique, access)
+    ]);
+    if (!svcAll.success) return passFailure(svcAll);
+    if (!payAll.success) return passFailure(payAll);
+
+    const svcByDuty = new Map<string, JsonRow[]>();
+    for (const row of svcAll.data || []) {
+      const dutyId = String(row.duty_id || "");
+      if (!dutyId) continue;
+      const list = svcByDuty.get(dutyId) || [];
+      list.push(row);
+      svcByDuty.set(dutyId, list);
+    }
+    const payByDuty = new Map<string, JsonRow[]>();
+    for (const row of payAll.data || []) {
+      const dutyId = String(row.duty_id || "");
+      if (!dutyId) continue;
+      const list = payByDuty.get(dutyId) || [];
+      list.push(row);
+      payByDuty.set(dutyId, list);
+    }
+
+    for (const dutyId of unique) {
+      out[dutyId] = {
+        duty_id: dutyId,
+        entries: buildDiaryEntriesFromLedgerRows(svcByDuty.get(dutyId), payByDuty.get(dutyId))
+      };
     }
     return success(out);
   },

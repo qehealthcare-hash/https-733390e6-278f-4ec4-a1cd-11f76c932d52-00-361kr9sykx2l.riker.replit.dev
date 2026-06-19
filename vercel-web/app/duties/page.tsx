@@ -538,6 +538,11 @@ export default function DutiesPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const lastErrorToastRef = useRef({ message: "", at: 0 });
+  const rowsRef = useRef<DutyListRow[]>([]);
+  const toastRef = useRef(toast);
+  useEffect(function () {
+    toastRef.current = toast;
+  }, [toast]);
   const setError = useCallback(function (msg: unknown) {
     let text = humanizeClientError(msg);
     if (text.includes("auth/v1/user") || text.includes("supabase.co/auth")) {
@@ -550,8 +555,8 @@ export default function DutiesPage() {
     const prev = lastErrorToastRef.current;
     if (prev.message === text && now - prev.at < 4000) return;
     lastErrorToastRef.current = { message: text, at: now };
-    toast.error(text);
-  }, [toast]);
+    toastRef.current.error(text);
+  }, []);
   const setMessage = useCallback(function (msg: string) {
     const text = String(msg || "");
     setMessageState(text);
@@ -586,6 +591,7 @@ export default function DutiesPage() {
   );
 
   const reloadRef = useRef(function () {});
+  const reloadSeqRef = useRef(0);
   const diaryByDutyRef = useRef(diaryByDuty);
   const viewMonthRef = useRef(viewMonth);
 
@@ -746,10 +752,19 @@ export default function DutiesPage() {
     [accessToken]
   );
 
+  useEffect(
+    function () {
+      rowsRef.current = rows;
+    },
+    [rows]
+  );
+
   const reload = useCallback(async function reload() {
     if (!accessToken) return;
     const session = sessionRef.current;
     if (!session) return;
+    const reloadSeq = Date.now();
+    reloadSeqRef.current = reloadSeq;
     setLoading(true);
     try {
       // Ledger sync is heavy (materialize + dedup). Run in the background so the
@@ -804,14 +819,25 @@ export default function DutiesPage() {
         return next;
       });
       setError("");
-      loadDiariesForVisible(list);
+      void loadDiariesForVisible(list);
     } catch (err: unknown) {
+      if (reloadSeqRef.current !== reloadSeq) return;
       const message = humanizeClientError(err);
       console.warn("[duties] calendar reload failed", err);
-      setErrorState(message || "Calendar refresh failed — click Refresh to retry");
-      toast.error(message || "Calendar refresh failed — click Refresh to retry");
+      const hasRows = rowsRef.current.length > 0;
+      if (hasRows) {
+        setErrorState(
+          message || "Calendar refresh failed — showing last loaded data. Click Refresh to retry."
+        );
+        toastRef.current.warn(
+          message || "Calendar refresh failed — click Refresh to retry"
+        );
+      } else {
+        setErrorState(message || "Calendar refresh failed — click Refresh to retry");
+        toastRef.current.error(message || "Calendar refresh failed — click Refresh to retry");
+      }
     } finally {
-      setLoading(false);
+      if (reloadSeqRef.current === reloadSeq) setLoading(false);
     }
   }, [
     accessToken,
@@ -821,9 +847,7 @@ export default function DutiesPage() {
     statusFilter,
     filterPatient,
     filterEmployee,
-    loadDiariesForVisible,
-    setError,
-    toast
+    loadDiariesForVisible
   ]);
 
   useEffect(function () {
@@ -831,8 +855,13 @@ export default function DutiesPage() {
   }, [reload]);
 
   useEffect(function () {
+    let debounce: ReturnType<typeof setTimeout> | null = null;
     return onDataInvalidated(function () {
-      void reloadRef.current();
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(function () {
+        debounce = null;
+        void reloadRef.current();
+      }, 400);
     });
   }, []);
 
@@ -1224,6 +1253,16 @@ export default function DutiesPage() {
     setError("");
     setMessage("");
     setConflictBanner("");
+    if (!form.patient_id) {
+      setError("Select a patient before saving.");
+      end();
+      return;
+    }
+    if (!form.employee_id) {
+      setError("Select a primary partner (employee) before saving.");
+      end();
+      return;
+    }
     if (form.materialize && form.patient_id && outstanding && !outstanding.hasActiveBill) {
       setError(
         "No active bill for this patient — open or create an Active bill in Billing before saving with materialize."

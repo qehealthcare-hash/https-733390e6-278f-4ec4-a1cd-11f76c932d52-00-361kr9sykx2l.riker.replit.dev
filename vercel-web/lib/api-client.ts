@@ -400,6 +400,9 @@ export function humanizeClientError(error: unknown): string {
     if (status && status >= 500) {
       return "Server error (HTTP " + status + ") — try again or refresh the page.";
     }
+    if (status && status >= 400) {
+      return "Request failed (HTTP " + status + ") — refresh and try again.";
+    }
     if (code) return "Request failed (" + code + ") — refresh and try again.";
     return "Request failed — refresh the page and try again.";
   }

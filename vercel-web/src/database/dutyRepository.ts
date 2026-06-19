@@ -519,6 +519,21 @@ export const dutyRepository = {
     );
   },
 
+  /** All svc rows for a set of duties (calendar diary batch). */
+  async findSvcEntriesByDutyIds(dutyIds: string[], opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const unique = Array.from(new Set((dutyIds || []).map((id) => String(id || "").trim()).filter(Boolean)));
+    if (!unique.length) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    return runListQuery(
+      () =>
+        db
+          .from(SVC)
+          .select("id, billing_id, svc_key, date, partner_id, partner, remarks, total, amt, updated_at, duty_id")
+          .in("duty_id", unique),
+      `${SCOPE}.findSvcEntriesByDutyIds`
+    );
+  },
+
   /** All svc rows materialized from a duty (`duty:<id>:...` remarks). */
   async findSvcEntriesByDutyId(dutyId: string, opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
     const db = resolveClient(opts);
@@ -542,6 +557,21 @@ export const dutyRepository = {
           .eq("duty_id", dutyId)
           .then(({ error }) => ({ data: null, error })),
       `${SCOPE}.removeSvcEntriesByDutyId`
+    );
+  },
+
+  /** All payout charge rows for a set of duties (calendar diary batch). */
+  async findPayoutChargesByDutyIds(dutyIds: string[], opts?: DbAccess): Promise<ApiResult<JsonRow[]>> {
+    const unique = Array.from(new Set((dutyIds || []).map((id) => String(id || "").trim()).filter(Boolean)));
+    if (!unique.length) return { success: true, data: [] };
+    const db = resolveClient(opts);
+    return runListQuery(
+      () =>
+        db
+          .from(PAYOUT_CHARGES)
+          .select("id, svc_key, date, partner_id, partner, amount, remarks, updated_at, duty_id")
+          .in("duty_id", unique),
+      `${SCOPE}.findPayoutChargesByDutyIds`
     );
   },
 

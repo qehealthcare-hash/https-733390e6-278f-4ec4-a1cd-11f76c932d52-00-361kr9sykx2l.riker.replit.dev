@@ -42,6 +42,25 @@ export const billingRepository = {
     );
   },
 
+  /** Active bills for many patients in one round-trip (duty calendar list enrichment). */
+  findActiveBillsByPatientIds(
+    patientIds: string[],
+    opts?: DbAccess
+  ): Promise<ApiResult<JsonRow[]>> {
+    const unique = Array.from(new Set((patientIds || []).map((id) => String(id || "").trim()).filter(Boolean)));
+    if (!unique.length) return Promise.resolve({ success: true, data: [] });
+    const db = resolveClient(opts);
+    return runListQuery<JsonRow>(
+      () =>
+        db
+          .from(BILLINGS)
+          .select("id, patient_id, status")
+          .in("patient_id", unique)
+          .eq("status", "Active"),
+      `${SCOPE}.findActiveBillsByPatientIds`
+    );
+  },
+
   /** Latest bill for a patient regardless of status (used to surface a closed bill on refresh). */
   findLatestByPatient(patientId: string, opts?: DbAccess): Promise<ApiResult<JsonRow | null>> {
     const db = resolveClient(opts);
