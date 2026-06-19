@@ -309,7 +309,11 @@ async function fetchApiWithRetry(
       throw nerr;
     }
   }
-  throw lastError instanceof Error ? lastError : new Error("Request failed");
+  throw lastError instanceof Error
+    ? lastError.message
+      ? lastError
+      : Object.assign(new Error("Request failed on " + path), { cause: lastError })
+    : new Error("Request failed on " + path);
 }
 
 async function parseApiResponse(path: string, response: Response): Promise<unknown> {

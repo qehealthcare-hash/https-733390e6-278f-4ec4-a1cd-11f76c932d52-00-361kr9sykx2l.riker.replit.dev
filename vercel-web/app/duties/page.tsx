@@ -221,6 +221,20 @@ interface FinancialBifurcationProps {
   employeeId: string;
 }
 
+function formatDutyApiError(err: unknown, context: string): string {
+  const e = err as { message?: string; code?: string; status?: number };
+  const base = humanizeClientError(err);
+  if (base && base !== "Request failed" && base.indexOf("Request failed —") !== 0) {
+    return base;
+  }
+  const parts: string[] = [];
+  if (context) parts.push(context);
+  if (e.code) parts.push(String(e.code));
+  if (e.status) parts.push("HTTP " + String(e.status));
+  const detail = parts.length ? parts.join(" · ") : base;
+  return detail || "Request failed — refresh and try again";
+}
+
 function sessionOrNull(auth: DutiesAuth) {
   return (auth.session ?? null) as import("@supabase/supabase-js").Session | null;
 }
@@ -571,6 +585,7 @@ export default function DutiesPage() {
   const [overlapDialog, setOverlapDialog] = useState<OverlapDialogState | null>(null);
   const [conflictBanner, setConflictBanner] = useState("");
   const [outstanding, setOutstanding] = useState<OutstandingState | null>(null);
+  const [outstandingLoading, setOutstandingLoading] = useState(false);
   const [totals, setTotals] = useState<DutyTotalsBundle | null>(null);
   const [selectedDay, setSelectedDay] = useState("");
   const [previewDialog, setPreviewDialog] = useState<PreviewDialogState | null>(null);
@@ -698,10 +713,12 @@ export default function DutiesPage() {
     async function loadOutstanding(patientId: string) {
       if (!patientId || !accessToken) {
         setOutstanding(null);
+        setOutstandingLoading(false);
         return;
       }
       const session = sessionRef.current;
       if (!session) return;
+      setOutstandingLoading(true);
       try {
         const list = (await billingsClient.list(session, {
           limit: 20,
@@ -725,7 +742,9 @@ export default function DutiesPage() {
           totals: bundle.totals || null
         });
       } catch (_e) {
-        setOutstanding(null);
+        setOutstanding({ billing_id: null, hasActiveBill: false, totals: null });
+      } finally {
+        setOutstandingLoading(false);
       }
     },
     [accessToken]
@@ -815,7 +834,7 @@ export default function DutiesPage() {
       void loadDiariesForVisible(list);
     } catch (err: unknown) {
       if (reloadSeqRef.current !== reloadSeq) return;
-      const message = humanizeClientError(err);
+      const message = formatDutyApiError(err, "Calendar load failed");
       console.warn("[duties] calendar reload failed", err);
       const hasRows = rowsRef.current.length > 0;
       if (hasRows) {
@@ -869,6 +888,8 @@ export default function DutiesPage() {
   useEffect(
     function () {
       if (!filterPatient || !accessToken) return;
+      if (outstandingLoading) return;
+      if (outstanding && !outstanding.hasActiveBill) return;
       const session = sessionRef.current;
       if (!session) return;
       const now = Date.now();
@@ -894,7 +915,19 @@ export default function DutiesPage() {
           gate.inFlight = false;
         });
     },
-    [filterPatient, accessToken, loadDiariesForVisible]
+    [filterPatient, accessToken, outstanding, outstandingLoading, loadDiariesForVisible]
+  );
+
+  // Pre-fill the new-duty form when a patient filter is selected.
+  useEffect(
+    function () {
+      if (!filterPatient || form.id) return;
+      setForm(function (current) {
+        if (current.patient_id === filterPatient) return current;
+        return { ...current, patient_id: filterPatient };
+      });
+    },
+    [filterPatient, form.id]
   );
 
   async function refreshFormTotals() {
@@ -1293,7 +1326,7 @@ export default function DutiesPage() {
     setError("");
     setMessage("");
     setConflictBanner("");
-    if (!form.patient_id) {
+    if (!form.patient_id && !filterPatient) {
       setError("Select a patient before saving.");
       end();
       return;
@@ -1303,22 +1336,34 @@ export default function DutiesPage() {
       end();
       return;
     }
-    if (form.materialize && form.patient_id && outstanding && !outstanding.hasActiveBill) {
-      setError(
-        "No active bill for this patient — open or create an Active bill in Billing before saving with materialize."
-      );
-      end();
-      return;
+    const billPatientId = form.patient_id || filterPatient;
+    if (form.materialize && billPatientId) {
+      if (outstandingLoading) {
+        setError("Checking bill status — wait a moment and try again.");
+        end();
+        return;
+      }
+      if (!outstanding || !outstanding.hasActiveBill) {
+        setError(
+          "No active bill for this patient — open Billing, create or reopen an Active bill, then save with materialize."
+        );
+        end();
+        return;
+      }
     }
     try {
-      await submitPayload(buildPayload({}));
+      const payload = buildPayload({});
+      if (!payload.patient_id && filterPatient) {
+        payload.patient_id = filterPatient;
+      }
+      await submitPayload(payload);
     } catch (submitError: unknown) {
       const err = submitError as {
         message?: string;
         code?: string;
         details?: { field?: string };
       };
-      const displayMessage = humanizeClientError(err);
+      const displayMessage = formatDutyApiError(err, "Unable to save duty");
       const msg = displayMessage.toLowerCase();
       const code = err.code || "";
       const details = err.details || {};
@@ -1358,7 +1403,7 @@ export default function DutiesPage() {
       await submitPayload(buildPayload(confirmFlags));
       setOverlapDialog(null);
     } catch (err: unknown) {
-      const message = humanizeClientError(err);
+      const message = formatDutyApiError(err, "Save failed");
       setError(message || "Save failed");
     } finally {
       end();
@@ -2037,6 +2082,24 @@ export default function DutiesPage() {
                 </select>
               </div>
             </div>
+
+            {filterPatient && !outstandingLoading && outstanding && !outstanding.hasActiveBill ? (
+              <div
+                className="card"
+                role="status"
+                style={{
+                  marginTop: 12,
+                  padding: "12px 14px",
+                  borderColor: "#fca5a5",
+                  background: "#fef2f2",
+                  color: "#991b1b"
+                }}
+              >
+                <strong>No Active bill</strong> for{" "}
+                {patientNameById[filterPatient] || filterPatient}. Duty materialize needs an
+                Active bill — open <a href="/billings">Billing</a> to create or reopen one first.
+              </div>
+            ) : null}
 
             {loading ? (
               <div
