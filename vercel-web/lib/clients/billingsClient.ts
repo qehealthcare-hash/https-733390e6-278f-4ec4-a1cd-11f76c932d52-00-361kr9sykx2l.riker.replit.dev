@@ -176,10 +176,18 @@ export const billingsClient = {
   },
 
   /** Materialize billable duties → Active bill svc_entries (calendar/billing parity). */
-  syncDutyLedger(session: ApiSession, patientId: string) {
+  syncDutyLedger(
+    session: ApiSession,
+    patientId: string,
+    opts?: { suppressInvalidation?: boolean }
+  ) {
     return requestValidatedWithOfflineFallback(
       BILLINGS_BASE + "/duty-ledger-sync",
-      { method: "POST", body: { patient_id: patientId } },
+      {
+        method: "POST",
+        body: { patient_id: patientId },
+        suppressInvalidation: opts?.suppressInvalidation
+      },
       session,
       dutyLedgerSyncSummaryDtoSchema
     );

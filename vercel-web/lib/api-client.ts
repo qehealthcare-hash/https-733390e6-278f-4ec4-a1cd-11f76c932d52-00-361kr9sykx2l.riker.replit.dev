@@ -31,6 +31,11 @@ export type ApiRequestOptions = {
   signal?: AbortSignal;
   /** Required for routes that clear HttpOnly cookies (e.g. logout). */
   credentials?: RequestCredentials;
+  /**
+   * When true, successful mutations do not broadcast `data-invalidated`.
+   * Use for background parity syncs that must not re-trigger the caller.
+   */
+  suppressInvalidation?: boolean;
 };
 
 type ApiClientError = Error & {
@@ -132,13 +137,16 @@ function envelopeFailureMessage(
   return msg || "Request failed";
 }
 
-function unwrapResponse(json: Record<string, unknown>, response: Response): unknown {
+function unwrapResponse(
+  json: Record<string, unknown>,
+  response: Response,
+  path?: string
+): unknown {
   if (typeof json.success === "boolean") {
     if (!json.success) {
+      const base = envelopeFailureMessage(json.error, json.code, response.status);
       const err: ApiClientError = new Error(
-        humanizeClientError(
-          envelopeFailureMessage(json.error, json.code, response.status)
-        )
+        humanizeClientError(path && base === "Request failed" ? `${path}: ${base}` : base)
       );
       if (json.code) err.code = String(json.code);
       if (json.details !== undefined) err.details = json.details;
@@ -148,10 +156,9 @@ function unwrapResponse(json: Record<string, unknown>, response: Response): unkn
     return json.data;
   }
   if (!response.ok) {
+    const base = envelopeFailureMessage(json.message || json.error, json.code, response.status);
     const hardErr: ApiClientError = new Error(
-      humanizeClientError(
-        envelopeFailureMessage(json.message || json.error, json.code, response.status)
-      )
+      humanizeClientError(path && base === "Request failed" ? `${path}: ${base}` : base)
     );
     hardErr.status = response.status;
     throw hardErr;
@@ -166,7 +173,12 @@ function unwrapResponse(json: Record<string, unknown>, response: Response): unkn
  * reload. GET/HEAD/OPTIONS never broadcast (they would cause reload loops), and
  * auth endpoints are excluded to avoid refresh-token churn.
  */
-function maybeDispatchMutationInvalidation(method: string | undefined, path: string): void {
+function maybeDispatchMutationInvalidation(
+  method: string | undefined,
+  path: string,
+  options?: ApiRequestOptions | null
+): void {
+  if (options?.suppressInvalidation) return;
   const upper = String(method || "GET").toUpperCase();
   if (upper === "GET" || upper === "HEAD" || upper === "OPTIONS") return;
   if (path.startsWith("/auth/")) return;
@@ -335,7 +347,7 @@ async function parseApiResponse(path: string, response: Response): Promise<unkno
 
   // Canonical API envelope — unwrap even on 502/503 so upstream_error text is preserved.
   if (typeof json.success === "boolean") {
-    return unwrapResponse(json, response);
+    return unwrapResponse(json, response, path);
   }
 
   if (!response.ok && isRetryableStatus(response.status)) {
@@ -346,7 +358,7 @@ async function parseApiResponse(path: string, response: Response): Promise<unkno
     throw perr;
   }
 
-  return unwrapResponse(json, response);
+  return unwrapResponse(json, response, path);
 }
 
 /** Map proxy / gateway HTML bodies to operator-friendly copy (never dump HTML in the UI). */
@@ -454,7 +466,7 @@ export async function request<T = any>(
 
   try {
     const parsed = (await parseApiResponse(path, response)) as T;
-    maybeDispatchMutationInvalidation(options?.method, path);
+    maybeDispatchMutationInvalidation(options?.method, path, options);
     return parsed;
   } catch (error: unknown) {
     if (!path.startsWith("/auth/") && isExpiredAuthError(error)) {
@@ -463,7 +475,7 @@ export async function request<T = any>(
         if (session && typeof session === "object") session.access_token = refreshed;
         const retried = await fetchApiWithRetry(path, options, { access_token: refreshed });
         const parsedRetry = (await parseApiResponse(path, retried)) as T;
-        maybeDispatchMutationInvalidation(options?.method, path);
+        maybeDispatchMutationInvalidation(options?.method, path, options);
         return parsedRetry;
       }
     }

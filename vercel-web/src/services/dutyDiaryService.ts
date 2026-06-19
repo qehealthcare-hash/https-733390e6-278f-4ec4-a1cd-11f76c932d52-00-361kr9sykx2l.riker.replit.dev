@@ -1456,15 +1456,23 @@ export const dutyDiaryService = {
     if (!unique.length) return success(out);
 
     const access = dbAccess(ctx);
-    const [svcAll, payAll] = await Promise.all([
-      dutyRepository.findSvcEntriesByDutyIds(unique, access),
-      dutyRepository.findPayoutChargesByDutyIds(unique, access)
-    ]);
-    if (!svcAll.success) return passFailure(svcAll);
-    if (!payAll.success) return passFailure(payAll);
+    const svcAll: JsonRow[] = [];
+    const payAll: JsonRow[] = [];
+    const chunkSize = 40;
+    for (let i = 0; i < unique.length; i += chunkSize) {
+      const chunk = unique.slice(i, i + chunkSize);
+      const [svcChunk, payChunk] = await Promise.all([
+        dutyRepository.findSvcEntriesByDutyIds(chunk, access),
+        dutyRepository.findPayoutChargesByDutyIds(chunk, access)
+      ]);
+      if (!svcChunk.success) return passFailure(svcChunk);
+      if (!payChunk.success) return passFailure(payChunk);
+      svcAll.push(...(svcChunk.data || []));
+      payAll.push(...(payChunk.data || []));
+    }
 
     const svcByDuty = new Map<string, JsonRow[]>();
-    for (const row of svcAll.data || []) {
+    for (const row of svcAll) {
       const dutyId = String(row.duty_id || "");
       if (!dutyId) continue;
       const list = svcByDuty.get(dutyId) || [];
@@ -1472,7 +1480,7 @@ export const dutyDiaryService = {
       svcByDuty.set(dutyId, list);
     }
     const payByDuty = new Map<string, JsonRow[]>();
-    for (const row of payAll.data || []) {
+    for (const row of payAll) {
       const dutyId = String(row.duty_id || "");
       if (!dutyId) continue;
       const list = payByDuty.get(dutyId) || [];

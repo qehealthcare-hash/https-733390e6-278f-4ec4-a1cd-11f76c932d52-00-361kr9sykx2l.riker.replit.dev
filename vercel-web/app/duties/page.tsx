@@ -592,6 +592,10 @@ export default function DutiesPage() {
 
   const reloadRef = useRef(function () {});
   const reloadSeqRef = useRef(0);
+  const lastReloadFinishedAtRef = useRef(0);
+  const ledgerSyncRef = useRef({ patientId: "", at: 0, inFlight: false });
+  const LEDGER_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+  const MIN_RELOAD_GAP_MS = 1500;
   const diaryByDutyRef = useRef(diaryByDuty);
   const viewMonthRef = useRef(viewMonth);
 
@@ -767,19 +771,6 @@ export default function DutiesPage() {
     reloadSeqRef.current = reloadSeq;
     setLoading(true);
     try {
-      // Ledger sync is heavy (materialize + dedup). Run in the background so the
-      // calendar list stays responsive; cron + explicit "Sync diary" cover parity.
-      if (filterPatient) {
-        void billingsClient.syncDutyLedger(session, filterPatient).catch(function (syncErr) {
-          console.warn("[duties] duty→billing ledger sync failed", syncErr);
-        });
-      }
-      // P1-20: bound the month window in IST (+05:30), not UTC. With a
-      // UTC bound, queries near month-end on India time were returning
-      // duties from the *next* month — e.g. a 31-Aug 11pm IST duty
-      // landed on 1-Sep UTC and got hidden under the August filter.
-      // crmDayStartIso/crmDayEndIso emit `+05:30` offsets so the bound
-      // matches the user's calendar.
       const from = crmDayStartIso(viewMonth + "-01");
       const endDate = new Date(ym.year, ym.monthIndex + 1, 0);
       const endKey = endDate.getFullYear() + "-" + String(endDate.getMonth() + 1).padStart(2, "0") + "-" + String(endDate.getDate()).padStart(2, "0");
@@ -837,7 +828,10 @@ export default function DutiesPage() {
         toastRef.current.error(message || "Calendar refresh failed — click Refresh to retry");
       }
     } finally {
-      if (reloadSeqRef.current === reloadSeq) setLoading(false);
+      if (reloadSeqRef.current === reloadSeq) {
+        setLoading(false);
+        lastReloadFinishedAtRef.current = Date.now();
+      }
     }
   }, [
     accessToken,
@@ -858,18 +852,61 @@ export default function DutiesPage() {
   useEffect(function () {
     let debounce: ReturnType<typeof setTimeout> | null = null;
     return onDataInvalidated(function () {
+      const sinceLast = Date.now() - lastReloadFinishedAtRef.current;
+      if (sinceLast < MIN_RELOAD_GAP_MS) return;
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(function () {
         debounce = null;
         void reloadRef.current();
-      }, 400);
+      }, 600);
     });
   }, []);
+
+  // Background billing parity — once per patient per cooldown, never on every reload
+  // (reload + sync + invalidation used to loop and saturate the database).
+  useEffect(
+    function () {
+      if (!filterPatient || !accessToken) return;
+      const session = sessionRef.current;
+      if (!session) return;
+      const now = Date.now();
+      const gate = ledgerSyncRef.current;
+      if (
+        gate.inFlight ||
+        (gate.patientId === filterPatient && now - gate.at < LEDGER_SYNC_COOLDOWN_MS)
+      ) {
+        return;
+      }
+      gate.patientId = filterPatient;
+      gate.at = now;
+      gate.inFlight = true;
+      void billingsClient
+        .syncDutyLedger(session, filterPatient, { suppressInvalidation: true })
+        .then(function () {
+          void loadDiariesForVisible(rowsRef.current);
+        })
+        .catch(function (syncErr) {
+          console.warn("[duties] duty→billing ledger sync failed", syncErr);
+        })
+        .finally(function () {
+          gate.inFlight = false;
+        });
+    },
+    [filterPatient, accessToken, loadDiariesForVisible]
+  );
 
   async function refreshFormTotals() {
     const data = await loadTotals(form.patient_id, form.employee_id, viewMonth);
     setTotals(data || null);
   }
+
+  useEffect(
+    function () {
+      setErrorState("");
+      setMessageState("");
+    },
+    [filterPatient, filterEmployee, viewMonth, statusFilter]
+  );
 
   useEffect(
     function () {
