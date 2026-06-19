@@ -54,6 +54,10 @@ import {
 } from "@/business/rbac";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** Min gap between background ledger syncs for the same patient filter. */
+const LEDGER_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+/** Min gap between calendar reloads triggered by mutation invalidation. */
+const MIN_RELOAD_GAP_MS = 1500;
 
 type DutiesAuth = {
   session?: { access_token?: string } | null;
@@ -594,8 +598,6 @@ export default function DutiesPage() {
   const reloadSeqRef = useRef(0);
   const lastReloadFinishedAtRef = useRef(0);
   const ledgerSyncRef = useRef({ patientId: "", at: 0, inFlight: false });
-  const LEDGER_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
-  const MIN_RELOAD_GAP_MS = 1500;
   const diaryByDutyRef = useRef(diaryByDuty);
   const viewMonthRef = useRef(viewMonth);
 
