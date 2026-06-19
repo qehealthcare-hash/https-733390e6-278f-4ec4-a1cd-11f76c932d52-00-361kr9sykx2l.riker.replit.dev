@@ -57,7 +57,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /** Min gap between background ledger syncs for the same patient filter. */
 const LEDGER_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
 /** Min gap between calendar reloads triggered by mutation invalidation. */
-const MIN_RELOAD_GAP_MS = 1500;
+const MIN_RELOAD_GAP_MS = 3000;
 
 type DutiesAuth = {
   session?: { access_token?: string } | null;
@@ -222,16 +222,29 @@ interface FinancialBifurcationProps {
 }
 
 function formatDutyApiError(err: unknown, context: string): string {
-  const e = err as { message?: string; code?: string; status?: number };
+  const e = err as { message?: string; code?: string; status?: number; details?: unknown };
+  const raw = String(e?.message || "").trim();
+  if (
+    raw &&
+    raw !== "Request failed" &&
+    raw.indexOf("Request failed —") !== 0 &&
+    raw.indexOf("Request failed on ") !== 0
+  ) {
+    return raw;
+  }
   const base = humanizeClientError(err);
-  if (base && base !== "Request failed" && base.indexOf("Request failed —") !== 0) {
+  if (
+    base &&
+    base !== "Request failed" &&
+    base.indexOf("Request failed —") !== 0
+  ) {
     return base;
   }
   const parts: string[] = [];
   if (context) parts.push(context);
   if (e.code) parts.push(String(e.code));
   if (e.status) parts.push("HTTP " + String(e.status));
-  const detail = parts.length ? parts.join(" · ") : base;
+  const detail = parts.filter(Boolean).join(" · ");
   return detail || "Request failed — refresh and try again";
 }
 
@@ -552,6 +565,7 @@ export default function DutiesPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const { busy, tryBegin, end } = useBusyGuard();
   const [error, setErrorState] = useState("");
+  const [calendarWarning, setCalendarWarning] = useState("");
   const [message, setMessageState] = useState("");
   const toast = useToast();
   const confirm = useConfirm();
@@ -611,6 +625,8 @@ export default function DutiesPage() {
 
   const reloadRef = useRef(function () {});
   const reloadSeqRef = useRef(0);
+  const reloadInFlightRef = useRef(false);
+  const reloadPendingRef = useRef(false);
   const lastReloadFinishedAtRef = useRef(0);
   const ledgerSyncRef = useRef({ patientId: "", at: 0, inFlight: false });
   const diaryByDutyRef = useRef(diaryByDuty);
@@ -788,6 +804,11 @@ export default function DutiesPage() {
     if (!accessToken) return;
     const session = sessionRef.current;
     if (!session) return;
+    if (reloadInFlightRef.current) {
+      reloadPendingRef.current = true;
+      return;
+    }
+    reloadInFlightRef.current = true;
     const reloadSeq = Date.now();
     reloadSeqRef.current = reloadSeq;
     setLoading(true);
@@ -830,7 +851,8 @@ export default function DutiesPage() {
         });
         return next;
       });
-      setError("");
+      setErrorState("");
+      setCalendarWarning("");
       void loadDiariesForVisible(list);
     } catch (err: unknown) {
       if (reloadSeqRef.current !== reloadSeq) return;
@@ -838,11 +860,10 @@ export default function DutiesPage() {
       console.warn("[duties] calendar reload failed", err);
       const hasRows = rowsRef.current.length > 0;
       if (hasRows) {
-        setErrorState(
+        // Background refresh failed — keep showing last good calendar; do not
+        // pollute the save form with a scary red error the user can't act on.
+        setCalendarWarning(
           message || "Calendar refresh failed — showing last loaded data. Click Refresh to retry."
-        );
-        toastRef.current.warn(
-          message || "Calendar refresh failed — click Refresh to retry"
         );
       } else {
         setErrorState(message || "Calendar refresh failed — click Refresh to retry");
@@ -853,6 +874,11 @@ export default function DutiesPage() {
         setLoading(false);
         lastReloadFinishedAtRef.current = Date.now();
       }
+      reloadInFlightRef.current = false;
+      if (reloadPendingRef.current) {
+        reloadPendingRef.current = false;
+        void reloadRef.current();
+      }
     }
   }, [
     accessToken,
@@ -862,8 +888,7 @@ export default function DutiesPage() {
     statusFilter,
     filterPatient,
     filterEmployee,
-    loadDiariesForVisible,
-    setError
+    loadDiariesForVisible
   ]);
 
   useEffect(function () {
@@ -875,11 +900,15 @@ export default function DutiesPage() {
     return onDataInvalidated(function () {
       const sinceLast = Date.now() - lastReloadFinishedAtRef.current;
       if (sinceLast < MIN_RELOAD_GAP_MS) return;
+      if (reloadInFlightRef.current) {
+        reloadPendingRef.current = true;
+        return;
+      }
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(function () {
         debounce = null;
         void reloadRef.current();
-      }, 600);
+      }, 800);
     });
   }, []);
 
@@ -938,6 +967,7 @@ export default function DutiesPage() {
   useEffect(
     function () {
       setErrorState("");
+      setCalendarWarning("");
       setMessageState("");
     },
     [filterPatient, filterEmployee, viewMonth, statusFilter]
@@ -1327,24 +1357,24 @@ export default function DutiesPage() {
     setMessage("");
     setConflictBanner("");
     if (!form.patient_id && !filterPatient) {
-      setError("Select a patient before saving.");
+      setErrorState("Select a patient before saving.");
       end();
       return;
     }
     if (!form.employee_id) {
-      setError("Select a primary partner (employee) before saving.");
+      setErrorState("Select a primary partner (employee) before saving.");
       end();
       return;
     }
     const billPatientId = form.patient_id || filterPatient;
     if (form.materialize && billPatientId) {
       if (outstandingLoading) {
-        setError("Checking bill status — wait a moment and try again.");
+        setErrorState("Checking bill status — wait a moment and try again.");
         end();
         return;
       }
       if (!outstanding || !outstanding.hasActiveBill) {
-        setError(
+        setErrorState(
           "No active bill for this patient — open Billing, create or reopen an Active bill, then save with materialize."
         );
         end();
@@ -2082,6 +2112,22 @@ export default function DutiesPage() {
                 </select>
               </div>
             </div>
+
+            {calendarWarning ? (
+              <div
+                className="card"
+                role="status"
+                style={{
+                  marginTop: 12,
+                  padding: "10px 14px",
+                  borderColor: "#fcd34d",
+                  background: "#fffbeb",
+                  color: "#92400e"
+                }}
+              >
+                {calendarWarning}
+              </div>
+            ) : null}
 
             {filterPatient && !outstandingLoading && outstanding && !outstanding.hasActiveBill ? (
               <div
